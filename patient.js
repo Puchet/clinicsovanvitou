@@ -30,14 +30,14 @@ async function upl(file, max = 480) {
   c.width = Math.max(1, Math.round(bmp.width * sc)); c.height = Math.max(1, Math.round(bmp.height * sc));
   const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, c.width, c.height); g.drawImage(bmp, 0, 0, c.width, c.height);
   const blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', .85));
-  const r = await fetch(API_BASE + '/api/uploads', { method: 'POST', headers: { 'Content-Type': 'image/jpeg', Authorization: 'Bearer ' + tok }, body: blob }), j = await r.json().catch(() => ({}));
+  const r = await fetch('/api/uploads', { method: 'POST', headers: { 'Content-Type': 'image/jpeg', Authorization: 'Bearer ' + tok }, body: blob }), j = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(j.error || 'Upload failed'); return j.photo;
 }
 
 // ---------- printing (uses the clinic header from Clinic Settings) ----------
 function printDoc(title, html) {
   const c = D.clinic || {};
-  const head = `<div class="ph-head">${c.banner ? `<img class="ph-banner" src="${API_BASE}/uploads/${esc(c.banner)}" alt="">` : ''}${c.show_name && c.name ? `<h2>${esc(c.name)}</h2>` : ''}${c.show_address && c.address ? `<div>${esc(c.address)}</div>` : ''}${c.show_phone && c.phone ? `<div>Tel: ${esc(c.phone)}</div>` : ''}</div>`;
+  const head = `<div class="ph-head">${c.banner ? `<img class="ph-banner" src="/uploads/${esc(c.banner)}" alt="">` : ''}${c.show_name && c.name ? `<h2>${esc(c.name)}</h2>` : ''}${c.show_address && c.address ? `<div>${esc(c.address)}</div>` : ''}${c.show_phone && c.phone ? `<div>Tel: ${esc(c.phone)}</div>` : ''}</div>`;
   let pa = $('#pa'); if (!pa) { pa = document.createElement('div'); pa.id = 'pa'; document.body.appendChild(pa); }
   pa.innerHTML = head + `<h3>${esc(title)}</h3>` + html; setTimeout(() => window.print(), 60);
 }
@@ -83,7 +83,7 @@ function regPrint() {
 }
 
 // ---------- patient file ----------
-const PT = [['vitals', 'Vital signs'], ['medical', 'Medical Record'], ['mdhistory', 'MD History'], ['beu', 'BEU'], ['schedule', 'Treatment Schedule'], ['consultation', 'Consultation'], ['operation', 'Operation'], ['investigation', 'Investigation request'], ['lab', 'Lab results'], ['echo', 'Echo results'], ['xray', 'X-Ray results'], ['homecare', 'Homecare'], ['prescription', 'Prescription'], ['medlist', 'Medication list'], ['documents', 'Documents'], ['appts', 'Appointment history']];
+const PT = [['vitals', 'Vital signs'], ['medical', 'Medical Record'], ['mdhistory', 'MD History'], ['beu', 'BEU'], ['schedule', 'Treatment Schedule'], ['consultation', 'Consultation'], ['operation', 'Operation'], ['investigation', 'Investigation request'], ['lab', 'Lab results'], ['echo', 'Echo results'], ['xray', 'X-Ray results'], ['homecare', 'Homecare'], ['prescription', 'Prescription'], ['medlist', 'Medication list'], ['documents', 'Documents'], ['billing', 'Billing history'], ['appts', 'Appointment history']];
 const VSF = [['t', 'Temperature (°C)'], ['hr', 'Heart rate (bpm)'], ['rr', 'Respiratory rate (bpm)'], ['bp', 'Blood pressure (mmHg)'], ['spo2', 'SpO2 (%)'], ['p', 'Pulse (P)'], ['w', 'Weight (kg)'], ['h', 'Height (cm)']];
 const COLORS = ['#e5e7eb', '#ef4444', '#f97316', '#f59e0b', '#22c55e', '#3b82f6', '#6366f1', '#a855f7', '#ec4899'];
 let pdId = null, ptab = 'vitals', recs = [], pdDate = '';
@@ -92,25 +92,37 @@ const jd = (r) => { try { return JSON.parse(r.data || '{}'); } catch { return {}
 async function loadRecs() { recs = await api('GET', 'records?patient_id=' + pdId + '&limit=5000'); }
 async function openPatient(id) { pdId = id; ptab = 'vitals'; pdDate = ''; rt = 'pd'; await loadRecs(); render(); }
 const lbl = (k) => (PT.find((x) => x[0] == k) || [0, k])[1];
+// ---- patient file layout & "hide" controls (saved in this browser) ----
+const PTI = { vitals: '🩺', medical: '📝', mdhistory: '📋', beu: '🖼️', schedule: '📅', consultation: '💬', operation: '✂️', investigation: '🔬', lab: '🧪', echo: '💓', xray: '🩻', homecare: '🏠', prescription: '💊', medlist: '📑', documents: '📁', billing: '💰', appts: '🗓️' };
+const PI = [['id', 'ID'], ['name', 'Name'], ['age', 'Age'], ['gender', 'Gender'], ['phone', 'Phone'], ['nssf', 'NSSF ID'], ['nat', 'National ID'], ['addr', 'Address'], ['date', 'Date Filter']];
+let pdHideI = new Set(), pdHideC = new Set(), pdLay = 'list', pdCtl = false;
+try { const h = JSON.parse(localStorage.getItem('pdHide') || '{}'); pdHideI = new Set(h.i || []); pdHideC = new Set(h.c || []); pdLay = localStorage.getItem('pdLay') === 'grid' ? 'grid' : 'list'; } catch (e) { /* defaults */ }
+const savePd = () => { try { localStorage.setItem('pdHide', JSON.stringify({ i: [...pdHideI], c: [...pdHideC] })); localStorage.setItem('pdLay', pdLay); } catch (e) { /* ignore */ } };
 R.pd = function () {
   const p = curPt(); if (!p) return hd('Patients', '') + '<p class="emp">Patient not found.</p>';
-  const ed = (k, l) => `<span class="mu">${l}</span> <a href="#" data-a="pedit:${k}" title="Edit">✎</a><br><b>${esc(p[k] || 'N/A')}</b>`;
-  return `<div class="mu" style="margin-bottom:10px"><a href="#" data-a="go:pt">Patient Management</a> / <b>${esc(p.name)}</b></div>
-<div class="card pdh"><div class="pda"><div class="av big">${p.photo ? `<img src="${API_BASE}/uploads/${esc(p.photo)}" alt="">` : '👤'}</div><label class="btn s" style="margin-top:6px;cursor:pointer">Change photo<input type="file" id="pfp" accept="image/*" hidden></label></div>
-<div class="pdi"><div class="tools" style="justify-content:space-between"><div><span class="mu">Name</span> <b style="font-size:18px">${esc(p.name)}</b>${p.latin_name ? ` <span class="mu">(${esc(p.latin_name)})</span>` : ''} &nbsp; <span class="mu">ID:</span> ${p.id} &nbsp; <span class="mu">Age:</span> <b>${fmtAge(p)}</b></div><div class="tools"><button class="btn" data-a="pdprint">History</button><button class="btn" data-a="regedit:${D.pt.indexOf(p)}">Edit patient</button></div></div>
-<div class="gr2 pdg"><div><span class="mu">Gender</span><br><b>${esc(fmtSex(p.sex) || 'N/A')}</b></div><div><span class="mu">Phone</span><br><b>${esc(p.phone || 'N/A')}</b></div><div>${ed('nssf_id', 'NSSF ID')}</div><div>${ed('national_id', 'National ID')}</div><div><span class="mu">Address</span><br><b>${esc(p.addr || 'N/A')}</b></div><div><span class="mu">Date</span><br><input type="date" id="pdd" class="in" value="${esc(pdDate)}"></div></div></div></div>
-<div class="pdw"><div class="card pdm">${PT.map(([k, l]) => `<div class="it ${k == ptab ? 'on' : ''}" data-a="rtab:${k}">${l}</div>`).join('')}</div><div class="card pdr" id="rp">${recPanel()}</div></div>`;
+  const vt = PT.filter(([k]) => !pdHideC.has(k)); if (vt.length && !vt.some(([k]) => k == ptab)) ptab = vt[0][0];
+  const h = (k) => !pdHideI.has(k), ed = (k, l) => `<span class="mu">${l}</span> <a href="#" data-a="pedit:${k}" title="Edit">✎</a><br><b>${esc(p[k] || 'N/A')}</b>`;
+  const top = `<div class="tools" style="justify-content:space-between;margin-bottom:10px"><div class="mu"><a href="#" data-a="go:pt">Patient Management</a> / <b>${esc(p.name)}</b></div><div class="tools"><button class="btn p" data-a="pdprint">🖨 History</button><button class="btn ${pdCtl ? 'on2' : ''}" data-a="pdctl" title="Hide controls">🙈</button><button class="btn ${pdLay == 'grid' ? 'on2' : ''}" data-a="pdlay" title="Change layout">▦</button></div></div>`;
+  const ctl = pdCtl ? `<div class="card pdc"><b>Hide Patient Info:</b><div class="pdcg">${PI.map(([k, l]) => `<label class="cb"><input type="checkbox" data-a="hidei:${k}" ${pdHideI.has(k) ? 'checked' : ''}> ${l}</label>`).join('')}</div><b>Hide Content Sections:</b><div class="pdcg">${PT.map(([k, l]) => `<label class="cb"><input type="checkbox" data-a="hidec:${k}" ${pdHideC.has(k) ? 'checked' : ''}> ${l}</label>`).join('')}</div></div>` : '';
+  const head = `<div class="card pdh"><div class="pda"><div class="av big">${p.photo ? `<img src="/uploads/${esc(p.photo)}" alt="">` : '👤'}</div><label class="btn s" style="margin-top:6px;cursor:pointer">Change photo<input type="file" id="pfp" accept="image/*" hidden></label></div>
+<div class="pdi"><div class="tools" style="justify-content:space-between"><div>${h('name') ? `<span class="mu">Name</span> <b style="font-size:18px">${esc(p.name)}</b>${p.latin_name ? ` <span class="mu">(${esc(p.latin_name)})</span>` : ''}` : ''}${h('id') ? ` &nbsp; <span class="mu">ID:</span> ${p.id}` : ''}${h('age') ? ` &nbsp; <span class="mu">Age:</span> <b>${fmtAge(p)}</b>` : ''}</div><button class="btn" data-a="regedit:${D.pt.indexOf(p)}">Edit patient</button></div>
+<div class="gr2 pdg">${h('gender') ? `<div><span class="mu">Gender</span><br><b>${esc(fmtSex(p.sex) || 'N/A')}</b></div>` : ''}${h('phone') ? `<div><span class="mu">Phone</span><br><b>${esc(p.phone || 'N/A')}</b></div>` : ''}${h('nssf') ? `<div>${ed('nssf_id', 'NSSF ID')}</div>` : ''}${h('nat') ? `<div>${ed('national_id', 'National ID')}</div>` : ''}${h('addr') ? `<div><span class="mu">Address</span><br><b>${esc(p.addr || 'N/A')}</b></div>` : ''}${h('date') ? `<div><span class="mu">Date</span><br><input type="date" id="pdd" class="in" value="${esc(pdDate)}"></div>` : ''}</div></div></div>`;
+  const body = !vt.length ? '<div class="card pdr"><p class="emp">All sections are hidden. Use the eye button to show them.</p></div>'
+    : pdLay == 'grid' ? `<div class="card pdt">${vt.map(([k, l]) => `<div class="tile ${k == ptab ? 'on' : ''}" data-a="rtab:${k}"><span>${PTI[k] || ''}</span>${l}</div>`).join('')}</div><div class="card pdr" id="rp">${recPanel()}</div>`
+    : `<div class="pdw"><div class="card pdm">${vt.map(([k, l]) => `<div class="it ${k == ptab ? 'on' : ''}" data-a="rtab:${k}"><i>${PTI[k] || ''}</i>${l}</div>`).join('')}</div><div class="card pdr" id="rp">${recPanel()}</div></div>`;
+  return top + ctl + head + body;
 };
 function recCard(r) {
   const d = jd(r), act = `<div class="ra"><button class="btn s" data-a="redit:${r.id}">Edit</button><button class="btn s r" data-a="rdel:${r.id}">✕</button></div>`, when = esc((r.date || '').replace('T', ' '));
   if (r.kind == 'vitals') return `<div class="rc">${act}<div class="mu">${when}</div><div class="vs">${VSF.filter(([k]) => d[k]).map(([k, l]) => `<span><b>${l.replace(/ \(.*/, '')}:</b> ${esc(d[k])} ${(l.match(/\((.*)\)/) || [])[1] || ''}</span>`).join('') || '—'}</div></div>`;
   if (r.kind == 'medical') return `<div class="rc">${act}<div class="mu">${when}</div><b>${esc(d.dx || d.cc || 'Medical Record')}</b><div class="mu">${esc((d.cc || '').slice(0, 140))}</div><div class="ra2"><button class="btn s" data-a="rprint:${r.id}">Print</button></div></div>`;
-  const img = r.image ? `<a href="${API_BASE}/uploads/${esc(r.image)}" target="_blank"><img class="rimg" src="${API_BASE}/uploads/${esc(r.image)}" alt=""></a>` : '';
+  const img = r.image ? `<a href="/uploads/${esc(r.image)}" target="_blank"><img class="rimg" src="/uploads/${esc(r.image)}" alt=""></a>` : '';
   return `<div class="rc" ${r.kind == 'beu' && r.color ? `style="border-left:6px solid ${esc(r.color)}"` : ''}>${act}<b>${esc(r.title || lbl(r.kind))}</b> <span class="mu">${when}</span><div style="white-space:pre-wrap">${esc(r.notes || '')}</div>${img}</div>`;
 }
 function recPanel() {
   const p = curPt(); if (!p) return '';
   if (ptab == 'schedule') return schPanel();
+  if (ptab == 'billing') return billPanel();
   if (ptab == 'appts') { const L = D.ap.filter((a) => (a.name || '').toLowerCase() == (p.name || '').toLowerCase()); return `<h2 class="rh">${lbl(ptab)}</h2>${L.map((a) => `<div class="rc"><b>${esc(a.date)} ${esc(a.time || '')}</b> ${esc(a.svc || '')} <span class="mu">${esc(a.doc || '')}</span> <span class="bd">${esc(a.st)}</span></div>`).join('') || '<p class="emp">Nothing here yet.</p>'}`; }
   const L = recs.filter((r) => r.kind == ptab && (!pdDate || (r.date || '').startsWith(pdDate)));
   return `<div class="hd"><h2 class="rh">${lbl(ptab)}</h2>${ptab == 'medical' ? '<div class="tools"><button class="btn" data-a="htc" title="HT Controls">⚙</button><button class="btn" data-a="mhist">History</button><button class="btn" data-a="mrd">MRD</button><button class="btn g" data-a="radd">+ Add</button></div>' : '<button class="btn g" data-a="radd">+ Add</button>'}</div>${ptab == 'beu' ? `<div class="gr">${L.map(recCard).join('')}</div>` : L.map(recCard).join('')}${L.length ? '' : '<p class="emp">Nothing here yet.</p>'}`;
@@ -231,7 +243,7 @@ function mrdPrint() {
 function histPrint() {
   const p = curPt(); const body = [...recs].filter((r) => r.kind != 'schedulenote').sort((a, b) => (a.date || '').localeCompare(b.date || '')).map((r) => {
     const d = jd(r), h = `<h4>${esc(lbl(r.kind))}${r.title ? ' – ' + esc(r.title) : ''} <small>${esc((r.date || '').replace('T', ' '))}</small></h4>`;
-    return h + (r.kind == 'vitals' ? kv(VSF.map(([k, l]) => [l, d[k]])) : r.kind == 'medical' ? mrPrintHtml(d) : r.kind == 'mrd' ? kv([['Diagnosis', d.dx], ['Request', d.req], ['Result', d.res]]) : r.kind == 'cnf' ? cnPrintHtml(d) : `<p>${esc(r.notes || '').replace(/\n/g, '<br>')}</p>`); }).join('');
+    return h + (r.kind == 'vitals' ? kv(VSF.map(([k, l]) => [l, d[k]])) : r.kind == 'medical' ? mrPrintHtml(d) : r.kind == 'payment' ? kv([['Amount', K(d.amount)], ['Method', d.method]]) : r.kind == 'mrd' ? kv([['Diagnosis', d.dx], ['Request', d.req], ['Result', d.res]]) : r.kind == 'cnf' ? cnPrintHtml(d) : `<p>${esc(r.notes || '').replace(/\n/g, '<br>')}</p>`); }).join('');
   printDoc('Patient history', ptBlock(p) + body);
 }
 
@@ -368,7 +380,7 @@ const apOpen = (a) => modal(a ? 'Edit' : 'Add appointment', P.ap.f, a || { ...P.
 
 // ---------- CSV export (opens in Excel) ----------
 function exportCsv() {
-  const key = (P[rt] && P[rt].k) || rt, rows = D[key]; if (!Array.isArray(rows) || !rows.length) return toast('Nothing here yet.');
+  const key = (P[rt] && P[rt].k) || rt, rows = rt == 'pt' ? ptRows().map(([r]) => r) : D[key]; if (!Array.isArray(rows) || !rows.length) return toast('Nothing here yet.');
   const cols = Object.keys(rows[0]).filter((c) => !['created_at', 'updated_at', 'user_id', 'photo', 'data'].includes(c));
   const cell = (v) => { v = String(v ?? ''); if (/^[=+\-@\t\r]/.test(v)) v = "'" + v; return '"' + v.replace(/"/g, '""') + '"'; };
   const csv = '\ufeff' + [cols.join(','), ...rows.map((r) => cols.map((c) => cell(r[c])).join(','))].join('\r\n');
@@ -398,7 +410,19 @@ function pAct(a, x, y, el) {
   else if (a == 'apadd') { apOpen.date = x; apOpen(); } else if (a == 'apedit') apOpen(D.ap.find((r) => r.id == x));
   else if (a == 'callist') { cal.list = !cal.list; render(); } else if (a == 'caltoday') { cal.d = new Date(); render(); } else if (a == 'calmode') { cal.mode = x; render(); }
   else if (a == 'calprev' || a == 'calnext') { const s = a == 'calnext' ? 1 : -1, d = cal.d; cal.d = cal.mode == 'month' ? new Date(d.getFullYear(), d.getMonth() + s, 1) : new Date(d.getFullYear(), d.getMonth(), d.getDate() + s * (cal.mode == 'week' ? 7 : 1)); render(); }
-  else if (a == 'csv') exportCsv();
+  else if (a == 'csv') exportCsv(); else if (a == 'pfclear') { Object.keys(pf).forEach((k) => delete pf[k]); render(); }
+  else if (a == 'ptcols') { ptColsOpen = !ptColsOpen; render(); } else if (a == 'ptfilt') { ptFilt = !ptFilt; savePt(); render(); }
+  else if (a == 'ptcolsall') { ptHide[ptMode()].clear(); savePt(); render(); }
+  else if (a == 'ptcol') { const S = ptHide[ptMode()]; if (S.has(x)) S.delete(x); else if (ptShown().length > 1) S.add(x); else toast('At least one column must stay visible'); savePt(); render(); }
+  else if (a == 'ptmr') openPatient(+x).then(() => { ptab = 'medical'; render(); mrForm(); }).catch((e) => toast(e.message));
+  else if (a == 'ipdout') ipdOut(+x); else if (a == 'ipdbed') ipdBed(+x); else if (a == 'ipdtreat') ipdTreat(+x); else if (a == 'ipdedit') ipdEdit(+x); else if (a == 'ipdprint') ipdPrint(+x); else if (a == 'ipdshare') ipdShare(+x); else if (a == 'ipdadd') ipdAdd();
+  else if (a == 'ptbed') bedForm(+x); else if (a == 'ptadmit') ptAdmit(+x); else if (a == 'ptprint') ptCard(+x);
+  else if (a == 'pttreat') { const q0 = ptById(+x); modal('Treatment', [['Treatment', 'treatment', 'ta']], q0, (o) => api('PUT', 'patients/' + q0.id, o)); }
+  else if (a == 'ptdx') { const q0 = ptById(+x), opts = ['', ...new Set([q0.diagnosis, ...D.dx.map((d) => d.name)].filter(Boolean))]; modal('Diagnosis', [['Diagnosis', 'diagnosis', 'sel', opts]], q0, (o) => api('PUT', 'patients/' + q0.id, o)); }
+  else if (a == 'ptpay') payForm(+x); else if (a == 'ptinv') invoicePrint(+x).catch((e) => toast(e.message));
+  else if (a == 'recpay') payForm(pdId);
+  else if (a == 'pdctl') { pdCtl = !pdCtl; render(); } else if (a == 'pdlay') { pdLay = pdLay == 'grid' ? 'list' : 'grid'; savePd(); render(); }
+  else if (a == 'hidei' || a == 'hidec') { const S = a == 'hidei' ? pdHideI : pdHideC; S.has(x) ? S.delete(x) : S.add(x); savePd(); render(); }
   else if (a == 'dashap') { cal.mode = 'day'; cal.d = new Date(); cal.list = false; rt = 'ap'; q = ''; render(); }
   else if (a == 'dfilter') { dFrom = $('#dfrom').value; dTo = $('#dto').value; render(); } else if (a == 'dclear') { dFrom = ''; dTo = ''; render(); }
 }
@@ -416,3 +440,204 @@ Object.assign(L, { 'Register new patient': 'ចុះឈ្មោះអ្នក
 Object.assign(L, { 'Invoice': 'វិក្កយបត្រ', 'Print Schedule': 'បោះពុម្ពកាលវិភាគ', 'Add Schedule': 'បន្ថែមកាលវិភាគ', 'Standard': 'ស្តង់ដារ', 'General Form': 'ទម្រង់ទូទៅ', 'Assessment & Plan': 'ការវាយតម្លៃ និងផែនការ', 'Form History': 'ប្រវត្តិទម្រង់', 'Print Current': 'បោះពុម្ពទម្រង់បច្ចុប្បន្ន', 'Save Only': 'រក្សាទុកតែប៉ុណ្ណោះ', 'HT Controls': 'ការគ្រប់គ្រងការបង្ហាញ', 'Hide content sections': 'លាក់ផ្នែកខ្លឹមសារ', 'Create MRD record': 'បង្កើតកំណត់ត្រា MRD', '+ Create new record': '+ បង្កើតកំណត់ត្រាថ្មី', 'No records yet.': 'មិនទាន់មានកំណត់ត្រានៅឡើយទេ។', 'Diagnosis': 'រោគវិនិច្ឆ័យ', 'Request': 'សំណូមពរ', 'Result': 'លទ្ធផល' });
 document.addEventListener('keydown', (e) => { if (e.key == 'Enter' && e.target.matches && e.target.matches('.st[data-a]')) e.target.click(); });
 Object.assign(L, { 'View data': 'មើលទិន្នន័យ', 'Patient statistics': 'ស្ថិតិប្រជាសាស្ត្រអ្នកជំងឺ', 'From date': 'ថ្ងៃចាប់ផ្តើម', 'To date': 'ថ្ងៃបញ្ចប់', 'Apply': 'អនុវត្ត', 'Clear': 'សម្អាត', 'Unknown': 'មិនស្គាល់' });
+Object.assign(L, { 'Hide Patient Info:': 'លាក់ព័ត៌មានអ្នកជំងឺ:', 'Hide Content Sections:': 'លាក់ផ្នែកខ្លឹមសារ:', 'Date Filter': 'តម្រងកាលបរិច្ឆេទ', 'All sections are hidden. Use the eye button to show them.': 'ផ្នែកទាំងអស់ត្រូវបានលាក់។ ប្រើប៊ូតុងភ្នែកដើម្បីបង្ហាញវា។' });
+
+// ---------- Patients list: the full table (diagnosis, balance, quick actions) ----------
+const ptById = (id) => D.pt.find((x) => x.id == id);
+const fmtD = (s) => { const d = String(s || '').slice(0, 10).split('-'); return d.length == 3 ? `${d[2]}/${d[1]}/${d[0]}` : ''; };
+const usd = (n) => '$' + (n / ((D.clinic && D.clinic.rate) || 4000)).toFixed(2);
+const trunc = (s, n = 28) => { s = String(s || ''); return s.length > n ? s.slice(0, n) + '…' : s; };
+const pgNums = (c, n) => { const a = [...new Set([1, 2, 3, 4, n, c - 1, c, c + 1].filter((x) => x >= 1 && x <= n))].sort((x, y) => x - y), o = []; a.forEach((x, i) => { if (i && x - a[i - 1] > 1) o.push('…'); o.push(x); }); return o; };
+const PTAB = [['OPD', 'OPD'], ['IPD', 'IPD'], ['Unpaid', 'Unpaid'], ['NSSF', 'NSSF'], ['Details', 'Details']];
+// ---- per-column filters (filter row under the header) ----
+const pf = {};
+const lc = (v) => String(v ?? '').toLowerCase();
+const has = (a, v) => lc(a).includes(lc(v.trim()));
+function ageOk(r, v) {
+  v = v.trim(); const y = Math.floor(ageYears(r)); let m;
+  if ((m = v.match(/^(\d+)\s*[-–]\s*(\d+)$/))) return y >= +m[1] && y <= +m[2];
+  if ((m = v.match(/^>=\s*(\d+)$/))) return y >= +m[1]; if ((m = v.match(/^>\s*(\d+)$/))) return y > +m[1];
+  if ((m = v.match(/^<=\s*(\d+)$/))) return y <= +m[1]; if ((m = v.match(/^<\s*(\d+)$/))) return y < +m[1];
+  if ((m = v.match(/^(\d+)$/))) return y == +m[1];
+  return true; // not a valid age filter yet (still typing)
+}
+const PFN = {
+  id: (r, v) => String(r.id).includes(v.trim()), date: (r, v) => fmtD(r.reg_date || r.created_at).includes(v.trim()) || String(r.reg_date || r.created_at || '').includes(v.trim()),
+  name: (r, v) => has(r.name, v), latin: (r, v) => has(r.latin_name, v), nssf: (r, v) => has(r.nssf_id, v), nat: (r, v) => has(r.national_id, v),
+  type: (r, v) => v == 'IPD' ? r.type == 'IPD' : r.type != 'IPD', treat: (r, v) => has(r.treatment, v), dx: (r, v) => has(r.diagnosis || r.last_dx, v),
+  mr: (r, v) => v == 'yes' ? r.mr_count > 0 : !(r.mr_count > 0), age: ageOk, sex: (r, v) => r.sex == v, pay: (r, v) => v == 'unpaid' ? r.due > 0 : !(r.due > 0),
+  phone: (r, v) => lc(r.phone).replace(/\s/g, '').includes(lc(v).replace(/\s/g, '')), addr: (r, v) => has(r.addr, v),
+  comp: (r, v) => has(r.complaints, v), hist: (r, v) => has(r.history, v), regd: (r, v) => has(r.reg_date, v) };
+const SEL = { type: [['', 'All'], ['OPD', 'OPD'], ['IPD', 'IPD']], mr: [['', 'All'], ['yes', 'With record'], ['no', 'No record']], sex: [['', 'All'], ['M', 'Male'], ['F', 'Female']], pay: [['', 'All'], ['unpaid', 'Unpaid'], ['paid', 'Paid']] };
+const pfActive = () => Object.entries(pf).filter(([, v]) => v !== '' && v != null);
+const tabOk = (r) => tab == 'IPD' ? r.type == 'IPD' : tab == 'Unpaid' ? r.due > 0 : tab == 'NSSF' ? r.nssf : tab == 'Details' ? true : r.type != 'IPD';
+const colOk = (r) => pfActive().every(([k, v]) => PFN[k] ? PFN[k](r, String(v)) : true);
+const ptRows = () => ft('pt').filter(([r]) => tabOk(r) && colOk(r));
+const fCell = (k) => !k ? '<th class="fr"><button class="btn s" data-a="pfclear" title="Clear filters">✕</button></th>'
+  : SEL[k] ? `<th class="fr ${k == 'latin' ? 'c-latin' : ''}"><select class="in" data-pf="${k}">${SEL[k].map(([v, l]) => `<option value="${v}" ${(pf[k] || '') == v ? 'selected' : ''}>${l}</option>`).join('')}</select></th>`
+  : `<th class="fr ${k == 'latin' ? 'c-latin' : ''}"><input class="in" data-pf="${k}" value="${esc(pf[k] || '')}" placeholder="${k == 'age' ? '20-40' : '🔍'}"></th>`;
+// ---- rows ----
+// ---- columns: each one can be shown or hidden (saved in this browser) ----
+const COLF = [['id', 'ID'], ['date', 'Date'], ['name', 'Name'], ['latin', 'Latin name'], ['nssf', 'NSSF ID'], ['nat', 'National ID'], ['type', 'IPD/OPD'], ['treat', 'Treatment'], ['dx', 'Diagnosis'], ['mr', 'Medical Record'], ['age', 'Age'], ['sex', 'Gender'], ['pay', 'Unpaid'], ['phone', 'Phone'], ['addr', 'Address'], ['act', 'Actions']];
+const COLD = [['id', 'ID'], ['name', 'Name'], ['latin', 'Latin name'], ['phone', 'Phone'], ['addr', 'Address'], ['comp', 'Complaints'], ['hist', 'Past medical history'], ['regd', 'Registration date'], ['nssf', 'NSSF ID'], ['nat', 'National ID'], ['act', 'Actions']];
+let ptHide = { full: new Set(), det: new Set() }, ptColsOpen = false, ptFilt = false;
+try { const h = JSON.parse(localStorage.getItem('ptHide') || '{}'); ptHide = { full: new Set(h.full || []), det: new Set(h.det || []) }; ptFilt = localStorage.getItem('ptFilt') == '1'; } catch (e) { /* defaults */ }
+const savePt = () => { try { localStorage.setItem('ptHide', JSON.stringify({ full: [...ptHide.full], det: [...ptHide.det] })); localStorage.setItem('ptFilt', ptFilt ? '1' : '0'); } catch (e) { /* ignore */ } };
+const ptMode = () => (tab == 'Details' ? 'det' : 'full');
+const ptDefs = () => (tab == 'Details' ? COLD : COLF);
+const ptShown = () => ptDefs().filter(([k]) => !ptHide[ptMode()].has(k));
+const act = (r, i) => `<button class="sq b" data-a="regedit:${i}" title="Edit">✎</button> <button class="sq r" data-a="del:pt:${i}" title="Delete">🗑</button>`;
+const ptNm = (r, sm = true) => `<div class="pn"><div><a href="#" data-a="open:${r.id}">${esc(r.name)}</a>${sm && r.latin_name ? `<small class="pl">${esc(r.latin_name)}</small>` : ''}</div><span class="ic"><a href="#" data-a="open:${r.id}" title="Open patient file">👁</a><a href="#" data-a="ptadmit:${r.id}" title="${r.type == 'IPD' ? 'Discharge' : 'Admit to IPD'}">${r.type == 'IPD' ? '🚪' : '🛏'}</a><a href="#" data-a="ptprint:${r.id}" title="Print patient card">🖨</a></span></div>`;
+const cellsFull = (r, i, sm) => ({
+  id: `<td>${r.id}</td>`, date: `<td>${fmtD(r.reg_date || r.created_at)}</td>`, name: `<td>${ptNm(r, sm)}</td>`, latin: `<td class="c-latin">${esc(r.latin_name || '')}</td>`,
+  nssf: `<td>${esc(r.nssf_id || 'N/A')}</td>`, nat: `<td>${esc(r.national_id || 'N/A')}</td>`, type: `<td><span class="pill ${r.type == 'IPD' ? 'ipd' : 'opd'} clk" data-a="ptbed:${r.id}" title="Update bed information">${r.type == 'IPD' ? 'IPD' : 'OPD'}</span></td>`,
+  treat: `<td title="${esc(r.treatment || '')}">${esc(trunc(r.treatment, 14))} <a href="#" class="ed" data-a="pttreat:${r.id}" title="Edit treatment">✎</a></td>`,
+  dx: `<td title="${esc(r.diagnosis || r.last_dx || '')}">${esc(trunc(r.diagnosis || r.last_dx || 'N/A', 14))} <a href="#" class="ed" data-a="ptdx:${r.id}" title="Edit diagnosis">✎</a></td>`,
+  mr: `<td><button class="mrb" data-a="ptmr:${r.id}" title="New medical record">✎</button></td>`, age: `<td>${fmtAge(r)}</td>`,
+  sex: `<td>${r.sex ? `<span class="pill ${r.sex == 'F' ? 'f' : 'm'}">${fmtSex(r.sex)}</span>` : ''}</td>`,
+  pay: `<td>${r.due > 0 ? `<div class="due" data-a="ptpay:${r.id}" title="Record payment"><b>KHR ${r.due.toLocaleString('en-US')}</b><br>${usd(r.due)}</div>` : `<span class="paid">✔ Paid</span> <a href="#" data-a="ptinv:${r.id}" title="Invoice">🧾</a>`}</td>`,
+  phone: `<td>${r.phone ? '📞 ' + esc(r.phone) : '<span class="mu">📞</span>'}</td>`, addr: `<td title="${esc(r.addr || '')}">${esc(trunc(r.addr || 'N/A', 14))}</td>`, act: `<td style="white-space:nowrap">${act(r, i)}</td>` });
+const cellsDet = (r, i) => ({
+  id: `<td>${r.id}</td>`, name: `<td>${ptNm(r, false)}</td>`, latin: `<td>${esc(r.latin_name || '')}</td>`, phone: `<td>${esc(r.phone || '')}</td>`, addr: `<td>${esc(r.addr || '')}</td>`,
+  comp: `<td style="white-space:pre-wrap;min-width:180px">${esc(r.complaints || '')}</td>`, hist: `<td style="white-space:pre-wrap;min-width:180px">${esc(r.history || '')}</td>`,
+  regd: `<td>${esc((r.reg_date || '').replace('T', ' '))}</td>`, nssf: `<td>${esc(r.nssf_id || '')}</td>`, nat: `<td>${esc(r.national_id || '')}</td>`, act: `<td style="white-space:nowrap">${act(r, i)}</td>` });
+function ptView() {
+  const L = ptRows(), n = Math.max(1, Math.ceil(L.length / 10)); pg = Math.min(pg, n); const S = (pg - 1) * 10, page = L.slice(S, S + 10), det = tab == 'Details', cols = ptShown();
+  const sm = !det && !ptHide.full.has('latin');
+  return { count: L.length,
+    body: page.map(([r, i]) => { const c = det ? cellsDet(r, i) : cellsFull(r, i, sm); return `<tr>${cols.map(([k]) => c[k]).join('')}</tr>`; }).join('') || `<tr><td colspan="${cols.length}" class="emp">No patients.</td></tr>`,
+    pager: `<span>Showing ${L.length ? S + 1 : 0} to ${Math.min(L.length, S + 10)} of ${L.length} records</span><div><button class="btn s" data-a="pg:${pg - 1}" ${pg <= 1 ? 'disabled' : ''}>‹ Previous</button>${pgNums(pg, n).map((x) => x == '…' ? '<span class="mu">…</span>' : `<button class="btn s ${x == pg ? 'p' : ''}" data-a="pg:${x}">${x}</button>`).join('')}<button class="btn s" data-a="pg:${pg + 1}" ${pg >= n ? 'disabled' : ''}>Next ›</button></div>` };
+}
+// typing in a filter only refreshes the rows, so the cursor stays in the box
+function ptRefresh() { const v = ptView(), b = $('#ptbody'), p = $('#ptpg'), c = $('#pfclr'); if (b) b.innerHTML = v.body; if (p) p.innerHTML = v.pager; if (c) c.hidden = !pfActive().length; }
+R.pt = function () {
+  const det = tab == 'Details', v = ptView(), cols = ptShown(), defs = ptDefs();
+  const panel = ptColsOpen ? `<div class="card pdc"><div class="tools" style="justify-content:space-between"><b>Show or hide columns</b><button class="btn s" data-a="ptcolsall">Show all</button></div><div class="pdcg" style="border:0;margin:8px 0 0;padding:0">${defs.map(([k, l]) => `<label class="cb"><input type="checkbox" data-a="ptcol:${k}" ${ptHide[ptMode()].has(k) ? '' : 'checked'}> ${l}</label>`).join('')}</div></div>` : '';
+  return `<div class="tools" style="margin-bottom:12px">${sr('Search Name, Phone, NSSF, National ID…')}<button class="btn p" data-a="reg">+ Add Patient</button><div class="tabs">${PTAB.map(([k, l]) => `<button class="${tab == k ? 'on' : ''}" data-a="tab:${k}">${l}</button>`).join('')}</div><button class="btn ${ptColsOpen ? 'on2' : ''}" data-a="ptcols">☰ Columns</button><button class="btn ${ptFilt ? 'on2' : ''}" data-a="ptfilt">Filters</button><button class="btn" id="pfclr" data-a="pfclear" ${pfActive().length ? '' : 'hidden'}>✕ Clear filters</button><button class="btn" data-a="csv">Export Excel</button></div>${panel}
+<div class="card"><table class="ptb"><thead><tr>${cols.map(([k, l]) => `<th class="${k == 'latin' && !det ? 'c-latin' : ''}">${l}</th>`).join('')}</tr>${ptFilt ? `<tr class="frow">${cols.map(([k]) => fCell(k == 'act' ? null : k)).join('')}</tr>` : ''}</thead><tbody id="ptbody">${v.body}</tbody></table></div>
+<div class="pg" id="ptpg">${v.pager}</div>`;
+};
+document.addEventListener('input', (e) => { const k = e.target.dataset && e.target.dataset.pf; if (!k) return; pf[k] = e.target.value; pg = 1; ptRefresh(); });
+document.addEventListener('change', (e) => { const k = e.target.dataset && e.target.dataset.pf; if (!k) return; pf[k] = e.target.value; pg = 1; ptRefresh(); });
+async function ptAdmit(id) {
+  try {
+    const p = ptById(id);
+    if (p.type == 'IPD') { for (const r of D.ipd.filter((x) => x.code == String(id) && !x.out)) await api('PUT', 'ipd/' + r.id, { out: 1, dis: ymd(new Date()) }); await api('PUT', 'patients/' + id, { type: 'OPD' }); toast('Discharged'); }
+    else return bedForm(id);
+    await load(); render();
+  } catch (e) { toast(e.message); }
+}
+function ptCard(id) {
+  const p = ptById(id); printDoc('Patient card', ptBlock(p) + kv([['Treatment', p.treatment], ['Diagnosis', p.diagnosis || p.last_dx], ['Complaints', p.complaints], ['Past medical history', p.history], ['Registered', fmtD(p.reg_date || p.created_at)]]));
+}
+// ---------- billing: schedule charges minus payments ----------
+function payForm(pid) {
+  const p = ptById(pid); if (!p) return;
+  if (!(p.due > 0)) return toast('Paid');
+  openForm('Record payment', `<p>${esc(p.name)} — Amount due: <b>${K(p.due)}</b> <span class="mu">(${usd(p.due)})</span></p>${fIn('Amount paid (KHR)', 'amount', p.due, 'number', `min="1" max="${p.due}" required`)}${fSel('Method', 'method', 'Cash', ['Cash', 'Bank'])}`, async (f) => {
+    const m = new FormData(f), amt = Math.round(+m.get('amount') || 0); if (amt < 1) throw new Error('Enter an amount'); if (amt > p.due) throw new Error('Amount is more than the balance');
+    await api('POST', 'records', { patient_id: pid, kind: 'payment', date: ymd(new Date()), data: { amount: amt, method: m.get('method') } });
+    await load(); if (rt == 'pd' && pdId == pid) await loadRecs(); render(); toast('Saved');
+  }, { cls: 'wide', ok: 'Save' });
+}
+const billTotals = (list) => { const ch = list.filter((r) => r.kind == 'schedule').reduce((t, r) => t + (+jd(r).amount || 0), 0), pd = list.filter((r) => r.kind == 'payment').reduce((t, r) => t + (+jd(r).amount || 0), 0); return { ch, pd, bal: Math.max(0, ch - pd) }; };
+function billPanel() {
+  const t = billTotals(recs), pays = recs.filter((r) => r.kind == 'payment');
+  return `<div class="hd"><h2 class="rh">Billing history</h2><div class="tools"><button class="btn" data-a="schinv">Invoice</button><button class="btn g" data-a="recpay">+ Record payment</button></div></div>
+<div class="gr2" style="margin-bottom:12px"><div class="rc"><span class="mu">Charges</span><br><b>${K(t.ch)}</b></div><div class="rc"><span class="mu">Paid</span><br><b>${K(t.pd)}</b></div><div class="rc" style="${t.bal ? 'border-color:#dc2626' : ''}"><span class="mu">Balance</span><br><b>${K(t.bal)}</b></div></div>
+${pays.map((r) => `<div class="rc"><div class="ra"><button class="btn s r" data-a="rdel:${r.id}">✕</button></div><b>${K(jd(r).amount)}</b> <span class="bd">${esc(jd(r).method || '')}</span> <span class="mu">${esc(r.date || '')}</span></div>`).join('') || '<p class="emp">Nothing here yet.</p>'}`;
+}
+async function invoicePrint(pid) {
+  const p = ptById(pid), list = await api('GET', 'records?patient_id=' + pid + '&limit=5000'), rows = list.filter((r) => r.kind == 'schedule').sort((a, b) => (a.date || '').localeCompare(b.date || '')), t = billTotals(list);
+  printDoc('Invoice', ptBlock(p) + `<table class="pk full"><tr><th>No.</th><th>Date</th><th>Description</th><th>Amount</th></tr>${rows.map((r, i) => { const d = jd(r); return `<tr><td>${i + 1}</td><td>${esc((r.date || '').slice(0, 10))}</td><td>${esc([r.title, d.dx, r.notes].filter(Boolean).join(' – '))}</td><td>${K(d.amount || 0)}</td></tr>`; }).join('')}<tr><th colspan="3">Total</th><td><b>${K(t.ch)}</b></td></tr><tr><th colspan="3">Paid</th><td>${K(t.pd)}</td></tr><tr><th colspan="3">Balance</th><td><b>${K(t.bal)}</b></td></tr></table>`);
+}
+RX.push([/^Showing (\d+) to (\d+) of (\d+) records$/, 'បង្ហាញ $1 ដល់ $2 នៃ $3 កំណត់ត្រា']);
+Object.assign(L, { 'IPD/OPD': 'IPD/OPD', 'Treatment': 'ការព្យាបាល', 'Medical Record': 'Medical Record', 'Complaints': 'ពាក្យបណ្តឹង', 'Registration date': 'កាលបរិច្ឆេទចុះឈ្មោះ', 'Details': 'ព័ត៌មានលម្អិត', 'Search Name, Phone, NSSF, National ID…': 'ស្វែងរកឈ្មោះ លេខទូរស័ព្ទ NSSF អត្តសញ្ញាណប័ណ្ណ…', 'Billing history': 'ប្រវត្តិគិតលុយ', 'Record payment': 'កត់ត្រាការបង់ប្រាក់', '+ Record payment': '+ កត់ត្រាការបង់ប្រាក់', 'Charges': 'ការគិតថ្លៃ', 'Balance': 'សមតុល្យ', 'Method': 'វិធីសាស្ត្រ', 'Amount paid (KHR)': 'ទឹកប្រាក់បានបង់ (KHR)', 'No patients.': 'គ្មានអ្នកជំងឺទេ។', 'Patient card': 'កាតអ្នកជំងឺ', 'Amount is more than the balance': 'ចំនួនទឹកប្រាក់លើសសមតុល្យ', 'Enter an amount': 'សូមបញ្ចូលចំនួនទឹកប្រាក់' });
+try { if (localStorage.getItem('sbc') == '1' && document.body.classList) document.body.classList.add('sbc'); } catch (e) { /* ignore */ }
+Object.assign(L, { 'Menu': 'ម៉ឺនុយ' });
+Object.assign(L, { 'All': 'ទាំងអស់', 'With record': 'មានកំណត់ត្រា', 'No record': 'គ្មានកំណត់ត្រា', '✕ Clear filters': '✕ សម្អាតតម្រង', 'Export Excel': 'នាំចេញ Excel' });
+Object.assign(L, { 'Columns': 'ជួរឈរ', '☰ Columns': '☰ ជួរឈរ', 'Filters': 'តម្រង', 'Show all': 'បង្ហាញទាំងអស់', 'Show or hide columns': 'បង្ហាញ ឬលាក់ជួរឈរ', 'At least one column must stay visible': 'ត្រូវទុកយ៉ាងហោចណាស់ជួរឈរមួយ' });
+
+// ---------- OPD -> IPD: click the OPD badge (or the bed icon) to enter Room and Bed ----------
+function bedForm(pid) {
+  const p = ptById(pid); if (!p) return;
+  const cur = D.ipd.find((x) => String(x.code) == String(pid) && !x.out);
+  openForm('Update Bed Information', fIn('Room Number', 'room', cur ? cur.room : '') + fIn('Bed Number', 'bed', cur ? cur.bed : ''), async (f) => {
+    const m = new FormData(f), room = (m.get('room') || '').trim(), bed = (m.get('bed') || '').trim();
+    if (cur) await api('PUT', 'ipd/' + cur.id, { room, bed });
+    else { await api('POST', 'ipd', { name: p.name, code: String(pid), room, bed, adm: ymd(new Date()), paid: 0, out: 0 }); await api('PUT', 'patients/' + pid, { type: 'IPD' }); }
+    await load(); render(); toast(cur ? 'Saved' : 'Admitted to IPD');
+  }, { cls: '', ok: 'Save' });
+  const first = $('#mf input'); if (first && first.focus) first.focus();
+}
+Object.assign(L, { 'Update Bed Information': 'ធ្វើបច្ចុប្បន្នភាពព័ត៌មានគ្រែ', 'Room Number': 'លេខបន្ទប់', 'Bed Number': 'លេខគ្រែ', 'Room / Bed': 'បន្ទប់ / គ្រែ', 'Bed': 'គ្រែ', 'Admitted to IPD': 'បានទទួលជាអ្នកជំងឺក្នុង' });
+
+// ---------- Inpatients (IPD) and Current IPD: full table ----------
+const ipdById = (id) => D.ipd.find((x) => x.id == id);
+const ipdPt = (r) => D.pt.find((q) => String(q.id) == String(r.code));
+const ipdStart = (r) => r.adm || String(r.created_at || '').slice(0, 10);
+function ipdDays(r) {
+  const s = ipdStart(r); if (!s) return null;
+  const e = r.out ? (r.dis || String(r.updated_at || '').slice(0, 10)) : ymd(new Date());
+  const n = Math.round((Date.parse(e) - Date.parse(s)) / 864e5); return isNaN(n) ? null : Math.max(0, n);
+}
+const ipdHead = ['Name', 'Latin name', 'Room / Bed', 'Treatment', 'Billing history', 'Admission date', 'Discharge date', 'Days', 'Actions'];
+function ipdRow(r) {
+  const p = ipdPt(r), i = D.ipd.indexOf(r), d = ipdDays(r), st = ipdStart(r), due = p ? p.due : 0;
+  return `<tr><td><div class="pn"><div><a href="#" data-a="${p ? 'open:' + p.id : 'ipdedit:' + r.id}">${esc(r.name)}</a> <span class="mu">(${esc(r.code)})</span></div></div></td>
+<td>${esc((p && p.latin_name) || 'N/A')}</td>
+<td><a href="#" class="ed" data-a="ipdbed:${r.id}" title="Edit room and bed">✎</a> ${r.room ? `<span title="Room">🚪 ${esc(r.room)}</span>` : ''} ${r.bed ? `<span title="Bed">🛏 ${esc(r.bed)}</span>` : ''}</td>
+<td title="${esc(r.treatment || (p && p.treatment) || '')}">${esc(trunc(r.treatment || (p && p.treatment), 16) || '')} <a href="#" class="ed" data-a="ipdtreat:${r.id}" title="Edit treatment">✎</a></td>
+<td>${due > 0 ? `<div class="due" data-a="ptpay:${p.id}" title="Record payment"><b>KHR ${due.toLocaleString('en-US')}</b></div>` : `<span class="paidb">✔ Paid</span>`}</td>
+<td>${st ? fmtD(st) : 'N/A'}</td>
+<td>${r.out ? (r.dis ? fmtD(r.dis) : 'N/A') : `<button class="dcb" data-a="ipdout:${r.id}">Discharge</button>`}</td>
+<td>${d == null ? 'N/A' : d + (d == 1 ? ' day' : ' days')}</td>
+<td style="white-space:nowrap" class="iac">${p ? `<a href="#" data-a="open:${p.id}" title="Open patient file">👁</a>` : ''}<a href="#" data-a="ipdprint:${r.id}" title="Print">🖨</a><a href="#" data-a="ipdshare:${r.id}" title="Share summary">✈</a><a href="#" data-a="ipdedit:${r.id}" title="Edit">✎</a><a href="#" class="rd" data-a="del:ipd:${i}" title="Delete">🗑</a></td></tr>`;
+}
+function ipdPage(current) {
+  const rows = D.ipd.filter((r) => (!current || !r.out) && (!q || lc([r.name, r.code, r.room, r.bed, (ipdPt(r) || {}).latin_name].join(' ')).includes(lc(q.trim()))));
+  return `<div class="hd"><div class="tools" style="align-items:center"><div class="ibox">🛏</div><div><h1>${current ? 'Current IPD patients' : 'Inpatients (IPD)'}</h1><p class="mu">${current ? 'Patients not yet discharged' : 'Manage all admitted patients.'}</p></div></div><div class="tools">${sr('Search patient by name or ID…')}<button class="btn g" data-a="ipdadd">+ Add</button><button class="btn" data-a="csv">Export Excel</button></div></div>
+<div class="card"><table class="ipdt"><thead><tr>${ipdHead.map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(ipdRow).join('') || `<tr><td colspan="9" class="emp">Nothing here yet.</td></tr>`}</tbody></table></div>`;
+}
+R.ipd = () => ipdPage(false); R.cur = () => ipdPage(true);
+async function ipdOut(id) {
+  try { const r = ipdById(id); await api('PUT', 'ipd/' + id, { out: 1, dis: ymd(new Date()) }); await syncOpd(r); await load(); render(); toast('Discharged'); } catch (e) { toast(e.message); }
+}
+function ipdBed(id) {
+  const r = ipdById(id); if (!r) return;
+  openForm('Update Bed Information', fIn('Room Number', 'room', r.room) + fIn('Bed Number', 'bed', r.bed), async (f) => {
+    const m = new FormData(f); await api('PUT', 'ipd/' + id, { room: (m.get('room') || '').trim(), bed: (m.get('bed') || '').trim() }); await load(); render(); toast('Saved');
+  }, { cls: '', ok: 'Save' });
+}
+function ipdTreat(id) {
+  const r = ipdById(id), p = ipdPt(r); if (!r) return;
+  openForm('Treatment', fTa('Treatment', 'treatment', r.treatment || (p && p.treatment) || '', 4), async (f) => {
+    await api('PUT', 'ipd/' + id, { treatment: new FormData(f).get('treatment') || '' }); await load(); render(); toast('Saved');
+  }, { cls: '', ok: 'Save' });
+}
+function ipdEdit(id) {
+  const r = ipdById(id); if (!r) return;
+  openForm('Edit inpatient', `${fIn('Patient name', 'name', r.name, 'text', 'required')}<div class="g2">${fIn('Room Number', 'room', r.room)}${fIn('Bed Number', 'bed', r.bed)}${fIn('Admission date', 'adm', ipdStart(r), 'date')}${fIn('Discharge date', 'dis', r.dis, 'date')}</div>${fTa('Treatment', 'treatment', r.treatment, 3)}`, async (f) => {
+    const m = new FormData(f); await api('PUT', 'ipd/' + id, { name: m.get('name'), room: (m.get('room') || '').trim(), bed: (m.get('bed') || '').trim(), adm: m.get('adm') || '', dis: m.get('dis') || '', treatment: m.get('treatment') || '' }); await load(); render(); toast('Saved');
+  }, { cls: 'wide', ok: 'Save' });
+}
+function ipdAdd() {
+  const opd = D.pt.filter((p) => p.type != 'IPD'); if (!opd.length) return toast('Nothing here yet.');
+  openForm('Admit to IPD', `${fSel('Patient', 'pid', opd[0].id, opd.map((p) => [p.id, `${p.name} (${p.id})`]))}<div class="g2">${fIn('Room Number', 'room', '')}${fIn('Bed Number', 'bed', '')}</div>${fIn('Admission date', 'adm', ymd(new Date()), 'date')}`, async (f) => {
+    const m = new FormData(f), p = ptById(+m.get('pid')); if (!p) throw new Error('Choose a patient');
+    await api('POST', 'ipd', { name: p.name, code: String(p.id), room: (m.get('room') || '').trim(), bed: (m.get('bed') || '').trim(), adm: m.get('adm') || ymd(new Date()), paid: 0, out: 0 });
+    await api('PUT', 'patients/' + p.id, { type: 'IPD' }); await load(); render(); toast('Admitted to IPD');
+  }, { cls: 'wide', ok: 'Save' });
+}
+function ipdSummary(r) {
+  const p = ipdPt(r), d = ipdDays(r);
+  return [['Name', r.name], ['ID', r.code], ['Latin name', p && p.latin_name], ['Room', r.room], ['Bed', r.bed], ['Admission date', ipdStart(r) ? fmtD(ipdStart(r)) : ''], ['Discharge date', r.out && r.dis ? fmtD(r.dis) : ''], ['Days', d == null ? '' : d], ['Treatment', r.treatment || (p && p.treatment)]];
+}
+function ipdPrint(id) { const r = ipdById(id); printDoc('Inpatient record', kv(ipdSummary(r))); }
+function ipdShare(id) {
+  const r = ipdById(id), text = ipdSummary(r).filter(([, v]) => v !== '' && v != null).map(([k, v]) => `${k}: ${v}`).join('\n');
+  if (typeof navigator != 'undefined' && navigator.share) navigator.share({ title: r.name, text }).catch(() => {});
+  else if (typeof navigator != 'undefined' && navigator.clipboard) navigator.clipboard.writeText(text).then(() => toast('Copied'), () => toast(text)); else toast(text);
+}
+RX.push([/^(\d+) days?$/, '$1 ថ្ងៃ']);
+Object.assign(L, { 'Admission date': 'ថ្ងៃចូលសម្រាក', 'Discharge date': 'ថ្ងៃចេញពីពេទ្យ', 'Days': 'ចំនួនថ្ងៃ', 'Search patient by name or ID…': 'ស្វែងរកអ្នកជំងឺតាមឈ្មោះ ឬ ID…', 'Edit inpatient': 'កែប្រែអ្នកជំងឺក្នុង', 'Admit to IPD': 'ទទួលជាអ្នកជំងឺក្នុង', 'Patient': 'អ្នកជំងឺ', 'Patient name': 'ឈ្មោះអ្នកជំងឺ', 'Inpatient record': 'កំណត់ត្រាអ្នកជំងឺក្នុង', 'Copied': 'បានចម្លង' });
