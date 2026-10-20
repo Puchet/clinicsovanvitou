@@ -715,6 +715,7 @@ function ipdBed(id) {
 }
 function ipdTreat(id) {
   const r = ipdById(id), p = ipdPt(r); if (!r) return;
+  if (p) return treatmentFollowup(p.id);
   openForm('Treatment', fTa('Treatment', 'treatment', r.treatment || (p && p.treatment) || '', 4), async (f) => {
     await api('PUT', 'ipd/' + id, { treatment: new FormData(f).get('treatment') || '' }); await load(); render(); toast('Saved');
   }, { cls: '', ok: 'Save' });
