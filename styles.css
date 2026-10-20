@@ -1238,8 +1238,9 @@ table.ptb td {
 body.sbc aside {
   display: none;
 }
-.w.full {
-  max-width: none;
+.w {
+  max-width: 1160px;
+  margin: 0 auto;
 }
 #v.tight {
   padding: 14px 10px;
