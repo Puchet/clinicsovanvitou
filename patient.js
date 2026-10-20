@@ -285,6 +285,20 @@ const schNames = () => { const s = new Set(['Standard']); recs.filter((r) => r.k
 const schRows = () => recs.filter((r) => r.kind == 'schedule' && sName(r) == sch).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 const schNote = () => recs.find((r) => r.kind == 'schedulenote' && sName(r) == sch);
 const schTotal = () => schRows().reduce((t, r) => t + (+jd(r).amount || 0), 0);
+const schBillable = (r) => { const d = jd(r); return d.billable !== 0 && d.billable !== false; };
+const schRate = () => +((D.clinic || {}).rate) || 4000;
+function schCatalogItem(ref) {
+  const [kind, id] = (ref || '').split(':');
+  const items = kind == 'medicine' ? D.med : kind == 'service' ? D.sv : [];
+  return items.find((item) => String(item.id) == id);
+}
+function schItemChanged(ref) {
+  const item = schCatalogItem(ref);
+  if (!item) return;
+  const form = $('#mf'), type = form.elements.namedItem('treatment_type'), amount = form.elements.namedItem('amount');
+  type.value = item.name;
+  amount.value = ((+item.price || 0) / schRate()).toFixed(2);
+}
 function schPanel() {
   if (!schNames().includes(sch)) sch = 'Standard';
   const rows = schRows(), n = schNote();
@@ -294,16 +308,57 @@ function schPanel() {
 <div class="card"><table><thead><tr><th>No.</th><th>Date</th><th>Diagnosis / type</th><th>Treatment / notes</th><th>Amount</th><th>Done</th><th>Actions</th></tr></thead><tbody>${rows.map((r, i) => { const d = jd(r); return `<tr><td>${i + 1}</td><td>${esc((r.date || '').slice(0, 10))}</td><td>${esc(d.dx || '')}</td><td style="white-space:pre-wrap">${esc(r.notes || '')}</td><td>${K(d.amount || 0)}</td><td><input type="checkbox" data-a="schdone:${r.id}" ${d.done ? 'checked' : ''} style="width:auto;min-width:0"></td><td><button class="btn s" data-a="redit:${r.id}">Edit</button> <button class="btn s r" data-a="rdel:${r.id}">✕</button></td></tr>`; }).join('') || `<tr><td colspan="7" class="emp">No schedules found.</td></tr>`}</tbody></table></div>`;
 }
 function schForm(r) {
-  const e = !!r, d = r ? jd(r) : {}; r = r || { date: ymd(new Date()) };
-  openForm(e ? 'Edit schedule' : 'Add Schedule', `<div class="g2">${fIn('Date', 'date', (r.date || '').slice(0, 10), 'date')}${fIn('Amount (KHR)', 'amount', d.amount || '', 'number', 'min="0"')}</div>${fIn('Diagnosis / type', 'dx', d.dx)}${fTa('Treatment / notes', 'notes', r.notes, 4)}${fCb('Done', 'done', d.done)}`, async (f) => {
-    const m = new FormData(f), b = { patient_id: pdId, kind: 'schedule', title: sch, date: m.get('date'), notes: m.get('notes'), data: { dx: m.get('dx'), amount: +m.get('amount') || 0, done: m.get('done') ? 1 : 0 } };
-    e ? await api('PUT', 'records/' + r.id, { ...b, title: r.title }) : await api('POST', 'records', b); await loadRecs(); render(); toast('Saved');
-  });
+  const e = !!r, d = r ? jd(r) : {};
+  r = r || { date: ymd(new Date()) };
+  const types = [...new Set([...schNames(), 'Treatment2'])], scheduleType = e ? sName(r) : sch;
+  const selectedRef = d.selection_ref || '';
+  const catalog = [
+    ['Medicine', D.med.map((item) => [`medicine:${item.id}`, item.name])],
+    ['Services', D.sv.map((item) => [`service:${item.id}`, item.name])]
+  ];
+  const options = catalog.map(([group, items]) => items.length ? `<optgroup label="${group}">${items.map(([value, name]) => `<option value="${esc(value)}" ${selectedRef == value ? 'selected' : ''}>${esc(name)}</option>`).join('')}</optgroup>` : '').join('');
+  const oldOption = selectedRef && !schCatalogItem(selectedRef) ? `<option value="${esc(selectedRef)}" selected>${esc(d.selection || 'Previously selected item')}</option>` : '';
+  const selection = `<select class="in sch-selection" name="selection_ref" id="sch-selection"><option value="">Select Medicine &amp; Services</option>${oldOption}${options}</select><span class="sch-link" aria-hidden="true">🔗</span>`;
+  const input = (label, name, value, type = 'text', attrs = '', placeholder = '') => `<div class="sch-form-row"><label for="sch-${name}">${label}</label><input class="in" id="sch-${name}" name="${name}" type="${type}" value="${esc(value ?? '')}" placeholder="${esc(placeholder)}" ${attrs}></div>`;
+  const textarea = (label, name, value, placeholder, rows = 3) => `<div class="sch-form-row"><label for="sch-${name}">${label}</label><textarea class="in" id="sch-${name}" name="${name}" rows="${rows}" placeholder="${esc(placeholder)}">${esc(value || '')}</textarea></div>`;
+  const radios = types.map((name) => `<label class="sch-radio"><input type="radio" name="schedule_type" value="${esc(name)}" ${name == scheduleType ? 'checked' : ''}> ${esc(name)}</label>`).join('');
+  const body = `<div class="sch-form">
+    ${input('Date', 'date', (r.date || '').slice(0, 10), 'date', 'required')}
+    <div class="sch-form-row"><label for="sch-selection">Selection</label><div class="sch-selection-wrap">${selection}</div></div>
+    ${input('Treatment Type', 'treatment_type', d.treatment_type || '', 'text', '', 'e.g. Consultation, Laser...')}
+    ${textarea('Diagnosis', 'diagnosis', d.diagnosis || d.dx || '', 'Diagnosis details...')}
+    ${textarea('Treatment / Notes', 'notes', r.notes, 'Treatment details or notes...', 3)}
+    <div class="sch-form-row"><span class="sch-form-label">Schedule Type</span><div class="sch-radios">${radios}</div></div>
+    <div class="sch-form-row"><label for="sch-amount">Amount</label><div class="sch-amount"><span>$</span><input class="in" id="sch-amount" name="amount" type="number" min="0" step="0.01" value="${e ? ((+d.amount || 0) / schRate()).toFixed(2) : ''}" placeholder="e.g. 50"><span>USD</span></div></div>
+    <div class="sch-form-row"><span class="sch-form-label">Billing</span><label class="sch-check"><input type="checkbox" name="billable" value="1" ${!e || schBillable(r) ? 'checked' : ''}> Add to Unpaid Billing <span class="sch-billing-icon" aria-hidden="true">◉</span></label></div>
+    <div class="sch-form-row"><span class="sch-form-label">Status</span><label class="sch-check"><input type="checkbox" name="done" value="1" ${d.done ? 'checked' : ''}> Mark as Done</label></div>
+  </div>`;
+  openForm(e ? 'Edit schedule' : 'Add New Schedule', body, async (f) => {
+    const m = new FormData(f), nextType = m.get('schedule_type') || sch;
+    const amountUsd = Number(m.get('amount')) || 0;
+    const item = schCatalogItem(m.get('selection_ref'));
+    const b = {
+      patient_id: pdId, kind: 'schedule', title: nextType, date: m.get('date'), notes: m.get('notes'),
+      data: {
+        selection_ref: m.get('selection_ref') || '',
+        selection: item ? item.name : m.get('selection_ref') ? d.selection || '' : '',
+        treatment_type: m.get('treatment_type') || '',
+        diagnosis: m.get('diagnosis') || '',
+        dx: m.get('diagnosis') || '',
+        amount: Math.round(amountUsd * schRate()),
+        billable: m.get('billable') ? 1 : 0,
+        done: m.get('done') ? 1 : 0
+      }
+    };
+    e ? await api('PUT', 'records/' + r.id, b) : await api('POST', 'records', b);
+    sch = nextType;
+    await loadRecs(); render(); toast('Saved');
+  }, { cls: 'schedule-form', ok: 'Save' });
 }
-function schTable(rows) { return `<table class="pk full"><tr><th>No.</th><th>Date</th><th>Diagnosis / type</th><th>Treatment / notes</th><th>Amount</th><th>Done</th></tr>${rows.map((r, i) => { const d = jd(r); return `<tr><td>${i + 1}</td><td>${esc((r.date || '').slice(0, 10))}</td><td>${esc(d.dx || '')}</td><td>${esc(r.notes || '')}</td><td>${K(d.amount || 0)}</td><td>${d.done ? '✔' : ''}</td></tr>`; }).join('')}<tr><th colspan="4">Total</th><td colspan="2"><b>${K(schTotal())}</b></td></tr></table>`; }
+function schTable(rows) { return `<table class="pk full"><tr><th>No.</th><th>Date</th><th>Treatment Type / Diagnosis</th><th>Treatment / notes</th><th>Amount</th><th>Done</th></tr>${rows.map((r, i) => { const d = jd(r); return `<tr><td>${i + 1}</td><td>${esc((r.date || '').slice(0, 10))}</td><td>${esc([d.treatment_type, d.diagnosis || d.dx].filter(Boolean).join(' / '))}</td><td>${esc(r.notes || '')}</td><td>${K(d.amount || 0)}</td><td>${d.done ? '✔' : ''}</td></tr>`; }).join('')}<tr><th colspan="4">Total</th><td colspan="2"><b>${K(schTotal())}</b></td></tr></table>`; }
 function schPrint(inv) {
   const n = schNote(), rows = schRows();
-  printDoc(inv ? 'Invoice' : 'Treatment Schedule – ' + sch, ptBlock(curPt()) + (!inv && n && n.notes ? `<p>${esc(n.notes).replace(/\n/g, '<br>')}</p>` : '') + (inv ? `<table class="pk full"><tr><th>No.</th><th>Date</th><th>Description</th><th>Amount</th></tr>${rows.map((r, i) => { const d = jd(r); return `<tr><td>${i + 1}</td><td>${esc((r.date || '').slice(0, 10))}</td><td>${esc([d.dx, r.notes].filter(Boolean).join(' – '))}</td><td>${K(d.amount || 0)}</td></tr>`; }).join('')}<tr><th colspan="3">Total</th><td><b>${K(schTotal())}</b></td></tr></table>` : schTable(rows)));
+  printDoc(inv ? 'Invoice' : 'Treatment Schedule – ' + sch, ptBlock(curPt()) + (!inv && n && n.notes ? `<p>${esc(n.notes).replace(/\n/g, '<br>')}</p>` : '') + (inv ? `<table class="pk full"><tr><th>No.</th><th>Date</th><th>Description</th><th>Amount</th></tr>${rows.map((r, i) => { const d = jd(r); return `<tr><td>${i + 1}</td><td>${esc((r.date || '').slice(0, 10))}</td><td>${esc([d.selection, d.treatment_type, d.diagnosis || d.dx, r.notes].filter(Boolean).join(' – '))}</td><td>${K(d.amount || 0)}</td></tr>`; }).join('')}<tr><th colspan="3">Total</th><td><b>${K(schTotal())}</b></td></tr></table>` : schTable(rows)));
 }
 
 // ---------- Consultation Form (CNF): questionnaire + agreement + assessment, with form history ----------
@@ -320,7 +375,7 @@ const CN = [
   ['h', '3. History of reactions'], ['q', 'react', 'Have you had a reaction to any of these before?', ['Cosmetics', 'Metal', 'Medicine', 'Food', 'Fragrance', 'Pollen', 'Other', 'None'], 'If yes, describe'],
   ['h', '4. Skin reaction level'], ['q', 'level', '', ['Easy', 'Medium', 'High', 'Normal']],
   ['h', '5. Healing'], ['q', 'heal', '', ['Normal', 'Fast', 'Slow', 'Infection / keloid']],
-  ['h', '6. Scar formation'], ['q', 'scar', '', ['Easy', 'Not easy', 'Normal']],
+  ['h', '6. Sun Exposure'], ['q', 'scar', '', ['Easy', 'Not easy', 'Normal']],
   ['H', 'Product usage history'], ['h', '7. Current products'], ['q', 'prod', '', ['Cleanser', 'Soap', 'Toner', 'Scrub / exfoliate', 'Moisturiser', 'Sunscreen', 'Other'], 'Other'],
   ['h', '8. Retinol / peeling'], ['q', 'ret', '', ['Used before', 'Never used', 'Currently using', 'Don’t know']],
   ['H', 'Medicine usage'], ['h', '9. Birth control or other regular medicine'], ['q', 'meds', '', ['Regular medicine', 'None', 'Other medicine'], 'If yes, which?'],
@@ -337,13 +392,25 @@ const CN = [
   ['T', 'Treatment Agreement'], ['ag'],
   ['box', 'q', 'und', 'Have you received explanations about the treatment, and do you understand?', ['Received and understood well', 'Not yet understood', 'Need more explanation']],
   ['a', 'und_t', 'Customer understanding'], ['a', 'warn', 'Warnings & conditions'], ['a', 'pint', 'Personal interview'], ['sig']];
-const CNP = [['a', 'as_ass', 'Assessment'], ['a', 'as_dx', 'Diagnosis'], ['a', 'as_plan', 'Treatment plan'], ['a', 'as_rec', 'Recommended products / treatments'], ['i', 'as_fu', 'Follow-up date', 'date'], ['a', 'as_note', 'Notes']];
+const CNP = [
+  ['a', 'as_interview', 'ការសម្ភាសន៍ផ្ទាល់ខ្លួន (Personal Interview)', 2],
+  ['a', 'as_ass', 'ការវាយតម្លៃរបស់វេជ្ជបណ្ឌិត (Doctor’s Assessment)', 2],
+  ['a', 'as_plan', 'ផែនការព្យាបាលរបស់វេជ្ជបណ្ឌិត (Doctor’s Treatment Plan)', 2],
+  ['H', 'Special Notes - Image 5'],
+  ['q', 'as_previous', 'តើលោកអ្នកធ្លាប់មកព្យាបាលនៅគ្លីនិកយើងខ្ញុំដែរឬទេ? (Have you visited our clinic before?)', ['បាទ/ចាស', 'ទេ']],
+  ['q', 'as_source', 'តើលោកអ្នកស្គាល់គ្លីនិកយើងខ្ញុំតាមរយៈណា? (How did you hear about us?)', ['TikTok', 'Telegram', 'Facebook']],
+  ['a', 'as_reason', 'មូលហេតុនៃការមកពិគ្រោះ (Reason for visit)', 2],
+  ['a', 'as_address', 'អាសយដ្ឋានបច្ចុប្បន្ន (Current address)', 2],
+  ['a', 'as_note', 'កំណត់ចំណាំផ្សេងៗ (Additional notes)', 2]
+];
 function cnHtml(S, d) {
   return S.map((it) => { let [t, k, l, o, x] = it;
     if (t == 'box') { [t, k, l, o, x] = it.slice(1); o = o; return `<div class="sec cnb">${cnQ(k, l, o, x, d)}</div>`; }
     if (t == 'g2') return `<div class="sec"><div class="g2">${k.map(([kk, ll]) => fIn(ll, 'cn_' + kk, d[kk])).join('')}</div></div>`;
-    if (t == 'H') return `<h4 class="cnH">${k}</h4>`; if (t == 'T') return `<h3 class="cnT">${k}</h3>`; if (t == 'h') return `<h5 class="cnh">${k}</h5>`;
-    if (t == 'q') return cnQ(k, l, o, x, d); if (t == 'a') return fTa(l, 'cn_' + k, d[k], 3); if (t == 'i') return fIn(l, 'cn_' + k, d[k], o || 'text');
+    if (t == 'H') return `<h4 class="${S == CNP ? 'cn-plan-heading' : 'cnH'}">${k}</h4>`; if (t == 'T') return `<h3 class="cnT">${k}</h3>`; if (t == 'h') return `<h5 class="cnh">${k}</h5>`;
+    if (t == 'q') return S == CNP ? `<div class="cn-plan-question"><b>${esc(l)}</b><div class="cn-plan-options">${o.map((v) => fCb(v, 'cnc_' + k, (d[k] || []).includes(v), v)).join('')}</div></div>` : cnQ(k, l, o, x, d);
+    if (t == 'a') return S == CNP ? `<label class="fl cn-plan-field">${l}<textarea class="in" name="cn_${k}" rows="${Number.isInteger(o) ? o : 2}">${esc(d[k] || '')}</textarea></label>` : fTa(l, 'cn_' + k, d[k], 3);
+    if (t == 'i') return fIn(l, 'cn_' + k, d[k], o || 'text');
     if (t == 'ag') { const tx = cnfTexts(); return CNF_AG.map(([kk, ll]) => fTa(ll, 'cn_ag_' + kk, d['ag_' + kk] ?? tx[kk], 3)).join(''); }
     if (t == 'sig') return `<div class="sec g2 sig"><div><b>Customer name:</b><div class="sl">${esc((curPt() || {}).name || '')}</div></div><div><b>Date:</b><div class="sl">&nbsp;</div></div><div><b>Signature:</b><div class="sl">&nbsp;</div></div><div><b>Doctor signature and name:</b><div class="sl">&nbsp;</div></div></div>`;
     return ''; }).join('');
@@ -362,7 +429,7 @@ function cnPrintHtml(d) {
   const sec = (S) => S.map((it) => { let [t, k, l, o, x] = it; if (t == 'box') { [t, k, l, o, x] = it.slice(1); }
     if (t == 'g2') return kv(k.map(([kk, ll]) => [ll, d[kk]]));
     if (t == 'H') return `<h4>${esc(k)}</h4>`; if (t == 'T') return `<h3>${esc(k)}</h3>`; if (t == 'h') return `<h5>${esc(k)}</h5>`;
-    if (t == 'q') { const v = [...(d[k] || []), ...(d[k + '_o'] ? [(x || 'Other') + ': ' + d[k + '_o']] : [])]; return v.length ? `<p>${l ? `<b>${esc(l)}:</b> ` : ''}${v.map(esc).join(', ')}</p>` : ''; }
+    if (t == 'q') { const v = [...(d[k] || []), ...(d[k + '_o'] ? [(x || 'Other') + ': ' + d[k + '_o']] : [])]; return v.length ? `<p><b>${esc(l)}:</b> ${v.map(esc).join(', ')}</p>` : ''; }
     if (t == 'a' || t == 'i') return d[k] ? `<p><b>${esc(l)}:</b> ${esc(d[k]).replace(/\n/g, '<br>')}</p>` : '';
     if (t == 'ag') return CNF_AG.map(([kk, ll]) => `<p><b>${esc(ll)}:</b> ${esc(d['ag_' + kk] ?? cnfTexts()[kk]).replace(/\n/g, '<br>')}</p>`).join('');
     if (t == 'sig') return `<table class="pk full"><tr><th>Customer name</th><td>${esc((curPt() || {}).name || '')}</td><th>Date</th><td>&nbsp;</td></tr><tr><th>Signature</th><td>&nbsp;<br>&nbsp;</td><th>Doctor</th><td>&nbsp;</td></tr></table>`;
@@ -373,8 +440,8 @@ function cnfForm(r) {
   const e = !!r, d = r ? jd(r) : {}, hist = recs.filter((x) => x.kind == 'cnf');
   openForm('Consultation Form (CNF)', `<div class="cnfw"><div class="cnfl"><div class="tabs cnft"><button type="button" class="on" data-a="cnftab:gen">General Form</button><button type="button" data-a="cnftab:plan">Assessment & Plan</button></div>
 <div id="cn-gen">${cnHtml(CN, d)}</div><div id="cn-plan" hidden>${cnHtml(CNP, d)}</div></div>
-<div class="cnfh"><div class="tools" style="justify-content:space-between"><b>Form History</b><button type="button" class="btn s" data-a="cnfnew" title="New form">+</button></div>${hist.map((x) => `<div class="rc ${e && x.id == r.id ? 'sel' : ''}" data-a="cnfload:${x.id}" style="cursor:pointer"><b>${esc((x.date || '').replace('T', ' '))}</b><div class="mu">${esc(jd(x).as_dx || (jd(x).prob || []).slice(0, 3).join(', '))}</div></div>`).join('') || '<p class="mu" style="font-size:12px">No history records yet.</p>'}</div></div>`, async (f) => {
-    const b = { patient_id: pdId, kind: 'cnf', date: e ? r.date : nowLocal(), data: { ...cnCollect(f, CN), ...cnCollect(f, CNP) } };
+<div class="cnfh"><div class="tools" style="justify-content:space-between"><b>Form History</b><button type="button" class="btn s" data-a="cnfnew" title="New form">+</button></div>${hist.map((x) => `<div class="rc ${e && x.id == r.id ? 'sel' : ''}" data-a="cnfload:${x.id}" style="cursor:pointer"><b>${esc((x.date || '').replace('T', ' '))}</b><div class="mu">${esc(jd(x).as_ass || jd(x).as_dx || (jd(x).prob || []).slice(0, 3).join(', '))}</div></div>`).join('') || '<p class="mu" style="font-size:12px">No history records yet.</p>'}</div></div>`, async (f) => {
+    const b = { patient_id: pdId, kind: 'cnf', date: e ? r.date : nowLocal(), data: { ...d, ...cnCollect(f, CN), ...cnCollect(f, CNP) } };
     e ? await api('PUT', 'records/' + r.id, b) : await api('POST', 'records', b); await loadRecs(); render(); toast('Saved');
   }, { cls: 'xl cnf', ok: 'Save Only', extra: '<button type="button" class="btn" data-a="cnfprint">Print Current</button>' });
 }
@@ -468,6 +535,7 @@ function pAct(a, x, y, el) {
 document.addEventListener('change', async (e) => {
   const t = e.target;
   if (t.id == 'pfp') { try { toast('Uploading…'); const ph = await upl(t.files[0]); await api('PUT', 'patients/' + pdId, { photo: ph }); await load(); render(); } catch (er) { toast(er.message); } }
+  else if (t.id == 'sch-selection') schItemChanged(t.value);
   else if (t.dataset && t.dataset.fill && t.value) { const ta = t.parentElement.querySelector('textarea'); ta.value = (ta.value ? ta.value.replace(/[,\s]+$/, '') + ', ' : '') + t.value; t.value = ''; }
 });
 document.addEventListener('input', (e) => { if (e.target.id == 'pdd') { pdDate = e.target.value; $('#rp').innerHTML = recPanel(); } });
@@ -641,7 +709,7 @@ async function payForm(pid, payAll = false) {
     await load(); if (rt == 'pd' && pdId == pid) await loadRecs(); render(); toast('Saved');
   }, { cls: 'wide', ok: 'Save' });
 }
-const billTotals = (list) => { const ch = list.filter((r) => r.kind == 'schedule').reduce((t, r) => t + (+jd(r).amount || 0), 0), pd = list.filter((r) => r.kind == 'payment').reduce((t, r) => t + (+jd(r).amount || 0), 0); return { ch, pd, bal: Math.max(0, ch - pd) }; };
+const billTotals = (list) => { const ch = list.filter((r) => r.kind == 'schedule' && schBillable(r)).reduce((t, r) => t + (+jd(r).amount || 0), 0), pd = list.filter((r) => r.kind == 'payment').reduce((t, r) => t + (+jd(r).amount || 0), 0); return { ch, pd, bal: Math.max(0, ch - pd) }; };
 function billPanel() {
   const t = billTotals(recs), pays = recs.filter((r) => r.kind == 'payment');
   return `<div class="hd"><h2 class="rh">Billing history</h2><div class="tools"><button class="btn" data-a="schinv">Invoice</button><button class="btn g" data-a="payall" ${t.bal ? '' : 'disabled'}><span>Pay All</span>: <b>${K(t.bal)}</b></button><button class="btn" data-a="recpay" ${t.bal ? '' : 'disabled'}>+ Record payment</button></div></div>
@@ -658,12 +726,12 @@ async function openIpdBilling(pid) {
   const p = ptById(pid); if (!p) return toast('Patient not found.');
   pdId = pid;
   await loadRecs();
-  const charges = recs.filter((r) => r.kind == 'schedule').sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const charges = recs.filter((r) => r.kind == 'schedule' && schBillable(r)).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   const pays = recs.filter((r) => r.kind == 'payment').sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
   const t = billTotals(recs), unpaid = t.bal > 0;
   const chargeRows = charges.map((r) => {
     const d = jd(r);
-    return `<div class="bill-item"><div><b>${esc([d.dx, r.notes].filter(Boolean).join(' — ') || r.title || 'Charge')}</b><div class="mu">${esc(r.date || '')}</div></div><b>${K(d.amount || 0)}</b></div>`;
+    return `<div class="bill-item"><div><b>${esc([d.selection, d.treatment_type, d.diagnosis || d.dx, r.notes].filter(Boolean).join(' — ') || r.title || 'Charge')}</b><div class="mu">${esc(r.date || '')}</div></div><b>${K(d.amount || 0)}</b></div>`;
   }).join('');
   const paidRows = pays.map((r) => {
     const d = jd(r);

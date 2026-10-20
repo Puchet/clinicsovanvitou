@@ -5,7 +5,7 @@ const D={pt:[],ap:[],ipd:[],dr:[],payslips:[],med:[],sv:[],lab:[],echo:[],dx:[],
 // an admitted patient (IPD row linked by patient ID) goes back to OPD when the stay ends
 const syncOpd=r=>{const p=D.pt.find(q=>String(q.id)==String(r.code));return p&&p.type=='IPD'?api('PUT','patients/'+p.id,{type:'OPD'}):0};
 const billingData=r=>{try{return JSON.parse(r.data||'{}')}catch{return{}}};
-const patientDue=id=>{const rs=D.billing.filter(r=>String(r.patient_id)==String(id));return Math.max(0,rs.filter(r=>r.kind=='schedule').reduce((n,r)=>n+(+billingData(r).amount||0),0)-rs.filter(r=>r.kind=='payment').reduce((n,r)=>n+(+billingData(r).amount||0),0))};
+const patientDue=id=>{const rs=D.billing.filter(r=>String(r.patient_id)==String(id));return Math.max(0,rs.filter(r=>r.kind=='schedule'&&billingData(r).billable!==0&&billingData(r).billable!==false).reduce((n,r)=>n+(+billingData(r).amount||0),0)-rs.filter(r=>r.kind=='payment').reduce((n,r)=>n+(+billingData(r).amount||0),0))};
 const ipdPaid=r=>{const p=D.pt.find(q=>String(q.id)==String(r.code));return p?patientDue(p.id)<=0:!!r.paid};
 const mi=i=>D.med.find(m=>m.id==i)||{name:'(removed)',price:0};
 let rt='dash',q='',pg=1,tab='OPD',pay='Cash',cart={},nt=0;

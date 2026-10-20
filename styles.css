@@ -635,6 +635,98 @@ hr {
 #mf.wide {
   width: min(640px, 96vw);
 }
+#mf.schedule-form {
+  width: min(540px, 95vw);
+  padding: 20px 22px;
+}
+.sch-form {
+  display: grid;
+  gap: 10px;
+}
+.sch-form-row {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+.sch-form-row > label:first-child,
+.sch-form-label {
+  text-align: right;
+  font-size: 13px;
+}
+.sch-form-row > .in,
+.sch-form-row textarea.in {
+  width: 100%;
+  min-width: 0;
+}
+.sch-form-row textarea.in {
+  resize: vertical;
+}
+.sch-selection-wrap,
+.sch-amount {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 1px solid var(--bd);
+  border-radius: 7px;
+  padding: 0 10px;
+}
+.sch-selection-wrap {
+  border-color: #bfdbfe;
+  color: var(--p);
+}
+.sch-selection {
+  flex: 1;
+  min-width: 0;
+  border: 0 !important;
+  color: var(--p) !important;
+  background: transparent !important;
+}
+.sch-link {
+  color: var(--p);
+}
+.sch-amount input.in {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  padding-left: 0;
+}
+.sch-amount > span:last-child {
+  color: var(--mu);
+  font-size: 12px;
+}
+.sch-radios,
+.sch-check {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.sch-radio,
+.sch-check {
+  display: flex;
+  font-size: 13px;
+  margin: 0;
+}
+.sch-radio input,
+.sch-check input {
+  width: auto;
+  min-width: 0;
+  margin: 0 4px 0 0;
+}
+.sch-billing-icon {
+  color: #f59e0b;
+}
+@media (max-width: 560px) {
+  .sch-form-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+  .sch-form-row > label:first-child,
+  .sch-form-label {
+    text-align: left;
+  }
+}
 #mf.xl {
   width: min(920px, 96vw);
 }
@@ -1559,6 +1651,50 @@ table.pk.full {
 }
 #mf.cnf textarea.in {
   font-size: 13px;
+}
+#cn-plan {
+  padding: 12px;
+  border: 1px solid var(--bd);
+  border-radius: 8px;
+}
+#cn-plan .cn-plan-heading {
+  color: #15803d;
+  margin: 4px 0 8px;
+  font-size: 14px;
+}
+#cn-plan .cn-plan-field {
+  color: #15803d;
+  font-size: 11px;
+  font-weight: 600;
+  margin: 8px 0 12px;
+}
+#cn-plan .cn-plan-field textarea.in {
+  display: block;
+  margin-top: 4px;
+  color: var(--tx);
+  font-weight: 400;
+}
+.cn-plan-question {
+  margin: 8px 0;
+  font-size: 12px;
+}
+.cn-plan-question > b {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--tx);
+}
+.cn-plan-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 24px;
+}
+.cn-plan-options .cb {
+  margin: 0;
+  font-size: 11px;
+}
+.cn-plan-options .cb input {
+  width: auto;
+  min-width: 0;
 }
 @media (max-width: 820px) {
   .cnfw {
