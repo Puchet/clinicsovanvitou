@@ -248,6 +248,13 @@ tr:hover td {
 }
 .emp {
   padding: 40px;
+}
+.care-record-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 4px 12px;
+  margin: 8px 0;
+  font-size: 12px;
   text-align: center;
   color: var(--mu);
 }

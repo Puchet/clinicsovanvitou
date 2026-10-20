@@ -83,7 +83,15 @@ function regPrint() {
 }
 
 // ---------- patient file ----------
-const PT = [['vitals', 'Vital signs'], ['medical', 'Medical Record'], ['mdhistory', 'MD History'], ['beu', 'BEU'], ['schedule', 'Treatment Schedule'], ['consultation', 'Consultation'], ['operation', 'Operation'], ['investigation', 'Investigation request'], ['lab', 'Lab results'], ['echo', 'Echo results'], ['xray', 'X-Ray results'], ['homecare', 'Homecare'], ['prescription', 'Prescription'], ['medlist', 'Medication list'], ['documents', 'Documents'], ['billing', 'Billing history'], ['appts', 'Appointment history']];
+const PT = [['vitals', 'Vital signs'], ['medical', 'Medical Record'], ['mdhistory', 'MD History'], ['beu', 'BEU'], ['schedule', 'Treatment Schedule'], ['consultation', 'Consultation'], ['operation', 'Operation'], ['investigation', 'Investigation request'], ['lab', 'Lab results'], ['echo', 'Echo results'], ['xray', 'X-Ray results'], ['homecare', 'Homecare'], ['prescription', 'Prescription'], ['medlist', 'Medication list'], ['documents', 'Documents'], ['billing', 'Billing history'], ['appts', 'Appointment history'], ['allergy', 'Allergy History'], ['vaccination', 'Vaccination'], ['referral', 'Referral'], ['diagnosis_history', 'Diagnosis History'], ['laborder', 'Lab Orders'], ['imagingorder', 'Imaging Orders']];
+const CARE_MODULES = {
+  allergy: { title: 'Allergy History', fields: [['allergen', 'Allergen'], ['reaction', 'Reaction'], ['severity', 'Severity', 'sel', ['Mild', 'Moderate', 'Severe']], ['status', 'Status', 'sel', ['Active', 'Resolved']] ] },
+  vaccination: { title: 'Vaccination', fields: [['vaccine', 'Vaccine'], ['dose', 'Dose'], ['lot', 'Lot / Batch number'], ['next_due', 'Next due date', 'date']] },
+  referral: { title: 'Referral', fields: [['referred_to', 'Referred to'], ['specialty', 'Department / Specialty'], ['reason', 'Reason for referral'], ['status', 'Status', 'sel', ['Pending', 'Accepted', 'Completed']] ] },
+  diagnosis_history: { title: 'Diagnosis History', fields: [['diagnosis', 'Diagnosis'], ['code', 'ICD / Diagnosis code'], ['status', 'Status', 'sel', ['Active', 'Resolved', 'Chronic']] ] },
+  laborder: { title: 'Lab Orders', fields: [['test', 'Test requested'], ['priority', 'Priority', 'sel', ['Routine', 'Urgent', 'STAT']], ['status', 'Status', 'sel', ['Requested', 'Collected', 'Completed', 'Cancelled']], ['result', 'Result', 'ta']] },
+  imagingorder: { title: 'Imaging Orders', fields: [['modality', 'Modality', 'sel', ['X-Ray', 'Ultrasound', 'CT', 'MRI', 'Other']], ['body_part', 'Body part'], ['priority', 'Priority', 'sel', ['Routine', 'Urgent', 'STAT']], ['status', 'Status', 'sel', ['Requested', 'Scheduled', 'Completed', 'Cancelled']], ['indication', 'Clinical indication', 'ta']] }
+};
 const VSF = [['t', 'Temperature (°C)'], ['hr', 'Heart rate (bpm)'], ['rr', 'Respiratory rate (bpm)'], ['bp', 'Blood pressure (mmHg)'], ['spo2', 'SpO2 (%)'], ['p', 'Pulse (P)'], ['w', 'Weight (kg)'], ['h', 'Height (cm)']];
 const COLORS = ['#e5e7eb', '#ef4444', '#f97316', '#f59e0b', '#22c55e', '#3b82f6', '#6366f1', '#a855f7', '#ec4899'];
 let pdId = null, ptab = 'vitals', recs = [], pdDate = '';
@@ -97,7 +105,7 @@ async function loadRecs() {
 async function openPatient(id) { pdId = id; ptab = 'vitals'; pdDate = ''; rt = 'pd'; await loadRecs(); render(); }
 const lbl = (k) => (PT.find((x) => x[0] == k) || [0, k])[1];
 // ---- patient file layout & "hide" controls (saved in this browser) ----
-const PTI = { vitals: '🩺', medical: '📝', mdhistory: '📋', beu: '🖼️', schedule: '📅', consultation: '💬', operation: '✂️', investigation: '🔬', lab: '🧪', echo: '💓', xray: '🩻', homecare: '🏠', prescription: '💊', medlist: '📑', documents: '📁', billing: '💰', appts: '🗓️' };
+const PTI = { vitals: '🩺', medical: '📝', mdhistory: '📋', beu: '🖼️', schedule: '📅', consultation: '💬', operation: '✂️', investigation: '🔬', lab: '🧪', echo: '💓', xray: '🩻', homecare: '🏠', prescription: '💊', medlist: '📑', documents: '📁', billing: '💰', appts: '🗓️', allergy: '♡', vaccination: '💉', referral: '↗', diagnosis_history: '📖', laborder: '🧫', imagingorder: '🩻' };
 const PI = [['id', 'ID'], ['name', 'Name'], ['age', 'Age'], ['gender', 'Gender'], ['phone', 'Phone'], ['nssf', 'NSSF ID'], ['nat', 'National ID'], ['addr', 'Address'], ['date', 'Date Filter']];
 let pdHideI = new Set(), pdHideC = new Set(), pdLay = 'list', pdCtl = false;
 try { const h = JSON.parse(localStorage.getItem('pdHide') || '{}'); pdHideI = new Set(h.i || []); pdHideC = new Set(h.c || []); pdLay = localStorage.getItem('pdLay') === 'grid' ? 'grid' : 'list'; } catch (e) { /* defaults */ }
@@ -121,6 +129,10 @@ function recCard(r) {
   if (r.kind == 'vitals') return `<div class="rc">${act}<div class="mu">${when}</div><div class="vs">${VSF.filter(([k]) => d[k]).map(([k, l]) => `<span><b>${l.replace(/ \(.*/, '')}:</b> ${esc(d[k])} ${(l.match(/\((.*)\)/) || [])[1] || ''}</span>`).join('') || '—'}</div></div>`;
   if (r.kind == 'medical') return `<div class="rc">${act}<div class="mu">${when}</div><b>${esc(d.dx || d.cc || 'Medical Record')}</b><div class="mu">${esc((d.cc || '').slice(0, 140))}</div><div class="ra2"><button class="btn s" data-a="rprint:${r.id}">Print</button></div></div>`;
   const img = r.image ? `<a href="/uploads/${esc(r.image)}" target="_blank"><img class="rimg" src="/uploads/${esc(r.image)}" alt=""></a>` : '';
+  if (CARE_MODULES[r.kind]) {
+    const fields = CARE_MODULES[r.kind].fields.filter(([k]) => d[k]).map(([k, label]) => `<div><span class="mu">${esc(label)}:</span> ${esc(d[k])}</div>`).join('');
+    return `<div class="rc">${act}<div class="mu">${when}</div><b>${esc(d[CARE_MODULES[r.kind].fields[0][0]] || CARE_MODULES[r.kind].title)}</b><div class="care-record-fields">${fields}</div>${r.notes ? `<div style="white-space:pre-wrap">${esc(r.notes)}</div>` : ''}</div>`;
+  }
   return `<div class="rc" ${r.kind == 'beu' && r.color ? `style="border-left:6px solid ${esc(r.color)}"` : ''}>${act}<b>${esc(r.title || lbl(r.kind))}</b> <span class="mu">${when}</span><div style="white-space:pre-wrap">${esc(r.notes || '')}</div>${img}</div>`;
 }
 function recPanel() {
@@ -133,6 +145,21 @@ function recPanel() {
 }
 function genForm(r) {
   const k = ptab, e = !!r; r = r || { date: ymd(new Date()) };
+  const module = CARE_MODULES[k];
+  if (module) {
+    const d = r ? jd(r) : {}, fields = module.fields.map(([key, label, type, opts]) => type == 'sel'
+      ? fSel(label, key, d[key] || opts[0], opts)
+      : type == 'ta' ? fTa(label, key, d[key] || '', 3) : fIn(label, key, d[key] || '', type || 'text')).join('');
+    openForm((e ? 'Edit ' : 'Add ') + module.title, `<div class="g2">${fIn('Date', 'date', (r.date || '').slice(0, 10), 'date')}</div>${fields}${fTa('Notes', 'notes', r.notes, 3)}`, async (f) => {
+      const m = new FormData(f), data = {};
+      module.fields.forEach(([key, , type]) => { const value = m.get(key); if (value) data[key] = value; });
+      const firstKey = module.fields[0][0], body = { patient_id: pdId, kind: k, title: module.title, date: m.get('date'), notes: m.get('notes'), data };
+      if (!data[firstKey]) throw new Error(`Enter ${module.fields[0][1].toLowerCase()}`);
+      e ? await api('PUT', 'records/' + r.id, body) : await api('POST', 'records', body);
+      await loadRecs(); render(); toast('Saved');
+    });
+    return;
+  }
   const body = fIn('Title', 'title', r.title, 'text', k == 'beu' ? 'placeholder="e.g., Before treatment"' : '') + (k == 'beu' ? `<div class="fl">Label colour<div class="sws">${COLORS.map((c, i) => `<label class="sw"><input type="radio" name="color" value="${c}" ${(r.color || COLORS[0]) == c ? 'checked' : ''}><span style="background:${c}"></span></label>`).join('')}</div></div>` : '') + fIn('Date', 'date', (r.date || '').slice(0, 10), 'date') + fTa('Notes', 'notes', r.notes, 4) + imgField(k == 'beu' ? 'Image' : 'Picture (optional)', 'image', r.image, 'Remove picture');
   openForm((e ? 'Edit ' : 'Add ') + lbl(k), body, async (f) => {
     const m = new FormData(f), b = { patient_id: pdId, kind: k, title: m.get('title'), date: m.get('date'), notes: m.get('notes'), image: m.get('image') || '', color: k == 'beu' ? (m.get('color') || '') : '' };
