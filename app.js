@@ -1,10 +1,12 @@
 const API_BASE=((typeof window!=='undefined'&&window.API_BASE)||'').replace(/\/+$/,'');
 const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])),K=n=>D.clinic&&D.clinic.currency=='USD'?'$'+(Number(n)/(D.clinic.rate||4000)).toFixed(2):'KHR '+Number(n).toLocaleString('en-US');
 const NM=['Sok Dara','Chan Sreyneang','Vann Rithy','Keo Sophea','Lim Sokha','Heng Vuthy','Pich Srey','Seng Bunthoeun','Mao Channary','Ouk Samnang','Tep Vanna','Nguon Sreymom'],AD=['Phnom Penh','Siem Reap','Kandal','Takeo','Battambang'];
-const D={pt:[],ap:[],ipd:[],dr:[],med:[],sv:[],lab:[],echo:[],dx:[],rx:[],sy:[],ad:[],sf:[],ch:[],rev:0,bill:[],clinic:{}};
+const D={pt:[],ap:[],ipd:[],dr:[],med:[],sv:[],lab:[],echo:[],dx:[],rx:[],sy:[],ad:[],sf:[],ch:[],rev:0,bill:[],billing:[],clinic:{}};
 // an admitted patient (IPD row linked by patient ID) goes back to OPD when the stay ends
 const syncOpd=r=>{const p=D.pt.find(q=>String(q.id)==String(r.code));return p&&p.type=='IPD'?api('PUT','patients/'+p.id,{type:'OPD'}):0};
-const ipdPaid=r=>{const p=D.pt.find(q=>String(q.id)==String(r.code));return p?!(p.due>0):!!r.paid};
+const billingData=r=>{try{return JSON.parse(r.data||'{}')}catch{return{}}};
+const patientDue=id=>{const rs=D.billing.filter(r=>String(r.patient_id)==String(id));return Math.max(0,rs.filter(r=>r.kind=='schedule').reduce((n,r)=>n+(+billingData(r).amount||0),0)-rs.filter(r=>r.kind=='payment').reduce((n,r)=>n+(+billingData(r).amount||0),0))};
+const ipdPaid=r=>{const p=D.pt.find(q=>String(q.id)==String(r.code));return p?patientDue(p.id)<=0:!!r.paid};
 const mi=i=>D.med.find(m=>m.id==i)||{name:'(removed)',price:0};
 let rt='dash',q='',pg=1,tab='OPD',pay='Cash',cart={},nt=0;
 const hd=(t,s,b='')=>`<div class="hd"><div><h1>${t}</h1><p class="mu">${s||''}</p></div><div class="tools">${b}</div></div>`,
@@ -62,7 +64,7 @@ const df={pt:{type:'OPD',unpaid:0,age:0},dr:{av:'Available'},echo:{font:'Moul',p
 let tok=null,needSetup=false;try{tok=localStorage.getItem('kt')}catch(e){}
 const RS={pt:'patients',ap:'appointments',ipd:'ipd',dr:'doctors',med:'medicines',sv:'services',lab:'labs',echo:'echo',dx:'diagnoses',rx:'prescriptions',sy:'symptoms',ad:'addresses',sf:'files',ch:'chat'};
 async function api(m,u,b){const r=await fetch(API_BASE+'/api/'+u,{method:m,headers:{'Content-Type':'application/json',...(tok?{Authorization:'Bearer '+tok}:{})},body:b?JSON.stringify(b):undefined});let j=null;try{j=await r.json()}catch(e){}if(r.status==401&&tok&&u!='auth/login')logout();if(!r.ok)throw new Error(j&&j.error||'Request failed');return j}
-async function load(){const k=Object.keys(RS),[rows,dash,bill,cl]=await Promise.all([Promise.all(k.map(x=>api('GET',RS[x]+'?limit=5000'))),api('GET','dashboard'),api('GET','reports/daily?days=30'),api('GET','clinic')]);D.clinic=cl;k.forEach((x,i)=>D[x]=rows[i]);D.ch=D.ch.map(r=>r.msg);D.rev=dash.revenueToday;D.bill=bill;Object.keys(cart).forEach(i=>{if(!D.med.some(m=>m.id==i))delete cart[i]})}
+async function load(){const k=Object.keys(RS),[rows,dash,bill,cl,schedules,payments]=await Promise.all([Promise.all(k.map(x=>api('GET',RS[x]+'?limit=5000'))),api('GET','dashboard'),api('GET','reports/daily?days=30'),api('GET','clinic'),api('GET','records?kind=schedule&limit=5000'),api('GET','records?kind=payment&limit=5000')]);D.clinic=cl;k.forEach((x,i)=>D[x]=rows[i]);D.ch=D.ch.map(r=>r.msg);D.rev=dash.revenueToday;D.bill=bill;D.billing=[...schedules,...payments];Object.keys(cart).forEach(i=>{if(!D.med.some(m=>m.id==i))delete cart[i]})}
 function logout(){tok=null;try{localStorage.removeItem('kt')}catch(e){}$('#lg').style.display='grid'}
 async function doLogin(){const email=$('#em').value.trim(),password=$('#pw').value;try{if(needSetup){await api('POST','auth/setup',{email,password});needSetup=false}const r=await api('POST','auth/login',{email,password});tok=r.token;try{localStorage.setItem('kt',tok)}catch(e){}await load();$('#lg').style.display='none';render()}catch(e){toast(e.message)}}
 const run=p=>p.then(()=>load()).then(render).catch(e=>toast(e.message));

@@ -89,7 +89,11 @@ const COLORS = ['#e5e7eb', '#ef4444', '#f97316', '#f59e0b', '#22c55e', '#3b82f6'
 let pdId = null, ptab = 'vitals', recs = [], pdDate = '';
 const curPt = () => D.pt.find((x) => x.id == pdId);
 const jd = (r) => { try { return JSON.parse(r.data || '{}'); } catch { return {}; } };
-async function loadRecs() { recs = await api('GET', 'records?patient_id=' + pdId + '&limit=5000'); }
+async function loadRecs() {
+  recs = await api('GET', 'records?patient_id=' + pdId + '&limit=5000');
+  D.billing = D.billing.filter((r) => String(r.patient_id) != String(pdId) || !['schedule', 'payment'].includes(r.kind))
+    .concat(recs.filter((r) => ['schedule', 'payment'].includes(r.kind)));
+}
 async function openPatient(id) { pdId = id; ptab = 'vitals'; pdDate = ''; rt = 'pd'; await loadRecs(); render(); }
 const lbl = (k) => (PT.find((x) => x[0] == k) || [0, k])[1];
 // ---- patient file layout & "hide" controls (saved in this browser) ----
@@ -420,7 +424,10 @@ function pAct(a, x, y, el) {
   else if (a == 'pttreat') { const q0 = ptById(+x); modal('Treatment', [['Treatment', 'treatment', 'ta']], q0, (o) => api('PUT', 'patients/' + q0.id, o)); }
   else if (a == 'ptdx') { const q0 = ptById(+x), opts = ['', ...new Set([q0.diagnosis, ...D.dx.map((d) => d.name)].filter(Boolean))]; modal('Diagnosis', [['Diagnosis', 'diagnosis', 'sel', opts]], q0, (o) => api('PUT', 'patients/' + q0.id, o)); }
   else if (a == 'ptpay') payForm(+x); else if (a == 'ptinv') invoicePrint(+x).catch((e) => toast(e.message));
+  else if (a == 'payall') return payForm(pdId, true);
+  else if (a == 'payreceipt') paymentReceipt(+x);
   else if (a == 'recpay') payForm(pdId);
+  else if (a == 'ipdbill') openIpdBilling(+x).catch((e) => toast(e.message));
   else if (a == 'pdctl') { pdCtl = !pdCtl; render(); } else if (a == 'pdlay') { pdLay = pdLay == 'grid' ? 'list' : 'grid'; savePd(); render(); }
   else if (a == 'hidei' || a == 'hidec') { const S = a == 'hidei' ? pdHideI : pdHideC; S.has(x) ? S.delete(x) : S.add(x); savePd(); render(); }
   else if (a == 'dashap') { cal.mode = 'day'; cal.d = new Date(); cal.list = false; rt = 'ap'; q = ''; render(); }
@@ -465,12 +472,12 @@ const PFN = {
   id: (r, v) => String(r.id).includes(v.trim()), date: (r, v) => fmtD(r.reg_date || r.created_at).includes(v.trim()) || String(r.reg_date || r.created_at || '').includes(v.trim()),
   name: (r, v) => has(r.name, v), latin: (r, v) => has(r.latin_name, v), nssf: (r, v) => has(r.nssf_id, v), nat: (r, v) => has(r.national_id, v),
   type: (r, v) => v == 'IPD' ? r.type == 'IPD' : r.type != 'IPD', treat: (r, v) => has(r.treatment, v), dx: (r, v) => has(r.diagnosis || r.last_dx, v),
-  mr: (r, v) => v == 'yes' ? r.mr_count > 0 : !(r.mr_count > 0), age: ageOk, sex: (r, v) => r.sex == v, pay: (r, v) => v == 'unpaid' ? r.due > 0 : !(r.due > 0),
+  mr: (r, v) => v == 'yes' ? r.mr_count > 0 : !(r.mr_count > 0),   age: ageOk, sex: (r, v) => r.sex == v, pay: (r, v) => v == 'unpaid' ? patientDue(r.id) > 0 : !(patientDue(r.id) > 0),
   phone: (r, v) => lc(r.phone).replace(/\s/g, '').includes(lc(v).replace(/\s/g, '')), addr: (r, v) => has(r.addr, v),
   comp: (r, v) => has(r.complaints, v), hist: (r, v) => has(r.history, v), regd: (r, v) => has(r.reg_date, v) };
 const SEL = { type: [['', 'All'], ['OPD', 'OPD'], ['IPD', 'IPD']], mr: [['', 'All'], ['yes', 'With record'], ['no', 'No record']], sex: [['', 'All'], ['M', 'Male'], ['F', 'Female']], pay: [['', 'All'], ['unpaid', 'Unpaid'], ['paid', 'Paid']] };
 const pfActive = () => Object.entries(pf).filter(([, v]) => v !== '' && v != null);
-const tabOk = (r) => tab == 'IPD' ? r.type == 'IPD' : tab == 'Unpaid' ? r.due > 0 : tab == 'NSSF' ? r.nssf : tab == 'Details' ? true : r.type != 'IPD';
+const tabOk = (r) => tab == 'IPD' ? r.type == 'IPD' : tab == 'Unpaid' ? patientDue(r.id) > 0 : tab == 'NSSF' ? r.nssf : tab == 'Details' ? true : r.type != 'IPD';
 const colOk = (r) => pfActive().every(([k, v]) => PFN[k] ? PFN[k](r, String(v)) : true);
 const ptRows = () => ft('pt').filter(([r]) => tabOk(r) && colOk(r));
 const fCell = (k) => !k ? '<th class="fr"><button class="btn s" data-a="pfclear" title="Clear filters">✕</button></th>'
@@ -495,7 +502,7 @@ const cellsFull = (r, i, sm) => ({
   dx: `<td title="${esc(r.diagnosis || r.last_dx || '')}">${esc(trunc(r.diagnosis || r.last_dx || 'N/A', 14))} <a href="#" class="ed" data-a="ptdx:${r.id}" title="Edit diagnosis">✎</a></td>`,
   mr: `<td><button class="mrb" data-a="ptmr:${r.id}" title="New medical record">✎</button></td>`, age: `<td>${fmtAge(r)}</td>`,
   sex: `<td>${r.sex ? `<span class="pill ${r.sex == 'F' ? 'f' : 'm'}">${fmtSex(r.sex)}</span>` : ''}</td>`,
-  pay: `<td>${r.due > 0 ? `<div class="due" data-a="ptpay:${r.id}" title="Record payment"><b>KHR ${r.due.toLocaleString('en-US')}</b><br>${usd(r.due)}</div>` : `<span class="paid">✔ Paid</span> <a href="#" data-a="ptinv:${r.id}" title="Invoice">🧾</a>`}</td>`,
+  pay: `<td>${patientDue(r.id) > 0 ? `<div class="due" data-a="ptpay:${r.id}" title="Record payment"><b>KHR ${patientDue(r.id).toLocaleString('en-US')}</b><br>${usd(patientDue(r.id))}</div>` : `<span class="paid">✔ Paid</span> <a href="#" data-a="ptinv:${r.id}" title="Invoice">🧾</a>`}</td>`,
   phone: `<td>${r.phone ? '📞 ' + esc(r.phone) : '<span class="mu">📞</span>'}</td>`, addr: `<td title="${esc(r.addr || '')}">${esc(trunc(r.addr || 'N/A', 14))}</td>`, act: `<td style="white-space:nowrap">${act(r, i)}</td>` });
 const cellsDet = (r, i) => ({
   id: `<td>${r.id}</td>`, name: `<td>${ptNm(r, false)}</td>`, latin: `<td>${esc(r.latin_name || '')}</td>`, phone: `<td>${esc(r.phone || '')}</td>`, addr: `<td>${esc(r.addr || '')}</td>`,
@@ -531,11 +538,12 @@ function ptCard(id) {
   const p = ptById(id); printDoc('Patient card', ptBlock(p) + kv([['Treatment', p.treatment], ['Diagnosis', p.diagnosis || p.last_dx], ['Complaints', p.complaints], ['Past medical history', p.history], ['Registered', fmtD(p.reg_date || p.created_at)]]));
 }
 // ---------- billing: schedule charges minus payments ----------
-function payForm(pid) {
+async function payForm(pid, payAll = false) {
   const p = ptById(pid); if (!p) return;
-  if (!(p.due > 0)) return toast('Paid');
-  openForm('Record payment', `<p>${esc(p.name)} — Amount due: <b>${K(p.due)}</b> <span class="mu">(${usd(p.due)})</span></p>${fIn('Amount paid (KHR)', 'amount', p.due, 'number', `min="1" max="${p.due}" required`)}${fSel('Method', 'method', 'Cash', ['Cash', 'Bank'])}`, async (f) => {
-    const m = new FormData(f), amt = Math.round(+m.get('amount') || 0); if (amt < 1) throw new Error('Enter an amount'); if (amt > p.due) throw new Error('Amount is more than the balance');
+  const list = await api('GET', 'records?patient_id=' + pid + '&limit=5000'), due = billTotals(list).bal;
+  if (!(due > 0)) return toast('Paid');
+  openForm('Record payment', `<p>${esc(p.name)} — Amount due: <b>${K(due)}</b> <span class="mu">(${usd(due)})</span></p>${fIn('Amount paid (KHR)', 'amount', due, 'number', `min="1" max="${due}" ${payAll ? 'readonly' : ''} required`)}${fSel('Method', 'method', 'Cash', ['Cash', 'Bank'])}`, async (f) => {
+    const m = new FormData(f), amt = Math.round(+m.get('amount') || 0); if (amt < 1) throw new Error('Enter an amount'); if (amt > due) throw new Error('Amount is more than the balance'); if (payAll && amt !== due) throw new Error('Payment must match the full balance');
     await api('POST', 'records', { patient_id: pid, kind: 'payment', date: ymd(new Date()), data: { amount: amt, method: m.get('method') } });
     await load(); if (rt == 'pd' && pdId == pid) await loadRecs(); render(); toast('Saved');
   }, { cls: 'wide', ok: 'Save' });
@@ -543,16 +551,45 @@ function payForm(pid) {
 const billTotals = (list) => { const ch = list.filter((r) => r.kind == 'schedule').reduce((t, r) => t + (+jd(r).amount || 0), 0), pd = list.filter((r) => r.kind == 'payment').reduce((t, r) => t + (+jd(r).amount || 0), 0); return { ch, pd, bal: Math.max(0, ch - pd) }; };
 function billPanel() {
   const t = billTotals(recs), pays = recs.filter((r) => r.kind == 'payment');
-  return `<div class="hd"><h2 class="rh">Billing history</h2><div class="tools"><button class="btn" data-a="schinv">Invoice</button><button class="btn g" data-a="recpay">+ Record payment</button></div></div>
+  return `<div class="hd"><h2 class="rh">Billing history</h2><div class="tools"><button class="btn" data-a="schinv">Invoice</button><button class="btn g" data-a="payall" ${t.bal ? '' : 'disabled'}><span>Pay All</span>: <b>${K(t.bal)}</b></button><button class="btn" data-a="recpay" ${t.bal ? '' : 'disabled'}>+ Record payment</button></div></div>
 <div class="gr2" style="margin-bottom:12px"><div class="rc"><span class="mu">Charges</span><br><b>${K(t.ch)}</b></div><div class="rc"><span class="mu">Paid</span><br><b>${K(t.pd)}</b></div><div class="rc" style="${t.bal ? 'border-color:#dc2626' : ''}"><span class="mu">Balance</span><br><b>${K(t.bal)}</b></div></div>
-${pays.map((r) => `<div class="rc"><div class="ra"><button class="btn s r" data-a="rdel:${r.id}">✕</button></div><b>${K(jd(r).amount)}</b> <span class="bd">${esc(jd(r).method || '')}</span> <span class="mu">${esc(r.date || '')}</span></div>`).join('') || '<p class="emp">Nothing here yet.</p>'}`;
+${pays.map((r) => `<div class="rc"><div class="ra"><button class="btn s" data-a="payreceipt:${r.id}">Receipt</button><button class="btn s r" data-a="rdel:${r.id}">✕</button></div><b>${K(jd(r).amount)}</b> <span class="bd">${esc(jd(r).method || '')}</span> <span class="mu">${esc(r.date || '')}</span></div>`).join('') || '<p class="emp">Nothing here yet.</p>'}`;
+}
+function paymentReceipt(id) {
+  const r = recs.find((x) => x.id == id && x.kind == 'payment');
+  if (!r) return toast('Payment not found');
+  const d = jd(r), p = curPt();
+  printDoc('Payment Receipt', ptBlock(p) + kv([['Receipt No.', `PAY-${r.id}`], ['Date', r.date || ''], ['Method', d.method || ''], ['Amount Paid', K(d.amount || 0)]]));
+}
+async function openIpdBilling(pid) {
+  const p = ptById(pid); if (!p) return toast('Patient not found.');
+  pdId = pid;
+  await loadRecs();
+  const charges = recs.filter((r) => r.kind == 'schedule').sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const pays = recs.filter((r) => r.kind == 'payment').sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
+  const t = billTotals(recs), unpaid = t.bal > 0;
+  const chargeRows = charges.map((r) => {
+    const d = jd(r);
+    return `<div class="bill-item"><div><b>${esc([d.dx, r.notes].filter(Boolean).join(' — ') || r.title || 'Charge')}</b><div class="mu">${esc(r.date || '')}</div></div><b>${K(d.amount || 0)}</b></div>`;
+  }).join('');
+  const paidRows = pays.map((r) => {
+    const d = jd(r);
+    return `<div class="bill-payment"><div class="bill-payment-head"><b>${esc(r.date || '')}</b><span class="bd">${T('Paid')}</span><button type="button" class="btn s" data-a="payreceipt:${r.id}">Receipt</button></div><div class="mu">${esc(T('Method'))}: ${esc(d.method || '—')}</div><div class="bill-payment-total"><span>${T('Total Paid')}:</span><b>${K(d.amount || 0)}</b></div></div>`;
+  }).join('');
+  const f = $('#mf');
+  f.className = 'xl billing-dialog';
+  f.innerHTML = `<div class="billing-title"><b>${esc(p.name)}</b><button type="button" class="btn s" data-a="close" aria-label="${T('Close')}">×</button></div>
+<div class="billing-toolbar"><h3>${T('Billing history')}</h3><button type="button" class="btn g" data-a="payall" ${unpaid ? '' : 'disabled'}>${T('Pay All')}: ${K(t.bal)}</button></div>
+<div class="billing-columns"><section class="billing-panel"><h4>${T('Unpaid')}</h4>${unpaid ? `${chargeRows || `<div class="bill-item"><b>${T('Outstanding balance')}</b><b>${K(t.bal)}</b></div>`}<div class="bill-total"><span>${T('Total')}:</span><b>${K(t.bal)}</b></div>` : '<p class="emp">No unpaid bills found.</p>'}</section>
+<section class="billing-panel"><h4>${T('Paid History')}</h4>${paidRows || '<p class="emp">No paid bills found.</p>'}</section></div>`;
+  $('#md').classList.add('on');
 }
 async function invoicePrint(pid) {
   const p = ptById(pid), list = await api('GET', 'records?patient_id=' + pid + '&limit=5000'), rows = list.filter((r) => r.kind == 'schedule').sort((a, b) => (a.date || '').localeCompare(b.date || '')), t = billTotals(list);
   printDoc('Invoice', ptBlock(p) + `<table class="pk full"><tr><th>No.</th><th>Date</th><th>Description</th><th>Amount</th></tr>${rows.map((r, i) => { const d = jd(r); return `<tr><td>${i + 1}</td><td>${esc((r.date || '').slice(0, 10))}</td><td>${esc([r.title, d.dx, r.notes].filter(Boolean).join(' – '))}</td><td>${K(d.amount || 0)}</td></tr>`; }).join('')}<tr><th colspan="3">Total</th><td><b>${K(t.ch)}</b></td></tr><tr><th colspan="3">Paid</th><td>${K(t.pd)}</td></tr><tr><th colspan="3">Balance</th><td><b>${K(t.bal)}</b></td></tr></table>`);
 }
 RX.push([/^Showing (\d+) to (\d+) of (\d+) records$/, 'បង្ហាញ $1 ដល់ $2 នៃ $3 កំណត់ត្រា']);
-Object.assign(L, { 'IPD/OPD': 'IPD/OPD', 'Treatment': 'ការព្យាបាល', 'Medical Record': 'Medical Record', 'Complaints': 'ពាក្យបណ្តឹង', 'Registration date': 'កាលបរិច្ឆេទចុះឈ្មោះ', 'Details': 'ព័ត៌មានលម្អិត', 'Search Name, Phone, NSSF, National ID…': 'ស្វែងរកឈ្មោះ លេខទូរស័ព្ទ NSSF អត្តសញ្ញាណប័ណ្ណ…', 'Billing history': 'ប្រវត្តិគិតលុយ', 'Record payment': 'កត់ត្រាការបង់ប្រាក់', '+ Record payment': '+ កត់ត្រាការបង់ប្រាក់', 'Charges': 'ការគិតថ្លៃ', 'Balance': 'សមតុល្យ', 'Method': 'វិធីសាស្ត្រ', 'Amount paid (KHR)': 'ទឹកប្រាក់បានបង់ (KHR)', 'No patients.': 'គ្មានអ្នកជំងឺទេ។', 'Patient card': 'កាតអ្នកជំងឺ', 'Amount is more than the balance': 'ចំនួនទឹកប្រាក់លើសសមតុល្យ', 'Enter an amount': 'សូមបញ្ចូលចំនួនទឹកប្រាក់' });
+Object.assign(L, { 'IPD/OPD': 'IPD/OPD', 'Treatment': 'ការព្យាបាល', 'Medical Record': 'Medical Record', 'Complaints': 'ពាក្យបណ្តឹង', 'Registration date': 'កាលបរិច្ឆេទចុះឈ្មោះ', 'Details': 'ព័ត៌មានលម្អិត', 'Search Name, Phone, NSSF, National ID…': 'ស្វែងរកឈ្មោះ លេខទូរស័ព្ទ NSSF អត្តសញ្ញាណប័ណ្ណ…', 'Billing history': 'ប្រវត្តិគិតលុយ', 'Record payment': 'កត់ត្រាការបង់ប្រាក់', '+ Record payment': '+ កត់ត្រាការបង់ប្រាក់', 'Pay All': 'បង់ប្រាក់ទាំងអស់', 'Paid History': 'ប្រវត្តិបង់ប្រាក់', 'No unpaid bills found.': 'មិនមានវិក្កយបត្រមិនទាន់បង់ទេ។', 'No paid bills found.': 'មិនមានប្រវត្តិបង់ប្រាក់ទេ។', 'Total Paid': 'សរុបបានបង់', 'Outstanding balance': 'សមតុល្យមិនទាន់បង់', 'Total': 'សរុប', 'Close': 'បិទ', 'Receipt': 'បង្កាន់ដៃ', 'Payment Receipt': 'បង្កាន់ដៃបង់ប្រាក់', 'Charges': 'ការគិតថ្លៃ', 'Balance': 'សមតុល្យ', 'Method': 'វិធីសាស្ត្រ', 'Amount paid (KHR)': 'ទឹកប្រាក់បានបង់ (KHR)', 'No patients.': 'គ្មានអ្នកជំងឺទេ។', 'Patient card': 'កាតអ្នកជំងឺ', 'Amount is more than the balance': 'ចំនួនទឹកប្រាក់លើសសមតុល្យ', 'Enter an amount': 'សូមបញ្ចូលចំនួនទឹកប្រាក់' });
 try { if (localStorage.getItem('sbc') == '1' && document.body.classList) document.body.classList.add('sbc'); } catch (e) { /* ignore */ }
 Object.assign(L, { 'Menu': 'ម៉ឺនុយ' });
 Object.assign(L, { 'All': 'ទាំងអស់', 'With record': 'មានកំណត់ត្រា', 'No record': 'គ្មានកំណត់ត្រា', '✕ Clear filters': '✕ សម្អាតតម្រង', 'Export Excel': 'នាំចេញ Excel' });
@@ -583,12 +620,12 @@ function ipdDays(r) {
 }
 const ipdHead = ['Name', 'Latin name', 'Room / Bed', 'Treatment', 'Billing history', 'Admission date', 'Discharge date', 'Days', 'Actions'];
 function ipdRow(r) {
-  const p = ipdPt(r), i = D.ipd.indexOf(r), d = ipdDays(r), st = ipdStart(r), due = p ? p.due : 0;
+  const p = ipdPt(r), i = D.ipd.indexOf(r), d = ipdDays(r), st = ipdStart(r), due = p ? patientDue(p.id) : 0;
   return `<tr><td><div class="pn"><div><a href="#" data-a="${p ? 'open:' + p.id : 'ipdedit:' + r.id}">${esc(r.name)}</a> <span class="mu">(${esc(r.code)})</span></div></div></td>
 <td>${esc((p && p.latin_name) || 'N/A')}</td>
 <td><a href="#" class="ed" data-a="ipdbed:${r.id}" title="Edit room and bed">✎</a> ${r.room ? `<span title="Room">🚪 ${esc(r.room)}</span>` : ''} ${r.bed ? `<span title="Bed">🛏 ${esc(r.bed)}</span>` : ''}</td>
 <td title="${esc(r.treatment || (p && p.treatment) || '')}">${esc(trunc(r.treatment || (p && p.treatment), 16) || '')} <a href="#" class="ed" data-a="ipdtreat:${r.id}" title="Edit treatment">✎</a></td>
-<td>${due > 0 ? `<div class="due" data-a="ptpay:${p.id}" title="Record payment"><b>KHR ${due.toLocaleString('en-US')}</b></div>` : `<span class="paidb">✔ Paid</span>`}</td>
+<td>${due > 0 ? `<div class="due" data-a="ptpay:${p.id}" title="Record payment"><b>KHR ${due.toLocaleString('en-US')}</b></div>` : p ? `<a href="#" class="paidb" data-a="ipdbill:${p.id}" title="Open billing history">✔ Paid</a>` : `<span class="paidb">✔ Paid</span>`}</td>
 <td>${st ? fmtD(st) : 'N/A'}</td>
 <td>${r.out ? (r.dis ? fmtD(r.dis) : 'N/A') : `<button class="dcb" data-a="ipdout:${r.id}">Discharge</button>`}</td>
 <td>${d == null ? 'N/A' : d + (d == 1 ? ' day' : ' days')}</td>
