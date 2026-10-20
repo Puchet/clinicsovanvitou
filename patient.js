@@ -247,7 +247,7 @@ function mrdPrint() {
 function histPrint() {
   const p = curPt(); const body = [...recs].filter((r) => r.kind != 'schedulenote').sort((a, b) => (a.date || '').localeCompare(b.date || '')).map((r) => {
     const d = jd(r), h = `<h4>${esc(lbl(r.kind))}${r.title ? ' – ' + esc(r.title) : ''} <small>${esc((r.date || '').replace('T', ' '))}</small></h4>`;
-    return h + (r.kind == 'vitals' ? kv(VSF.map(([k, l]) => [l, d[k]])) : r.kind == 'medical' ? mrPrintHtml(d) : r.kind == 'payment' ? kv([['Amount', K(d.amount)], ['Method', d.method]]) : r.kind == 'mrd' ? kv([['Diagnosis', d.dx], ['Request', d.req], ['Result', d.res]]) : r.kind == 'cnf' ? cnPrintHtml(d) : `<p>${esc(r.notes || '').replace(/\n/g, '<br>')}</p>`); }).join('');
+    return h + (r.kind == 'vitals' ? kv(VSF.map(([k, l]) => [l, d[k]])) : r.kind == 'medical' ? mrPrintHtml(d) : r.kind == 'payment' ? kv([['Amount', K(d.amount)], ['Method', d.method]]) : r.kind == 'treatment' ? kv([['Vital signs', d.vitals], ['Diagnosis / Evolution', d.diagnosis], ['Treatment / Notes', r.notes]]) : r.kind == 'mrd' ? kv([['Diagnosis', d.dx], ['Request', d.req], ['Result', d.res]]) : r.kind == 'cnf' ? cnPrintHtml(d) : `<p>${esc(r.notes || '').replace(/\n/g, '<br>')}</p>`); }).join('');
   printDoc('Patient history', ptBlock(p) + body);
 }
 
@@ -421,13 +421,18 @@ function pAct(a, x, y, el) {
   else if (a == 'ptmr') openPatient(+x).then(() => { ptab = 'medical'; render(); mrForm(); }).catch((e) => toast(e.message));
   else if (a == 'ipdout') ipdOut(+x); else if (a == 'ipdbed') ipdBed(+x); else if (a == 'ipdtreat') ipdTreat(+x); else if (a == 'ipdedit') ipdEdit(+x); else if (a == 'ipdprint') ipdPrint(+x); else if (a == 'ipdshare') ipdShare(+x); else if (a == 'ipdadd') ipdAdd();
   else if (a == 'ptbed') bedForm(+x); else if (a == 'ptadmit') ptAdmit(+x); else if (a == 'ptprint') ptCard(+x);
-  else if (a == 'pttreat') { const q0 = ptById(+x); modal('Treatment', [['Treatment', 'treatment', 'ta']], q0, (o) => api('PUT', 'patients/' + q0.id, o)); }
+  else if (a == 'pttreat') treatmentFollowup(+x).catch((e) => toast(e.message));
   else if (a == 'ptdx') { const q0 = ptById(+x), opts = ['', ...new Set([q0.diagnosis, ...D.dx.map((d) => d.name)].filter(Boolean))]; modal('Diagnosis', [['Diagnosis', 'diagnosis', 'sel', opts]], q0, (o) => api('PUT', 'patients/' + q0.id, o)); }
   else if (a == 'ptpay') payForm(+x); else if (a == 'ptinv') invoicePrint(+x).catch((e) => toast(e.message));
   else if (a == 'payall') return payForm(pdId, true);
   else if (a == 'payreceipt') paymentReceipt(+x);
   else if (a == 'recpay') payForm(pdId);
   else if (a == 'ipdbill') openIpdBilling(+x).catch((e) => toast(e.message));
+  else if (a == 'tfadd') { tfRows = tfDraftRows(); tfRows.push({ date: nowLocal(), vitals: '', diagnosis: '', notes: '' }); tfRender(); }
+  else if (a == 'tfremove') { tfRows = tfDraftRows(); tfRows.splice(+x, 1); tfRender(); }
+  else if (a == 'tfhistory') { tfRows = tfDraftRows(); tfShowHistory = !tfShowHistory; tfRender(); }
+  else if (a == 'tfedit') { const r = tfHistory.find((q) => q.id == x); if (r) { tfRows = [tfRowFromRecord(r)]; tfShowHistory = false; tfRender(); } }
+  else if (a == 'tfprint') tfPrintAll();
   else if (a == 'pdctl') { pdCtl = !pdCtl; render(); } else if (a == 'pdlay') { pdLay = pdLay == 'grid' ? 'list' : 'grid'; savePd(); render(); }
   else if (a == 'hidei' || a == 'hidec') { const S = a == 'hidei' ? pdHideI : pdHideC; S.has(x) ? S.delete(x) : S.add(x); savePd(); render(); }
   else if (a == 'dashap') { cal.mode = 'day'; cal.d = new Date(); cal.list = false; rt = 'ap'; q = ''; render(); }
@@ -537,6 +542,67 @@ async function ptAdmit(id) {
 function ptCard(id) {
   const p = ptById(id); printDoc('Patient card', ptBlock(p) + kv([['Treatment', p.treatment], ['Diagnosis', p.diagnosis || p.last_dx], ['Complaints', p.complaints], ['Past medical history', p.history], ['Registered', fmtD(p.reg_date || p.created_at)]]));
 }
+let tfPatientId = null, tfRows = [], tfHistory = [], tfShowHistory = false;
+const tfRowFromRecord = (r) => {
+  const d = jd(r);
+  return { id: r.id, date: r.date || nowLocal(), vitals: d.vitals || '', diagnosis: d.diagnosis || '', notes: r.notes || '' };
+};
+function tfDraftRows() {
+  const f = $('#mf');
+  return tfRows.map((r, i) => ({
+    ...r,
+    date: f.elements[`tf-date-${i}`].value,
+    vitals: f.elements[`tf-vitals-${i}`].value,
+    diagnosis: f.elements[`tf-diagnosis-${i}`].value,
+    notes: f.elements[`tf-notes-${i}`].value
+  }));
+}
+function tfRender() {
+  const p = ptById(tfPatientId), f = $('#mf');
+  if (!p) return toast('Patient not found.');
+  const rows = tfRows.map((r, i) => `<div class="tf-row"><div><input class="in" type="datetime-local" name="tf-date-${i}" value="${esc(r.date || nowLocal())}"><textarea class="in" name="tf-vitals-${i}" placeholder="${T('Enter vital signs')}">${esc(r.vitals || '')}</textarea></div>
+<textarea class="in" name="tf-diagnosis-${i}" placeholder="${T("Describe patient's condition, symptoms, or diagnosis")}">${esc(r.diagnosis || '')}</textarea>
+<textarea class="in" name="tf-notes-${i}" placeholder="${T('Prescribed medication, treatment plan, or notes...')}">${esc(r.notes || '')}</textarea>
+<div class="tf-actions"><button type="button" class="btn s r" data-a="tfremove:${i}" title="${T('Remove row')}">✕</button></div></div>`).join('');
+  const history = tfShowHistory ? `<div class="tf-history"><h4>${T('Treatment History')}</h4>${tfHistory.map((r) => {
+    const d = jd(r);
+    return `<div class="tf-history-row"><div><b>${esc((r.date || '').replace('T', ' '))}</b><div>${esc(d.diagnosis || '')}</div><div class="mu">${esc(r.notes || '')}</div></div><button type="button" class="btn s" data-a="tfedit:${r.id}">${T('Edit')}</button></div>`;
+  }).join('') || `<p class="emp">${T('No history records yet.')}</p>`}</div>` : '';
+  openForm(`${T('Treatment Follow-up')} — ${esc(p.name)}`, `<div class="tf-patient">${T('Patient')}: ${esc(p.name)} &nbsp;|&nbsp; ${T('Age')}: ${esc(fmtAge(p))} &nbsp;|&nbsp; ${T('Sex')}: ${esc(fmtSex(p.sex) || 'N/A')}</div>
+<div class="tf-toolbar"><button type="button" class="btn" data-a="tfhistory">${tfShowHistory ? T('Hide History') : T('View History')}</button><button type="button" class="btn g" data-a="tfadd">+ ${T('Add New Treatment Row')}</button></div>
+<div class="tf-grid"><div class="tf-columns"><b>${T('Date / Vital Signs')}</b><b>${T('Diagnosis / Evolution')}</b><b>${T('Treatment / Notes')}</b><b>${T('Actions')}</b></div>${rows || `<p class="emp">${T('Add a treatment row to begin.')}</p>`}</div>${history}`,
+  async () => {
+    const savedRows = tfDraftRows().filter((r) => r.date && (r.vitals.trim() || r.diagnosis.trim() || r.notes.trim()));
+    if (!savedRows.length) throw new Error(T('Enter treatment details before saving'));
+    for (const r of savedRows) {
+      const body = { patient_id: tfPatientId, kind: 'treatment', title: 'Treatment Follow-up', date: r.date, notes: r.notes, data: { vitals: r.vitals, diagnosis: r.diagnosis } };
+      if (r.id) await api('PUT', 'records/' + r.id, body);
+      else await api('POST', 'records', body);
+    }
+    await load();
+    if (pdId == tfPatientId) await loadRecs();
+    render();
+    toast('Saved');
+  }, { cls: 'xl treatment-followup', ok: 'Save Record', extra: '<button type="button" class="btn" data-a="tfprint">Print All Records</button>' });
+  const ftop = $('#mf h3');
+  if (ftop) ftop.innerHTML = `<span>${T('Treatment Follow-up')} — ${esc(p.name)}</span><button type="button" class="btn s" data-a="close" aria-label="${T('Close')}">×</button>`;
+}
+async function treatmentFollowup(pid) {
+  const p = ptById(pid); if (!p) return toast('Patient not found.');
+  tfPatientId = pid;
+  tfHistory = (await api('GET', 'records?patient_id=' + pid + '&kind=treatment&limit=5000')).sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
+  tfRows = [ { date: nowLocal(), vitals: '', diagnosis: '', notes: '' } ];
+  tfShowHistory = false;
+  tfRender();
+}
+function tfPrintAll() {
+  const p = ptById(tfPatientId);
+  const body = tfHistory.slice().sort((a, b) => (a.date || '').localeCompare(b.date || '')).map((r) => {
+    const d = jd(r);
+    return `<div class="rc"><b>${esc((r.date || '').replace('T', ' '))}</b>${kv([['Vital signs', d.vitals], ['Diagnosis / Evolution', d.diagnosis], ['Treatment / Notes', r.notes]])}</div>`;
+  }).join('');
+  printDoc('Treatment Follow-up', ptBlock(p) + (body || `<p>${T('No history records yet.')}</p>`));
+}
 // ---------- billing: schedule charges minus payments ----------
 async function payForm(pid, payAll = false) {
   const p = ptById(pid); if (!p) return;
@@ -590,6 +656,7 @@ async function invoicePrint(pid) {
 }
 RX.push([/^Showing (\d+) to (\d+) of (\d+) records$/, 'បង្ហាញ $1 ដល់ $2 នៃ $3 កំណត់ត្រា']);
 Object.assign(L, { 'IPD/OPD': 'IPD/OPD', 'Treatment': 'ការព្យាបាល', 'Medical Record': 'Medical Record', 'Complaints': 'ពាក្យបណ្តឹង', 'Registration date': 'កាលបរិច្ឆេទចុះឈ្មោះ', 'Details': 'ព័ត៌មានលម្អិត', 'Search Name, Phone, NSSF, National ID…': 'ស្វែងរកឈ្មោះ លេខទូរស័ព្ទ NSSF អត្តសញ្ញាណប័ណ្ណ…', 'Billing history': 'ប្រវត្តិគិតលុយ', 'Record payment': 'កត់ត្រាការបង់ប្រាក់', '+ Record payment': '+ កត់ត្រាការបង់ប្រាក់', 'Pay All': 'បង់ប្រាក់ទាំងអស់', 'Paid History': 'ប្រវត្តិបង់ប្រាក់', 'No unpaid bills found.': 'មិនមានវិក្កយបត្រមិនទាន់បង់ទេ។', 'No paid bills found.': 'មិនមានប្រវត្តិបង់ប្រាក់ទេ។', 'Total Paid': 'សរុបបានបង់', 'Outstanding balance': 'សមតុល្យមិនទាន់បង់', 'Total': 'សរុប', 'Close': 'បិទ', 'Receipt': 'បង្កាន់ដៃ', 'Payment Receipt': 'បង្កាន់ដៃបង់ប្រាក់', 'Charges': 'ការគិតថ្លៃ', 'Balance': 'សមតុល្យ', 'Method': 'វិធីសាស្ត្រ', 'Amount paid (KHR)': 'ទឹកប្រាក់បានបង់ (KHR)', 'No patients.': 'គ្មានអ្នកជំងឺទេ។', 'Patient card': 'កាតអ្នកជំងឺ', 'Amount is more than the balance': 'ចំនួនទឹកប្រាក់លើសសមតុល្យ', 'Enter an amount': 'សូមបញ្ចូលចំនួនទឹកប្រាក់' });
+Object.assign(L, { 'Treatment Follow-up': 'ការតាមដានការព្យាបាល', 'Date / Vital Signs': 'កាលបរិច្ឆេទ / សញ្ញាជីវិត', 'Diagnosis / Evolution': 'រោគវិនិច្ឆ័យ / ការវិវត្ត', 'Treatment / Notes': 'ការព្យាបាល / កំណត់ចំណាំ', 'Actions': 'សកម្មភាព', 'Patient': 'អ្នកជំងឺ', 'Enter vital signs': 'បញ្ចូលសញ្ញាជីវិត', "Describe patient's condition, symptoms, or diagnosis": 'ពិពណ៌នាអំពីស្ថានភាព រោគសញ្ញា ឬរោគវិនិច្ឆ័យ', 'Prescribed medication, treatment plan, or notes...': 'ថ្នាំ ផែនការព្យាបាល ឬកំណត់ចំណាំ...', 'Remove row': 'លុបជួរដេក', 'Treatment History': 'ប្រវត្តិការព្យាបាល', 'Hide History': 'លាក់ប្រវត្តិ', 'Add New Treatment Row': 'បន្ថែមជួរដេកការព្យាបាលថ្មី', 'Add a treatment row to begin.': 'បន្ថែមជួរដេកការព្យាបាលដើម្បីចាប់ផ្តើម។', 'Print All Records': 'បោះពុម្ពកំណត់ត្រាទាំងអស់', 'Save Record': 'រក្សាទុកកំណត់ត្រា', 'Enter treatment details before saving': 'សូមបញ្ចូលព័ត៌មានការព្យាបាលមុនពេលរក្សាទុក' });
 try { if (localStorage.getItem('sbc') == '1' && document.body.classList) document.body.classList.add('sbc'); } catch (e) { /* ignore */ }
 Object.assign(L, { 'Menu': 'ម៉ឺនុយ' });
 Object.assign(L, { 'All': 'ទាំងអស់', 'With record': 'មានកំណត់ត្រា', 'No record': 'គ្មានកំណត់ត្រា', '✕ Clear filters': '✕ សម្អាតតម្រង', 'Export Excel': 'នាំចេញ Excel' });

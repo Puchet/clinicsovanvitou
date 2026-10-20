@@ -1453,6 +1453,82 @@ table.ipdt td {
   border-color: #fecaca;
   color: #b91c1c;
 }
+#mf.treatment-followup {
+  width: min(1100px, 98vw);
+}
+#mf.treatment-followup > h3 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--p);
+}
+.tf-patient {
+  margin-bottom: 12px;
+  color: var(--mu);
+  font-size: 12px;
+}
+.tf-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 8px 0;
+}
+.tf-grid {
+  max-height: 58vh;
+  overflow: auto;
+  border: 1px solid var(--bd);
+  border-radius: 8px;
+}
+.tf-columns,
+.tf-row {
+  display: grid;
+  grid-template-columns: 1.05fr 1fr 1fr 58px;
+}
+.tf-columns {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--hv);
+}
+.tf-columns > *,
+.tf-row > * {
+  min-width: 0;
+  padding: 10px;
+  border-right: 1px solid var(--bd);
+}
+.tf-columns b {
+  font-size: 12px;
+}
+.tf-row {
+  border-top: 1px solid var(--bd);
+}
+.tf-row textarea.in {
+  height: 150px;
+  margin-top: 8px;
+  resize: vertical;
+}
+.tf-row .tf-actions {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+.tf-history {
+  margin-top: 14px;
+}
+.tf-history h4 {
+  margin: 8px 0;
+}
+.tf-history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--bd);
+  border-radius: 8px;
+  margin: 8px 0;
+}
 .dcb {
   border: 1px solid #16a34a;
   color: #16a34a;
@@ -1480,6 +1556,16 @@ table.ipdt td {
   color: #dc2626;
 }
 @media (max-width: 820px) {
+  .tf-columns,
+  .tf-row {
+    grid-template-columns: minmax(180px, 1fr) minmax(180px, 1fr);
+  }
+  .tf-columns b:nth-child(n + 3) {
+    display: none;
+  }
+  .tf-row > :nth-child(n + 3) {
+    grid-column: span 1;
+  }
   .billing-columns {
     grid-template-columns: 1fr;
   }
