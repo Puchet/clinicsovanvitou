@@ -35,11 +35,13 @@ async function upl(file, max = 480) {
 }
 
 // ---------- printing (uses the clinic header from Clinic Settings) ----------
-function printDoc(title, html) {
+function printDoc(title, html, options = {}) {
   const c = D.clinic || {};
-  const head = `<div class="ph-head">${c.banner ? `<img class="ph-banner" src="/uploads/${esc(c.banner)}" alt="">` : ''}${c.show_name && c.name ? `<h2>${esc(c.name)}</h2>` : ''}${c.show_address && c.address ? `<div>${esc(c.address)}</div>` : ''}${c.show_phone && c.phone ? `<div>Tel: ${esc(c.phone)}</div>` : ''}</div>`;
+  const head = options.headerHtml || `<div class="ph-head">${c.banner ? `<img class="ph-banner" src="/uploads/${esc(c.banner)}" alt="">` : ''}${c.show_name && c.name ? `<h2>${esc(c.name)}</h2>` : ''}${c.show_address && c.address ? `<div>${esc(c.address)}</div>` : ''}${c.show_phone && c.phone ? `<div>Tel: ${esc(c.phone)}</div>` : ''}</div>`;
   let pa = $('#pa'); if (!pa) { pa = document.createElement('div'); pa.id = 'pa'; document.body.appendChild(pa); }
-  pa.innerHTML = head + `<h3>${esc(title)}</h3>` + html; setTimeout(() => window.print(), 60);
+  pa.innerHTML = head + (title ? `<h3>${esc(title)}</h3>` : '') + html;
+  if (options.printImmediately) window.print();
+  else setTimeout(() => window.print(), 60);
 }
 const kv = (rows) => `<table class="pk">${rows.filter((r) => r[1] !== '' && r[1] != null).map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')}</table>`;
 const ptBlock = (p) => kv([['Name', p.name], ['Latin name', p.latin_name], ['ID', p.id], ['Age', fmtAge(p)], ['Sex', fmtSex(p.sex)], ['Phone', p.phone], ['Address', p.addr], ['NSSF ID', p.nssf_id], ['National ID', p.national_id]]);

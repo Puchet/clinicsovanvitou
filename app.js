@@ -10,7 +10,7 @@ const patientDue=id=>{const rs=D.billing.filter(r=>String(r.patient_id)==String(
 const ipdPaid=r=>{const p=D.pt.find(q=>String(q.id)==String(r.code));return p?patientDue(p.id)<=0:!!r.paid};
 const mi=i=>D.med.find(m=>m.id==i)||{name:'(removed)',price:0};
 let rt='dash',q='',pg=1,tab='OPD',pay='Cash',cart={},nt=0;
-let doctorProfileId=null,doctorTab='payroll',medicineFormOpen=false,medicineEditIndex=null,medicineViewId=null,medicineLayout='table';
+let doctorProfileId=null,doctorTab='payroll',medicineFormOpen=false,medicineEditIndex=null,medicineViewId=null,medicineLayout='table',medicineFormReturnPage=null;
 try{medicineLayout=localStorage.getItem('medicineLayout')=='cards'?'cards':'table'}catch(e){}
 const hd=(t,s,b='')=>`<div class="hd"><div><h1>${t}</h1><p class="mu">${s||''}</p></div><div class="tools">${b}</div></div>`,
 sr=ph=>`<input id="q" class="in" placeholder="${ph||'Search…'}" value="${esc(q)}">`,
@@ -71,7 +71,7 @@ function medicineFormHtml(){
   return `<section class="card medicine-form-card"><button type="button" class="medicine-form-toggle" data-a="medformclose"><span>បញ្ចូលឱសថថ្មី / ${editing?'Edit Medicine':'Add New Medicine'}</span><span>⌃</span></button><form id="medicine-form" class="medicine-form">
 <div class="medicine-image-field"><label>រូបភាពឱសថ / Medicine Image</label><div class="medicine-image-control"><div class="medicine-image-preview"><img id="pv_photo" src="${r.photo?`${API_BASE}/uploads/${esc(r.photo)}`:''}" alt="" ${r.photo?'':'hidden'}><span id="medicine-photo-placeholder" ${r.photo?'hidden':''}>⇧</span></div><input type="file" id="pf_photo" accept="image/*" hidden><input type="hidden" name="photo" id="pk_photo" value="${esc(r.photo||'')}"><button class="btn" type="button" data-a="medphoto">Upload</button></div></div>
 <div class="medicine-basic-grid"><label>ឈ្មោះថ្នាំ / Drug name<input class="in" name="name" value="${esc(r.name||'')}" placeholder="e.g. Paracetamol" required maxlength="255"></label><label>សមាសធាតុ / Composition<input class="in" name="composition" value="${esc(r.composition||'')}" placeholder="e.g. 500mg"></label><label class="medicine-stock-field">ចំនួនក្នុងស្តុក / In Stock<input class="in" name="stock" type="number" min="0" step="1" value="${esc(r.stock??'')}" placeholder="e.g. 100" required></label></div>
-<section class="medicine-units"><div class="medicine-units-heading"><b>ឯកតាលក់ / Sales unit</b><span class="mu">Set each selling unit, price, and base-stock quantity.</span></div><div id="medicine-units-list">${units.map(medicineUnitRow).join('')}</div><button type="button" class="btn s" data-a="medunitadd">＋ Add sales unit</button></section>
+<section class="medicine-units"><div class="medicine-units-heading"><b>ឯកតាលក់ / Sales unit</b><span class="mu">Set each selling unit, price, and base-stock quantity.</span></div><div id="medicine-units-list">${units.map(medicineUnitRow).join('')}</div><button type="button" class="btn s medicine-unit-add" data-a="medunitadd">＋ Add sales unit</button></section>
 <div class="medicine-dates-grid"><label>ថ្ងៃផុតកំណត់ / Expiration date<input class="in" name="expiration_date" type="date" value="${esc(r.expiration_date||'')}"></label><label>ថ្ងៃជូនដំណឹង / Notification date<input class="in" name="notification_date" type="date" value="${esc(r.notification_date||'')}"></label></div>
 <div class="medicine-form-actions"><button type="button" class="btn" data-a="medformclose">Cancel</button><button type="submit" class="btn p">${editing?'Save changes':'បន្ថែម / Add'}</button></div></form></section>`;
 }
@@ -87,7 +87,7 @@ async function medicineSave(e){
   try{
     const editing=medicineEditIndex!=null,item=editing?D.med[medicineEditIndex]:null;
     await api(editing?'PUT':'POST',editing?'medicines/'+item.id:'medicines',payload);
-    await load();medicineFormOpen=false;medicineEditIndex=null;medicineViewId=null;render();toast(editing?'Medicine updated':'Medicine added');
+    await load();medicineFormOpen=false;medicineEditIndex=null;medicineViewId=null;if(medicineFormReturnPage){rt=medicineFormReturnPage;medicineFormReturnPage=null}render();toast(editing?'Medicine updated':'Medicine added');
   }catch(error){toast(error.message)}
 }
 async function importMedicinesFile(file){
@@ -122,7 +122,17 @@ return hd('Patients','',sr('Search name, phone…')+'<button class="btn g" data-
 dr(){if(doctorProfileId!=null)return doctorProfileHtml();return hd('Doctors List','',add('dr','Add Doctor'))+`<div class="gr doctor-grid">${D.dr.map((d,i)=>`<div class="card dc doctor-card"><button type="button" class="doctor-card-open" data-a="doctor:${d.id}" aria-label="Open ${esc(d.name)}"></button><div class="av">${d.photo?`<img src="${API_BASE}/uploads/${esc(d.photo)}" alt="">`:'👤'}</div><b><a class="doctor-card-link" href="#" data-a="doctor:${d.id}">${esc(d.name)}</a></b><br><span class="bd b">${esc(d.role)}</span><div class="doctor-card-info"><div>▣　ID: ${esc(d.code||'--')}</div><div>☎　${esc(d.phone||'--')}</div><div>▢　${esc(d.workdays||d.av||'Available')}</div></div><div class="doctor-card-actions"><button class="btn s" data-a="edit:dr:${i}">Edit</button><button type="button" class="doctor-history-button" data-a="doctorhistory:${d.id}" title="Doctor history" aria-label="Doctor history">◷</button><button class="btn s r" data-a="del:dr:${i}">✕</button></div></div>`).join('')||'<p class="emp">No doctors added yet.</p>'}</div>`},
 echo(){return echoPage()},
 pos(){const T=Object.entries(cart).reduce((s,[i,n])=>s+mi(i).price*n,0),L=ft('med');
-return hd('POS','',sr('Search medicines…')+add('med','Add item'))+`<div class="pos"><div class="pr">${L.map(([m,i])=>`<div class="card pc" data-a="cart:${m.id}">${m.photo?`<img class="ph" src="${API_BASE}/uploads/${esc(m.photo)}" alt="">`:'<div class="ph"></div>'}<b>${esc(m.name)}</b><br><span style="color:#2563eb">${K(m.price)}</span><br><span style="color:${m.stock>0?'#16a34a':'#dc2626'}">Stock: ${m.stock}</span></div>`).join('')}</div><div class="card" style="padding:16px;align-self:start"><b>🛒 POS</b>${Object.keys(cart).length?Object.entries(cart).map(([i,n])=>`<div class="cl"><span>${esc(mi(i).name)} × ${n}</span><span>${K(mi(i).price*n)} <a href="#" data-a="rm:${i}">✕</a></span></div>`).join(''):'<p class="mu" style="padding:20px 0;text-align:center">Cart is empty</p>'}<hr><div class="cl"><b>Total</b><b>${K(T)}</b></div><div class="tools" style="margin:8px 0"><button class="btn ${pay=='Cash'?'p':''}" data-a="pay:Cash">Cash</button><button class="btn ${pay=='Bank'?'p':''}" data-a="pay:Bank">Bank</button></div><button class="btn p" style="width:100%" data-a="co">Checkout</button></div></div>`},
+return hd('POS','',sr('Search medicines…')+add('med','Add item'))+`<div class="pos"><div class="pr">${L.map(([m,i])=>`<div class="card pc" data-a="cart:${m.id}">${m.photo?`<img class="ph" src="${API_BASE}/uploads/${esc(m.photo)}" alt="">`:'<div class="ph"></div>'}<b>${esc(m.name)}</b><br><span style="color:#2563eb">${K(m.price)}</span><br><span style="color:${m.stock>0?'#16a34a':'#dc2626'}">Stock: ${m.stock}</span></div>`).join('')}</div><div class="card" style="padding:16px;align-self:start"><b>🛒 POS</b>${Object.keys(cart).length?Object.entries(cart).map(([i,n])=>`<div class="cl"><span>${esc(mi(i).name)} × ${n}</span><span>${K(mi(i).price*n)} <a href="#" data-a="rm:${i}">✕</a></span></div>`).join(''):'<p class="mu" style="padding:20px 0;text-align:center">Cart is empty</p>'}<hr><div class="cl"><b>Total</b><b>${K(T)}</b></div><div class="tools" style="margin:8px 0"><button class="btn ${pay=='Cash'?'p':''}" data-a="pay:Cash">Cash</button><button class="btn ${pay=='Bank'?'p':''}" data-a="pay:Bank">Bank</button></div><div class="pos-checkout-actions"><button class="btn p" data-a="co">Checkout</button><button type="button" class="btn s pos-print-button" data-a="posprint" aria-label="Print total" title="Print total">🖨</button></div></div></div>`},
+posPrint(){
+  const items=Object.entries(cart).filter(([,qty])=>Number(qty)>0);
+  if(!items.length)return toast(T('Cart is empty'));
+  const money=value=>D.clinic&&D.clinic.currency=='USD'?'$'+(Number(value)/(D.clinic.rate||4000)).toFixed(2):'KHR '+Number(value).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+  const rows=items.map(([id,qty],index)=>`<tr style="border-bottom:1px solid #999"><td style="padding:4px 2px">${index+1}</td><td style="padding:4px 2px">${esc(mi(id).name)}</td><td style="padding:4px 2px;text-align:center">${Number(qty)}</td><td style="padding:4px 2px;text-align:right">${money(mi(id).price)}</td><td style="padding:4px 2px;text-align:right">${money(mi(id).price*Number(qty))}</td></tr>`).join('');
+  const total=items.reduce((sum,[id,qty])=>sum+mi(id).price*Number(qty),0);
+  const c=D.clinic||{},headerHtml=`<div style="display:flex;align-items:center;justify-content:space-between;border-bottom:2px solid #111;padding:0 0 8px;margin-bottom:10px;color:#111"><div style="display:flex;align-items:center;gap:10px">${c.logo?`<img src="/uploads/${esc(c.logo)}" alt="" style="width:46px;height:46px;object-fit:contain;border-radius:50%">`:'<span style="display:grid;place-items:center;width:46px;height:46px;border-radius:50%;background:#2563eb;color:white;font-size:24px">◷</span>'}<div>${c.show_name&&c.name?`<b style="font-size:18px">${esc(c.name)}</b>`:''}${c.specialty?`<div style="font-size:11px">${esc(c.specialty)}</div>`:''}${c.show_address&&c.address?`<div style="font-size:10px">${esc(c.address)}</div>`:''}${c.show_phone&&c.phone?`<div style="font-size:10px">Tel: ${esc(c.phone)}</div>`:''}</div></div><b style="font-size:18px">វិក័យប័ត្រ</b></div>`;
+  const html=`<div style="border-bottom:2px solid #111;padding-bottom:7px;margin-bottom:4px;font-size:11px"><div>Invoice #: PREVIEW</div><div>កាលបរិច្ឆេទ: ${new Date().toLocaleDateString('en-GB')}</div></div><table style="width:100%;border-collapse:collapse;font-size:11px;color:#111"><thead><tr style="border-bottom:1px solid #111"><th style="text-align:left;padding:4px 2px">#</th><th style="text-align:left;padding:4px 2px">បរិយាយ</th><th style="text-align:center;padding:4px 2px">ចំនួន</th><th style="text-align:right;padding:4px 2px">តម្លៃឯកតា</th><th style="text-align:right;padding:4px 2px">សរុប</th></tr></thead><tbody>${rows}</tbody></table><div style="display:flex;flex-direction:column;align-items:flex-end;margin-top:8px;font-size:10px"><div style="display:flex;justify-content:space-between;gap:36px;min-width:180px"><span>សរុបរង:</span><span>${money(total)}</span></div><div style="display:flex;justify-content:space-between;gap:36px;min-width:180px;font-weight:bold"><span>សរុប:</span><span>${money(total)}</span></div></div><p style="text-align:center;font-size:10px;margin-top:24px">Thank You For Your Business</p>`;
+  if(typeof printDoc=='function')printDoc('',html,{headerHtml,printImmediately:true});
+},
 ch(){return hd('Chat','Internal messages')+`<div class="card" style="padding:16px">${D.ch.map(m=>`<p translate="no">💬 ${esc(m)}</p>`).join('')||'<p class="mu">No messages yet.</p>'}<div class="tools" style="margin-top:12px"><input id="cm" class="in" style="flex:1" placeholder="Type a message"><button class="btn p" data-a="send">Send</button></div></div>`},
 an(){const m={};D.med.forEach(x=>m[x.name]=x.stock);return hd('Analytics','Stock and revenue overview')+`<div class="cs">${bars('Stock by medicine',D.med.map(x=>[x.name,Math.max(0,x.stock)]))}${bars('Revenue by day (KHR 1,000)',D.bill.map(b=>[b.day.slice(5),b.amt/1000]),'#22c55e')}</div>`},
 da(){return hd('Doctor Analytics','Appointments per doctor')+`<div class="cs">${bars('Appointments',Object.entries(D.ap.reduce((a,x)=>(a[x.doc]=(a[x.doc]||0)+1,a),{})))}</div>`},
@@ -139,6 +149,7 @@ R.med=function(){
     const medicine=D.med.find(item=>String(item.id)==String(medicineViewId));
     return medicine?medicineDetailHtml(medicine):hd('Medicine not found','','<button class="btn" data-a="medback">Back to Medicines</button>');
   }
+  if(medicineFormReturnPage&&medicineFormOpen)return `<div class="medicine-pos-add">${medicineFormHtml()}</div>`;
   const rows=ft('med'),controls=sr('Search medicines…')+
     `<button class="btn" data-a="medlayout" aria-label="Switch to ${medicineLayout=='table'?'cards':'table'} layout">Switch to ${medicineLayout=='table'?'Cards':'Table'} View</button>`+
     `<button class="btn" data-a="medimport">Import Excel</button><input id="med-import-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>`+
@@ -492,7 +503,7 @@ else if(a=='payslipprint')payrollPrint(+x);
 else if(a=='payslipdel'){if(confirm('Delete this payslip?'))run(api('DELETE','payslips/'+x))}
 else if(a=='del'){if(confirm(T('Delete this record?'))){const r=D[x][+y];run(api('DELETE',RS[x]+'/'+r.id).then(()=>x=='ipd'&&!r.out?syncOpd(r):0))}}
 else if(a=='out'){const r=D.ipd[+x];run(api('PUT','ipd/'+r.id,{out:1}).then(()=>syncOpd(r)))}
-else if(a=='add'){const k=x;if(k=='dr')return doctorForm();if(k=='sv')return serviceForm();if(k=='echo')return echoForm();const F=FM[k]||P[k].f,d={...(df[k]||P[k]?.d||{})};modal('Add',F,d,o=>api('POST',RS[k],{...d,...o}))}
+else if(a=='add'){const k=x;if(k=='dr')return doctorForm();if(k=='sv')return serviceForm();if(k=='echo')return echoForm();if(k=='med'&&rt=='pos'){medicineEditIndex=null;medicineViewId=null;medicineFormOpen=true;medicineFormReturnPage='pos';rt='med';render();return}const F=FM[k]||P[k].f,d={...(df[k]||P[k]?.d||{})};modal('Add',F,d,o=>api('POST',RS[k],{...d,...o}))}
 else if(a=='edit'){if(x=='dr')return doctorForm(+y);if(x=='sv')return serviceForm(+y);if(x=='echo')return echoForm(+y);const F=FM[x]||P[x].f,r=D[x][+y];modal('Edit',F,r,o=>api('PUT',RS[x]+'/'+r.id,o))}
 else if(a=='medadd'){medicineEditIndex=null;medicineFormOpen=true;render()}
 else if(a=='mededit'){medicineViewId=null;medicineEditIndex=+x;medicineFormOpen=true;render()}
@@ -505,7 +516,7 @@ else if(a=='medqr')run(printMedicineCode(+x,'qr'))
 else if(a=='medbarcode')run(printMedicineCode(+x,'barcode'))
 else if(a=='medqrbulk')run(exportMedicineCodes('qr'))
 else if(a=='medbarcodebulk')run(exportMedicineCodes('barcode'))
-else if(a=='medformclose'){medicineFormOpen=false;medicineEditIndex=null;render()}
+else if(a=='medformclose'){medicineFormOpen=false;medicineEditIndex=null;if(medicineFormReturnPage){rt=medicineFormReturnPage;medicineFormReturnPage=null}render()}
 else if(a=='medimport')$('#med-import-file').click();
 else if(a=='medphoto')$('#pf_photo').click();
 else if(a=='medunitadd')$('#medicine-units-list').insertAdjacentHTML('beforeend',medicineUnitRow());
@@ -533,7 +544,7 @@ else if(a=='echotableinsert')echoTableInsert();
 else if(a=='drphoto')$('#pf_photo').click();
 else if(a=='drcolor'){doctorSigColor=x;document.querySelectorAll('.dr-color').forEach(b=>b.classList.toggle('selected',b.dataset.a=='drcolor:'+x))}
 else if(a=='drsigclear'){doctorSignature={strokes:[]};doctorDrawSignature()}
-else if(a=='cart'){const m=mi(x);if(m.stock<=(cart[x]||0))return toast('Not enough stock for '+m.name);cart[x]=(cart[x]||0)+1;render()}else if(a=='rm'){delete cart[x];render()}else if(a=='pay'){pay=x;render()}
+else if(a=='cart'){const m=mi(x);if(m.stock<=(cart[x]||0))return toast('Not enough stock for '+m.name);cart[x]=(cart[x]||0)+1;render()}else if(a=='rm'){delete cart[x];render()}else if(a=='pay'){pay=x;render()}else if(a=='posprint')R.posPrint();
 else if(a=='co'){const items=Object.entries(cart).map(([i,n])=>({medicine_id:+i,qty:n}));if(!items.length)return toast('Cart is empty');api('POST','sales',{items,method:pay}).then(s=>{cart={};toast('Paid '+K(s.total)+' by '+pay);return load()}).then(render).catch(er=>toast(er.message))}
 else if(a=='send'){const v=$('#cm').value.trim();if(v)run(api('POST','chat',{msg:v}))}else if(typeof pAct=='function')pAct(a,x,y,el)});
 async function pick(file,k){if(!file)return;if(!/^image\//.test(file.type))return toast('Use a JPG, PNG or WebP picture');toast('Uploading…');

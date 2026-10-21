@@ -482,6 +482,14 @@ tr:hover td {
   padding: 6px 0;
   font-size: 13px;
 }
+.pos-checkout-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pos-checkout-actions > [data-a="co"] {
+  flex: 1;
+}
 #md {
   display: none;
   position: fixed;
@@ -3029,6 +3037,9 @@ table.ipdt td {
   margin: 12px 0;
   overflow: hidden;
 }
+.medicine-pos-add .medicine-form-card {
+  margin: 0;
+}
 .medicine-form-toggle {
   display: flex;
   width: 100%;
@@ -3107,6 +3118,9 @@ table.ipdt td {
 .medicine-units-heading {
   display: grid;
   gap: 4px;
+}
+.medicine-unit-add {
+  width: 100%;
 }
 .medicine-unit-row {
   display: grid;
