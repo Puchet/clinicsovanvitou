@@ -1,4 +1,4 @@
-/* Patient features: registration, patient file (records), appointment calendar, printing, CSV export.
+/* Patient features: registration, patient file (records), appointment calendar, printing, Excel export.
    Loaded after app.js and shares its globals ($, esc, D, api, toast, render, R, P, L ...). */
 const ymd = (d) => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
 const nowLocal = () => new Date(Date.now() - new Date().getTimezoneOffset() * 6e4).toISOString().slice(0, 16);
@@ -365,8 +365,199 @@ function schPrint(inv) {
 const CNF_AG = [['acc', 'Acceptance & Results'], ['care', 'Guarantee of Care'], ['priv', 'Privacy Notice'], ['photo', 'Photo Consent'], ['resp', 'Responsibility'], ['oth', 'Other Notices'], ['pay', 'Payment Policy']];
 // generic placeholder wording: each clinic should replace it in Clinic Settings
 const CNF_DEF = { acc: 'I understand and accept the treatment plan, the expected results and the possible risks that my doctor has explained to me.', care: 'I have been told how to look after myself after treatment and I will follow the doctor’s instructions.', priv: 'My personal and medical information is kept confidential and shared only with the people involved in my care, unless the law requires otherwise.', photo: 'I agree that photographs may be taken before and after treatment for my medical record.', resp: 'I understand that results differ between people and that I am responsible for following the treatment plan.', oth: 'Treatment documents are kept in the clinic’s records.', pay: 'Payment terms are explained and agreed before treatment starts.' };
-const cnfTexts = () => { let t = {}; try { t = JSON.parse((D.clinic || {}).cnf_text || '{}'); } catch (e) { /* defaults */ } return { ...CNF_DEF, ...t }; };
-const cnfSettingsHtml = (c) => { let t = {}; try { t = JSON.parse(c.cnf_text || '{}'); } catch (e) { /* defaults */ } return `<hr><b>Consultation form agreement text</b><p class="mu" style="font-size:12px;margin:2px 0 8px">Shown in every Consultation Form (CNF). Replace the placeholder wording with your clinic's own text.</p>${CNF_AG.map(([k, l]) => fTa(l, 'cnf_' + k, t[k] ?? CNF_DEF[k], 3)).join('')}`; };
+const CNF_DEF_KM = {
+  acc: 'ខ្ញុំយល់ព្រម និងទទួលយកផែនការព្យាបាល លទ្ធផលដែលរំពឹងទុក និងហានិភ័យដែលអាចកើតមាន ដែលគ្រូពេទ្យបានពន្យល់ដល់ខ្ញុំ។',
+  care: 'ខ្ញុំបានទទួលការណែនាំអំពីការថែទាំខ្លួនបន្ទាប់ពីការព្យាបាល ហើយខ្ញុំនឹងអនុវត្តតាមការណែនាំរបស់គ្រូពេទ្យ។',
+  priv: 'ព័ត៌មានផ្ទាល់ខ្លួន និងព័ត៌មានវេជ្ជសាស្ត្ររបស់ខ្ញុំត្រូវបានរក្សាជាសម្ងាត់ និងចែករំលែកតែជាមួយអ្នកដែលពាក់ព័ន្ធនឹងការថែទាំរបស់ខ្ញុំ លើកលែងតែច្បាប់តម្រូវ។',
+  photo: 'ខ្ញុំយល់ព្រមឱ្យថតរូបមុន និងក្រោយការព្យាបាល ដើម្បីរក្សាទុកក្នុងកំណត់ត្រាវេជ្ជសាស្ត្ររបស់ខ្ញុំ។',
+  resp: 'ខ្ញុំយល់ថាលទ្ធផលអាចខុសគ្នាពីមនុស្សម្នាក់ទៅមនុស្សម្នាក់ ហើយខ្ញុំមានទំនួលខុសត្រូវក្នុងការអនុវត្តតាមផែនការព្យាបាល។',
+  oth: 'ឯកសារព្យាបាលត្រូវបានរក្សាទុកក្នុងកំណត់ត្រារបស់គ្លីនិក។',
+  pay: 'លក្ខខណ្ឌនៃការទូទាត់ត្រូវបានពន្យល់ និងព្រមព្រៀងមុនពេលចាប់ផ្តើមការព្យាបាល។'
+};
+const CNF_KM = {
+  'Consultation form agreement text': 'ខ្លឹមសារកិច្ចព្រមព្រៀងក្នុងទម្រង់ពិគ្រោះយោបល់',
+  'Assessment & Plan': 'ការវាយតម្លៃ និងផែនការ',
+  'Shown in every Consultation Form (CNF). Replace the placeholder wording with text specific to your clinic.': 'បង្ហាញក្នុងទម្រង់ពិគ្រោះយោបល់ (CNF) គ្រប់ទម្រង់។ សូមជំនួសខ្លឹមសារគំរូនេះដោយខ្លឹមសាររបស់គ្លីនិកអ្នក។',
+  'Occupation': 'មុខរបរ',
+  'Address override': 'អាសយដ្ឋានបច្ចុប្បន្ន',
+  '1. Problems & Concerns': '១. បញ្ហា និងកង្វល់',
+  '2. Skin type': '២. ប្រភេទស្បែក',
+  '3. History of reactions': 'ប្រវត្តិប្រតិកម្ម',
+  'Have you had a reaction to any of these before?': 'តើអ្នកធ្លាប់មានប្រតិកម្មចំពោះចំណុចណាមួយខាងក្រោមនេះដែរឬទេ?',
+  'Have you had a reaction to any of these before?': 'តើអ្នកធ្លាប់មានប្រតិកម្មចំពោះចំណុចណាមួយខាងក្រោមនេះដែរឬទេ?',
+  '4. Skin reaction level': '៤. កម្រិតប្រតិកម្មរបស់ស្បែក',
+  '5. Healing': '៥. ការជាសះស្បើយ',
+  '6. Sun Exposure': '៦. ការប៉ះពាល់នឹងពន្លឺព្រះអាទិត្យ',
+  'Product usage history': 'ប្រវត្តិការប្រើប្រាស់ផលិតផល',
+  '7. Current products': '៧. ផលិតផលដែលកំពុងប្រើ',
+  '8. Retinol / peeling': '៨. ការប្រើ Retinol / ការរបកស្បែក',
+  'Medicine usage': 'ការប្រើប្រាស់ថ្នាំ',
+  '9. Birth control or other regular medicine': '៩. ការពន្យារកំណើត ឬការប្រើថ្នាំប្រចាំ',
+  'Treatment history': 'ប្រវត្តិការព្យាបាល',
+  '10. Previous treatment for this problem': '១០. ការព្យាបាលបញ្ហានេះពីមុន',
+  '11. Result of that treatment': '១១. លទ្ធផលនៃការព្យាបាលនោះ',
+  '12. Services received before': '១២. សេវាកម្មដែលធ្លាប់ទទួលពីមុន',
+  '13. Treatment elsewhere now': '១៣. កំពុងទទួលការព្យាបាលនៅកន្លែងផ្សេងឬទេ',
+  'Personal & family history': 'ប្រវត្តិផ្ទាល់ខ្លួន និងគ្រួសារ',
+  '14. Personal or family history of skin disease': '១៤. ប្រវត្តិជំងឺស្បែករបស់ខ្លួន ឬគ្រួសារ',
+  '15. General health': '១៥. សុខភាពទូទៅ',
+  'Lifestyle': 'របៀបរស់នៅ',
+  'Sun exposure': 'ការប៉ះពាល់នឹងពន្លឺព្រះអាទិត្យ',
+  'Stress level': 'កម្រិតស្ត្រេស',
+  'Sleep': 'ការគេង',
+  'Do you exercise?': 'តើអ្នកហាត់ប្រាណដែរឬទេ?',
+  'Following a special diet?': 'តើអ្នកកំពុងអនុវត្តរបបអាហារពិសេសដែរឬទេ?',
+  'Glasses of water per day': 'ចំនួនកែវទឹកក្នុងមួយថ្ងៃ',
+  'Coffee / tea / soft drinks per day': 'ចំនួនកាហ្វេ / តែ / ភេសជ្ជៈផ្អែមក្នុងមួយថ្ងៃ',
+  'For women': 'សម្រាប់ស្ត្រី',
+  'Pregnant or preparing for pregnancy?': 'តើអ្នកកំពុងមានផ្ទៃពោះ ឬគ្រោងមានផ្ទៃពោះដែរឬទេ?',
+  'Using birth control?': 'តើអ្នកកំពុងប្រើវិធីពន្យារកំណើតដែរឬទេ?',
+  'Irregular periods?': 'តើរដូវរបស់អ្នកមិនទៀងទាត់ដែរឬទេ?',
+  'Using any cream on the skin?': 'តើអ្នកកំពុងប្រើក្រែមលាបស្បែកណាមួយដែរឬទេ?',
+  'Our treatment needs some changes to your daily routine and diet. Can you accept this?': 'ការព្យាបាលរបស់យើងតម្រូវឱ្យមានការកែប្រែខ្លះៗលើទម្លាប់ប្រចាំថ្ងៃ និងរបបអាហាររបស់អ្នក។ តើអ្នកអាចទទួលយកបានដែរឬទេ?',
+  'Treatment Agreement': 'កិច្ចព្រមព្រៀងព្យាបាល',
+  'Have you received explanations about the treatment, and do you understand?': 'តើអ្នកបានទទួលការពន្យល់អំពីការព្យាបាល និងយល់ច្បាស់ហើយឬនៅ?',
+  'Customer understanding': 'ការយល់ដឹងរបស់អតិថិជន',
+  'Warnings & conditions': 'ការព្រមាន និងលក្ខខណ្ឌ',
+  'Personal interview': 'ការសម្ភាសន៍ផ្ទាល់ខ្លួន',
+  'Customer name:': 'ឈ្មោះអតិថិជន៖',
+  'Date:': 'កាលបរិច្ឆេទ៖',
+  'Signature:': 'ហត្ថលេខា៖',
+  'Doctor signature and name:': 'ហត្ថលេខា និងឈ្មោះគ្រូពេទ្យ៖',
+  'Customer name': 'ឈ្មោះអតិថិជន',
+  'Date': 'កាលបរិច្ឆេទ',
+  'Signature': 'ហត្ថលេខា',
+  'Doctor': 'គ្រូពេទ្យ',
+  'Special Notes - Image 5': 'កំណត់ចំណាំពិសេស',
+  'Personal Interview': 'ការសម្ភាសន៍ផ្ទាល់ខ្លួន',
+  'Doctor’s Assessment': 'ការវាយតម្លៃរបស់វេជ្ជបណ្ឌិត',
+  'Doctor’s Treatment Plan': 'ផែនការព្យាបាលរបស់វេជ្ជបណ្ឌិត',
+  'Have you visited our clinic before?': 'តើអ្នកធ្លាប់មកព្យាបាលនៅគ្លីនិកយើងខ្ញុំដែរឬទេ?',
+  'How did you hear about us?': 'តើអ្នកស្គាល់គ្លីនិកយើងខ្ញុំតាមរយៈណា?',
+  'Reason for visit': 'មូលហេតុនៃការមកពិគ្រោះ',
+  'Current address': 'អាសយដ្ឋានបច្ចុប្បន្ន',
+  'Additional notes': 'កំណត់ចំណាំផ្សេងៗ',
+  'Acceptance & Results': 'ការយល់ព្រម និងលទ្ធផល',
+  'Guarantee of Care': 'ការធានានៃការថែទាំ',
+  'Privacy Notice': 'សេចក្តីជូនដំណឹងអំពីឯកជនភាព',
+  'Photo Consent': 'ការយល់ព្រមថតរូប',
+  'Responsibility': 'ទំនួលខុសត្រូវ',
+  'Other Notices': 'សេចក្តីជូនដំណឹងផ្សេងៗ',
+  'Payment Policy': 'គោលការណ៍ទូទាត់',
+  'Acne': 'មុន',
+  'Acne scars': 'ស្នាមមុន',
+  'Veins': 'សរសៃឈាម',
+  'Pigmentation': 'ស្នាមពណ៌ស្បែក',
+  'Dark spots': 'ស្នាមអុចខ្មៅ',
+  'Wrinkles': 'ស្នាមជ្រួញ',
+  'Pores / holes': 'រន្ធញើស',
+  'Large pores': 'រន្ធញើសធំ',
+  'Tags': 'សាច់ដុះ',
+  'Sensitive': 'ងាយប្រតិកម្ម',
+  'Oily': 'ខ្លាញ់',
+  'Scar': 'ស្នាម',
+  'Normal': 'ធម្មតា',
+  'Dry': 'ស្ងួត',
+  'Combination': 'ចម្រុះ',
+  'Cosmetics': 'គ្រឿងសម្អាង',
+  'Metal': 'លោហៈ',
+  'Medicine': 'ថ្នាំ',
+  'Food': 'អាហារ',
+  'Fragrance': 'ក្លិនក្រអូប',
+  'Pollen': 'លំអងផ្កា',
+  'None': 'គ្មាន',
+  'If yes, describe': 'បើមាន សូមរៀបរាប់',
+  'If yes, which?': 'បើមាន តើថ្នាំអ្វី?',
+  'If yes, what?': 'បើមាន តើជាអ្វី?',
+  'If yes, details': 'បើមាន សូមរៀបរាប់លម្អិត',
+  'Easy': 'ងាយ',
+  'Medium': 'មធ្យម',
+  'High': 'ខ្ពស់',
+  'Fast': 'លឿន',
+  'Slow': 'យឺត',
+  'Infection / keloid': 'ការឆ្លងមេរោគ / ស្នាមកន្ទួល',
+  'Not easy': 'មិនងាយ',
+  'Cleanser': 'ហ្វូមលាងមុខ',
+  'Soap': 'សាប៊ូ',
+  'Toner': 'ទឹកជូតមុខ',
+  'Scrub / exfoliate': 'ស្ក្រាប់ / ជម្រុះកោសិកាស្បែក',
+  'Moisturiser': 'ក្រែមផ្តល់សំណើម',
+  'Sunscreen': 'ឡេការពារកម្តៅថ្ងៃ',
+  'Used before': 'ធ្លាប់ប្រើពីមុន',
+  'Never used': 'មិនធ្លាប់ប្រើ',
+  'Currently using': 'កំពុងប្រើ',
+  'Don’t know': 'មិនដឹង',
+  'Regular medicine': 'ថ្នាំប្រចាំ',
+  'Other medicine': 'ថ្នាំផ្សេងទៀត',
+  'Had treatment': 'ធ្លាប់ទទួលការព្យាបាល',
+  'Never had treatment': 'មិនធ្លាប់ទទួលការព្យាបាល',
+  'No result': 'គ្មានលទ្ធផល',
+  'Not satisfied': 'មិនពេញចិត្ត',
+  'Some result': 'មានលទ្ធផលខ្លះ',
+  'Facial': 'ថែរក្សាផ្ទៃមុខ',
+  'Peeling': 'របកស្បែក',
+  'Hair removal': 'ដករោម',
+  'Botox': 'Botox',
+  'Collagen': 'Collagen',
+  'CO2 laser': 'ឡាស៊ែរ CO2',
+  'Good': 'ល្អ',
+  'Fair': 'មធ្យម',
+  'Poor': 'ខ្សោយ',
+  'Often': 'ញឹកញាប់',
+  'Sometimes': 'ពេលខ្លះ',
+  'Rarely': 'កម្រណាស់',
+  'None': 'គ្មាន',
+  'Hard to fall asleep': 'ពិបាកគេងលក់',
+  'Yes': 'បាទ/ចាស',
+  'No': 'ទេ',
+  'Can accept': 'អាចទទួលយកបាន',
+  'Cannot': 'មិនអាចទទួលយកបាន',
+  'Other result': 'ចម្លើយផ្សេងទៀត',
+  'Received and understood well': 'បានទទួល និងយល់ច្បាស់',
+  'Not yet understood': 'មិនទាន់យល់ច្បាស់',
+  'Need more explanation': 'ត្រូវការការពន្យល់បន្ថែម',
+  'Other': 'ផ្សេងៗ',
+  'Other:': 'ផ្សេងៗ៖',
+  '3 or fewer': '៣ កែវ ឬតិចជាងនេះ',
+  '4–5': '៤–៥ កែវ',
+  '6 or more': '៦ កែវ ឬច្រើនជាងនេះ',
+  '1–2': '១–២ កែវ',
+  '2–3': '២–៣ កែវ',
+  'More than 3': 'លើសពី ៣ កែវ'
+};
+const CNF_KM_BILINGUAL = new Set([
+  'Occupation', 'Address override', '1. Problems & Concerns', '2. Skin type',
+  '4. Skin reaction level',
+  '5. Healing', '6. Sun Exposure', 'Product usage history', '7. Current products',
+  '8. Retinol / peeling', 'Medicine usage',
+  '9. Birth control or other regular medicine', 'Treatment history',
+  '10. Previous treatment for this problem', '11. Result of that treatment',
+  '12. Services received before', '13. Treatment elsewhere now',
+  'Personal & family history', '14. Personal or family history of skin disease',
+  '15. General health', 'Lifestyle', 'For women', 'Treatment Agreement',
+  'Assessment & Plan', 'Acceptance & Results', 'Guarantee of Care', 'Privacy Notice', 'Photo Consent',
+  'Responsibility', 'Other Notices', 'Payment Policy'
+]);
+const CNF_KM_BILINGUAL_OPTIONS = new Set(['prob', 'skin', 'react', 'level', 'heal']);
+const cnText = (s) => lang == 'km' && CNF_KM[s]
+  ? CNF_KM[s] + (CNF_KM_BILINGUAL.has(s) ? ` (${s})` : '')
+  : s;
+const cnOptionText = (k, s) => lang == 'km' && CNF_KM_BILINGUAL_OPTIONS.has(k) && CNF_KM[s]
+  ? `${CNF_KM[s]} (${s})`
+  : cnText(s);
+const cnQuestionText = (k, l) => k == 'react' && lang == 'km'
+  ? `៣. ${cnText(l)} (History of Reactions)`
+  : cnText(l);
+const cnfTexts = () => {
+  let t = {}; try { t = JSON.parse((D.clinic || {}).cnf_text || '{}'); } catch (e) { /* defaults */ }
+  return Object.fromEntries(CNF_AG.map(([k]) => [k, lang == 'km'
+    ? t[k + '_km'] ?? (t[k] != null && t[k] != CNF_DEF[k] ? t[k] : CNF_DEF_KM[k])
+    : t[k] ?? CNF_DEF[k]]));
+};
+const cnfSettingsHtml = (c) => {
+  let t = {}; try { t = JSON.parse(c.cnf_text || '{}'); } catch (e) { /* defaults */ }
+  return `<hr><b>${cnText('Consultation form agreement text')}</b><p class="mu" style="font-size:12px;margin:2px 0 8px">${cnText('Shown in every Consultation Form (CNF). Replace the placeholder wording with text specific to your clinic.')}</p>${CNF_AG.map(([k, l]) => fTa(`${cnText(l)} - English`, 'cnf_' + k, t[k] ?? CNF_DEF[k], 3) + fTa(`${cnText(l)} - Khmer`, 'cnf_' + k + '_km', t[k + '_km'] ?? CNF_DEF_KM[k], 3)).join('')}`;
+};
 const YES = ['Yes', 'No'];
 const CN = [
   ['g2', [['occ', 'Occupation'], ['addr', 'Address override']]],
@@ -406,16 +597,21 @@ const CNP = [
 function cnHtml(S, d) {
   return S.map((it) => { let [t, k, l, o, x] = it;
     if (t == 'box') { [t, k, l, o, x] = it.slice(1); o = o; return `<div class="sec cnb">${cnQ(k, l, o, x, d)}</div>`; }
-    if (t == 'g2') return `<div class="sec"><div class="g2">${k.map(([kk, ll]) => fIn(ll, 'cn_' + kk, d[kk])).join('')}</div></div>`;
-    if (t == 'H') return `<h4 class="${S == CNP ? 'cn-plan-heading' : 'cnH'}">${k}</h4>`; if (t == 'T') return `<h3 class="cnT">${k}</h3>`; if (t == 'h') return `<h5 class="cnh">${k}</h5>`;
+    if (t == 'g2') return `<div class="sec"><div class="g2">${k.map(([kk, ll]) => fIn(cnText(ll), 'cn_' + kk, d[kk])).join('')}</div></div>`;
+    if (t == 'H') return `<h4 class="${S == CNP ? 'cn-plan-heading' : 'cnH'}">${cnText(k)}</h4>`; if (t == 'T') return `<h3 class="cnT">${cnText(k)}</h3>`; if (t == 'h') {
+      if (S == CN && lang == 'km' && k == '3. History of reactions') return '';
+      return `<h5 class="cnh">${cnText(k)}</h5>`;
+    }
     if (t == 'q') return S == CNP ? `<div class="cn-plan-question"><b>${esc(l)}</b><div class="cn-plan-options">${o.map((v) => fCb(v, 'cnc_' + k, (d[k] || []).includes(v), v)).join('')}</div></div>` : cnQ(k, l, o, x, d);
-    if (t == 'a') return S == CNP ? `<label class="fl cn-plan-field">${l}<textarea class="in" name="cn_${k}" rows="${Number.isInteger(o) ? o : 2}">${esc(d[k] || '')}</textarea></label>` : fTa(l, 'cn_' + k, d[k], 3);
+    if (t == 'a') return S == CNP ? `<label class="fl cn-plan-field">${l}<textarea class="in" name="cn_${k}" rows="${Number.isInteger(o) ? o : 2}">${esc(d[k] || '')}</textarea></label>` : fTa(cnText(l), 'cn_' + k, d[k], 3);
     if (t == 'i') return fIn(l, 'cn_' + k, d[k], o || 'text');
-    if (t == 'ag') { const tx = cnfTexts(); return CNF_AG.map(([kk, ll]) => fTa(ll, 'cn_ag_' + kk, d['ag_' + kk] ?? tx[kk], 3)).join(''); }
-    if (t == 'sig') return `<div class="sec g2 sig"><div><b>Customer name:</b><div class="sl">${esc((curPt() || {}).name || '')}</div></div><div><b>Date:</b><div class="sl">&nbsp;</div></div><div><b>Signature:</b><div class="sl">&nbsp;</div></div><div><b>Doctor signature and name:</b><div class="sl">&nbsp;</div></div></div>`;
+    if (t == 'ag') { const tx = cnfTexts(); return CNF_AG.map(([kk, ll]) => fTa(cnText(ll), 'cn_ag_' + kk, d['ag_' + kk] ?? tx[kk], 3)).join(''); }
+    if (t == 'sig') return `<div class="sec g2 sig"><div><b>${cnText('Customer name:')}</b><div class="sl">${esc((curPt() || {}).name || '')}</div></div><div><b>${cnText('Date:')}</b><div class="sl">&nbsp;</div></div><div><b>${cnText('Signature:')}</b><div class="sl">&nbsp;</div></div><div><b>${cnText('Doctor signature and name:')}</b><div class="sl">&nbsp;</div></div></div>`;
     return ''; }).join('');
 }
-function cnQ(k, l, o, x, d) { return `<div class="cbg">${l ? `<b>${esc(l)}</b>` : ''}<div class="g4">${o.map((v) => fCb(v, 'cnc_' + k, (d[k] || []).includes(v), v)).join('')}</div>${x ? `<label class="fl cno">${esc(x)}: <input class="in" name="cn_${k}_o" value="${esc(d[k + '_o'] || '')}"></label>` : ''}</div>`; }
+function cnQ(k, l, o, x, d) {
+  return `<div class="cbg">${l ? `<b>${cnQuestionText(k, l)}</b>` : ''}<div class="g4">${o.map((v) => fCb(cnOptionText(k, v), 'cnc_' + k, (d[k] || []).includes(v), v)).join('')}</div>${x ? `<label class="fl cno">${cnOptionText(k, x)}: <input class="in" name="cn_${k}_o" value="${esc(d[k + '_o'] || '')}"></label>` : ''}</div>`;
+}
 function cnCollect(f, S) {
   const m = new FormData(f), d = {};
   S.forEach((it) => { let [t, k, l, o, x] = it; if (t == 'box') { [t, k] = it.slice(1); }
@@ -427,14 +623,14 @@ function cnCollect(f, S) {
 }
 function cnPrintHtml(d) {
   const sec = (S) => S.map((it) => { let [t, k, l, o, x] = it; if (t == 'box') { [t, k, l, o, x] = it.slice(1); }
-    if (t == 'g2') return kv(k.map(([kk, ll]) => [ll, d[kk]]));
-    if (t == 'H') return `<h4>${esc(k)}</h4>`; if (t == 'T') return `<h3>${esc(k)}</h3>`; if (t == 'h') return `<h5>${esc(k)}</h5>`;
-    if (t == 'q') { const v = [...(d[k] || []), ...(d[k + '_o'] ? [(x || 'Other') + ': ' + d[k + '_o']] : [])]; return v.length ? `<p><b>${esc(l)}:</b> ${v.map(esc).join(', ')}</p>` : ''; }
-    if (t == 'a' || t == 'i') return d[k] ? `<p><b>${esc(l)}:</b> ${esc(d[k]).replace(/\n/g, '<br>')}</p>` : '';
-    if (t == 'ag') return CNF_AG.map(([kk, ll]) => `<p><b>${esc(ll)}:</b> ${esc(d['ag_' + kk] ?? cnfTexts()[kk]).replace(/\n/g, '<br>')}</p>`).join('');
-    if (t == 'sig') return `<table class="pk full"><tr><th>Customer name</th><td>${esc((curPt() || {}).name || '')}</td><th>Date</th><td>&nbsp;</td></tr><tr><th>Signature</th><td>&nbsp;<br>&nbsp;</td><th>Doctor</th><td>&nbsp;</td></tr></table>`;
+    if (t == 'g2') return kv(k.map(([kk, ll]) => [cnText(ll), d[kk]]));
+    if (t == 'H') return `<h4>${cnText(k)}</h4>`; if (t == 'T') return `<h3>${cnText(k)}</h3>`; if (t == 'h') { if (S == CN && lang == 'km' && k == '3. History of reactions') return ''; return `<h5>${cnText(k)}</h5>`; }
+    if (t == 'q') { const v = [...(d[k] || []).map((value) => cnOptionText(k, value)), ...(d[k + '_o'] ? [cnText(x || 'Other') + ': ' + d[k + '_o']] : [])]; return v.length ? `<p><b>${cnQuestionText(k, l)}:</b> ${v.map(esc).join(', ')}</p>` : ''; }
+    if (t == 'a' || t == 'i') return d[k] ? `<p><b>${cnText(l)}:</b> ${esc(d[k]).replace(/\n/g, '<br>')}</p>` : '';
+    if (t == 'ag') return CNF_AG.map(([kk, ll]) => `<p><b>${cnText(ll)}:</b> ${esc(d['ag_' + kk] ?? cnfTexts()[kk]).replace(/\n/g, '<br>')}</p>`).join('');
+    if (t == 'sig') return `<table class="pk full"><tr><th>${cnText('Customer name')}</th><td>${esc((curPt() || {}).name || '')}</td><th>${cnText('Date')}</th><td>&nbsp;</td></tr><tr><th>${cnText('Signature')}</th><td>&nbsp;<br>&nbsp;</td><th>${cnText('Doctor')}</th><td>&nbsp;</td></tr></table>`;
     return ''; }).join('');
-  return sec(CN) + '<h3>Assessment &amp; Plan</h3>' + sec(CNP);
+  return sec(CN) + `<h3>${cnText('Assessment & Plan')}</h3>` + sec(CNP);
 }
 function cnfForm(r) {
   const e = !!r, d = r ? jd(r) : {}, hist = recs.filter((x) => x.kind == 'cnf');
@@ -476,13 +672,26 @@ R.ap = function () {
 };
 const apOpen = (a) => modal(a ? 'Edit' : 'Add appointment', P.ap.f, a || { ...P.ap.d, date: apOpen.date, time: '' }, (o) => a ? api('PUT', 'appointments/' + a.id, o) : api('POST', 'appointments', { ...P.ap.d, ...o }));
 
-// ---------- CSV export (opens in Excel) ----------
-function exportCsv() {
+// ---------- Excel export ----------
+async function exportExcel() {
   const key = (P[rt] && P[rt].k) || rt, rows = rt == 'pt' ? ptRows().map(([r]) => r) : D[key]; if (!Array.isArray(rows) || !rows.length) return toast('Nothing here yet.');
   const cols = Object.keys(rows[0]).filter((c) => !['created_at', 'updated_at', 'user_id', 'photo', 'data'].includes(c));
-  const cell = (v) => { v = String(v ?? ''); if (/^[=+\-@\t\r]/.test(v)) v = "'" + v; return '"' + v.replace(/"/g, '""') + '"'; };
-  const csv = '\ufeff' + [cols.join(','), ...rows.map((r) => cols.map((c) => cell(r[c])).join(','))].join('\r\n');
-  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' })); a.download = key + '-' + ymd(new Date()) + '.csv'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  try {
+    const response = await fetch(API_BASE + '/api/export/xlsx', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: 'Bearer ' + tok } : {}) },
+      body: JSON.stringify({ rows: rows.map((row) => Object.fromEntries(cols.map((col) => [col, row[col] ?? '']))) }),
+    });
+    if (response.status == 401 && tok) logout();
+    if (!response.ok) {
+      const error = await response.json().catch(() => null);
+      if (response.status == 404) throw new Error('Excel export API not found. Restart the backend server to load the latest changes.');
+      throw new Error(error && error.error || 'Request failed');
+    }
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([await response.arrayBuffer()], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
+    a.download = key + '-' + ymd(new Date()) + '.xlsx'; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  } catch (error) { toast(error.message); }
 }
 
 // ---------- click dispatcher (called from app.js for actions it does not know) ----------
@@ -508,7 +717,7 @@ function pAct(a, x, y, el) {
   else if (a == 'apadd') { apOpen.date = x; apOpen(); } else if (a == 'apedit') apOpen(D.ap.find((r) => r.id == x));
   else if (a == 'callist') { cal.list = !cal.list; render(); } else if (a == 'caltoday') { cal.d = new Date(); render(); } else if (a == 'calmode') { cal.mode = x; render(); }
   else if (a == 'calprev' || a == 'calnext') { const s = a == 'calnext' ? 1 : -1, d = cal.d; cal.d = cal.mode == 'month' ? new Date(d.getFullYear(), d.getMonth() + s, 1) : new Date(d.getFullYear(), d.getMonth(), d.getDate() + s * (cal.mode == 'week' ? 7 : 1)); render(); }
-  else if (a == 'csv') exportCsv(); else if (a == 'pfclear') { Object.keys(pf).forEach((k) => delete pf[k]); render(); }
+  else if (a == 'csv') exportExcel(); else if (a == 'pfclear') { Object.keys(pf).forEach((k) => delete pf[k]); render(); }
   else if (a == 'ptcols') { ptColsOpen = !ptColsOpen; render(); } else if (a == 'ptfilt') { ptFilt = !ptFilt; savePt(); render(); }
   else if (a == 'ptcolsall') { ptHide[ptMode()].clear(); savePt(); render(); }
   else if (a == 'ptcol') { const S = ptHide[ptMode()]; if (S.has(x)) S.delete(x); else if (ptShown().length > 1) S.add(x); else toast('At least one column must stay visible'); savePt(); render(); }

@@ -306,6 +306,44 @@ tr:hover td {
 .cs .card {
   padding: 16px;
 }
+.service-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  gap: 16px;
+  margin-top: 16px;
+}
+.service-card {
+  display: flex;
+  min-height: 172px;
+  flex-direction: column;
+  padding: 16px;
+}
+.service-card h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+.service-price {
+  color: #1e3a8a;
+  font-size: 16px;
+}
+.service-description {
+  flex: 1;
+  margin-top: 8px;
+  color: var(--mu);
+  font-size: 12px;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.service-description-empty {
+  min-height: 18px;
+}
+.service-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
 .br {
   display: flex;
   align-items: center;
@@ -638,6 +676,15 @@ hr {
 #mf.schedule-form {
   width: min(540px, 95vw);
   padding: 20px 22px;
+}
+#mf.service-form {
+  width: min(380px, 92vw);
+}
+#mf.service-form textarea.in {
+  width: 100%;
+  min-height: 84px;
+  margin-top: 4px;
+  resize: vertical;
 }
 .sch-form {
   display: grid;
