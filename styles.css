@@ -2872,6 +2872,10 @@ table.ipdt td {
   border-color: var(--p);
   box-shadow: 0 0 0 2px #2563eb22;
 }
+.echo-rich-editor img {
+  max-width: 100%;
+  height: auto;
+}
 .echo-rich-editor table {
   width: 100%;
   border-collapse: collapse;
