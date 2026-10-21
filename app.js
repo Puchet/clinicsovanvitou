@@ -86,7 +86,7 @@ async function medicineSave(e){
   try{
     const editing=medicineEditIndex!=null,item=editing?D.med[medicineEditIndex]:null;
     await api(editing?'PUT':'POST',editing?'medicines/'+item.id:'medicines',payload);
-    await load();medicineFormOpen=false;medicineEditIndex=null;medicineViewId=null;if(editing){medicineLayout='table';try{localStorage.setItem('medicineLayout',medicineLayout)}catch(e){}}render();toast(editing?'Medicine updated':'Medicine added');
+    await load();medicineFormOpen=false;medicineEditIndex=null;medicineViewId=null;render();toast(editing?'Medicine updated':'Medicine added');
   }catch(error){toast(error.message)}
 }
 async function importMedicinesFile(file){
@@ -306,7 +306,7 @@ else if(a=='out'){const r=D.ipd[+x];run(api('PUT','ipd/'+r.id,{out:1}).then(()=>
 else if(a=='add'){const k=x;if(k=='dr')return doctorForm();if(k=='sv')return serviceForm();const F=FM[k]||P[k].f,d={...(df[k]||P[k]?.d||{})};modal('Add',F,d,o=>api('POST',RS[k],{...d,...o}))}
 else if(a=='edit'){if(x=='dr')return doctorForm(+y);if(x=='sv')return serviceForm(+y);const F=FM[x]||P[x].f,r=D[x][+y];modal('Edit',F,r,o=>api('PUT',RS[x]+'/'+r.id,o))}
 else if(a=='medadd'){medicineEditIndex=null;medicineFormOpen=true;render()}
-else if(a=='mededit'){medicineLayout='table';try{localStorage.setItem('medicineLayout',medicineLayout)}catch(e){}medicineViewId=null;medicineEditIndex=+x;medicineFormOpen=true;render()}
+else if(a=='mededit'){medicineViewId=null;medicineEditIndex=+x;medicineFormOpen=true;render()}
 else if(a=='medview'){medicineViewId=x;medicineFormOpen=false;render()}
 else if(a=='medback'){medicineViewId=null;render()}
 else if(a=='medlayout'){medicineLayout=medicineLayout=='table'?'cards':'table';try{localStorage.setItem('medicineLayout',medicineLayout)}catch(e){}render()}
