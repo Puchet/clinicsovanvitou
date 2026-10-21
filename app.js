@@ -1,7 +1,7 @@
 const API_BASE=((typeof window!=='undefined'&&window.API_BASE)||'').replace(/\/+$/,'');
 const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])),K=n=>D.clinic&&D.clinic.currency=='USD'?'$'+(Number(n)/(D.clinic.rate||4000)).toFixed(2):'KHR '+Number(n).toLocaleString('en-US');
 const NM=['Sok Dara','Chan Sreyneang','Vann Rithy','Keo Sophea','Lim Sokha','Heng Vuthy','Pich Srey','Seng Bunthoeun','Mao Channary','Ouk Samnang','Tep Vanna','Nguon Sreymom'],AD=['Phnom Penh','Siem Reap','Kandal','Takeo','Battambang'];
-const D={pt:[],ap:[],ipd:[],dr:[],payslips:[],med:[],sv:[],lab:[],echo:[],dx:[],rx:[],sy:[],ad:[],sf:[],ch:[],rev:0,bill:[],billing:[],clinic:{}};
+const D={pt:[],ap:[],ipd:[],dr:[],payslips:[],med:[],sv:[],lab:[],labcategories:[],echo:[],dx:[],rx:[],sy:[],ad:[],sf:[],ch:[],rev:0,bill:[],billing:[],clinic:{}};
 // an admitted patient (IPD row linked by patient ID) goes back to OPD when the stay ends
 const syncOpd=r=>{const p=D.pt.find(q=>String(q.id)==String(r.code));return p&&p.type=='IPD'?api('PUT','patients/'+p.id,{type:'OPD'}):0};
 const billingData=r=>{try{return JSON.parse(r.data||'{}')}catch{return{}}};
@@ -25,7 +25,7 @@ ipd:{t:'Inpatients (IPD)',s:'Manage all admitted patients.',h:['Name','Room / Be
 cur:{k:'ipd',t:'Current IPD patients',s:'Patients not yet discharged',fl:r=>!r.out},
 med:{t:'Medicines',s:'Manage your pharmacy list.',h:['Name','Price','In stock'],c:r=>[nm(r),K(r.price),`<span class="bd ${r.stock>0?'':'x'}">${r.stock}</span>`],f:[['Name','name'],['Price (KHR)','price'],['Stock','stock'],['Photo','photo','img']],ex:1},
 sv:{t:'Services',s:'Manage all clinic services.',h:['Name','Price'],c:r=>[r.name,K(r.price)],f:[['Service name','name'],['Price (KHR)','price','number'],['Description','description','ta']],ex:1},
-lab:{t:'Lab Templates',s:'Manage lab test templates and prices.',h:['Name','Price','Category'],c:r=>[r.name,K(r.price),r.cat],f:[['Name','name'],['Price (KHR)','price'],['Category','cat']],ex:1},
+lab:{t:'Lab Templates',s:'Manage lab test templates and prices.',h:['Name','Price','Type'],c:r=>[r.name,K(r.price),r.cat],f:[['Name','name'],['Price (KHR)','price'],['Type','cat']],ex:1},
 dx:{t:'Diagnosis',s:'Diagnoses available when writing a visit.',h:['Name'],c:r=>[r.name],f:[['Name','name']]},
 rx:{t:'Prescription Templates',s:'Default medicines per disease.',h:['Disease name','Medicines'],c:r=>[r.name,r.meds],f:[['Disease name','name'],['Medicines','meds']],ex:1},
 sy:{t:'Symptoms',s:'Manage symptoms list for patient complaints',h:['Symptom'],c:r=>[r.name],f:[['Symptom','name']]},
@@ -120,13 +120,14 @@ return hd('Dashboard','Overview of your clinic')+`<div class="sts">${sc.map(s=>`
 pt(){const L=ft('pt').filter(([r])=>tab=='Unpaid'?r.unpaid:r.type==tab),n=Math.max(1,Math.ceil(L.length/10));pg=Math.min(pg,n);
 return hd('Patients','',sr('Search name, phone…')+'<button class="btn g" data-a="reg">+ Add Patient</button>'+`<div class="tabs">${['OPD','IPD','Unpaid'].map(t=>`<button class="${t==tab?'on':''}" data-a="tab:${t}">${t}</button>`).join('')}</div>`)+`<div class="card"><table><thead><tr>${['ID','Name','Age','Sex','Phone','Address','Status','Actions'].map(x=>`<th>${x}</th>`).join('')}</tr></thead><tbody>${L.slice(pg*10-10,pg*10).map(([r,i])=>`<tr><td>${r.id}</td><td><a href="#" data-a="open:${r.id}">${esc(r.name)}</a>${r.latin_name?`<br><span class="mu">${esc(r.latin_name)}</span>`:''}</td><td>${fmtAge(r)}</td><td>${fmtSex(r.sex)}</td><td>${esc(r.phone)}</td><td>${esc(r.addr)}</td><td>${r.unpaid?'<span class="bd x">Unpaid</span>':'<span class="bd">Paid</span>'}</td><td><button class="btn s" data-a="open:${r.id}">Open</button> <button class="btn s" data-a="regedit:${i}">Edit</button> <button class="btn s r" data-a="del:pt:${i}">✕</button></td></tr>`).join('')||'<tr><td colspan="8" class="emp">No patients.</td></tr>'}</tbody></table></div><div class="pg"><span>Showing ${L.length?pg*10-9:0}–${Math.min(L.length,pg*10)} of ${L.length}</span><div><button class="btn s" data-a="pg:${pg-1}">‹ Previous</button><button class="btn s p">${pg}</button><button class="btn s" data-a="pg:${pg+1}">Next ›</button></div></div>`},
 dr(){if(doctorProfileId!=null)return doctorProfileHtml();return hd('Doctors List','',add('dr','Add Doctor'))+`<div class="gr doctor-grid">${D.dr.map((d,i)=>`<div class="card dc doctor-card"><button type="button" class="doctor-card-open" data-a="doctor:${d.id}" aria-label="Open ${esc(d.name)}"></button><div class="av">${d.photo?`<img src="${API_BASE}/uploads/${esc(d.photo)}" alt="">`:'👤'}</div><b><a class="doctor-card-link" href="#" data-a="doctor:${d.id}">${esc(d.name)}</a></b><br><span class="bd b">${esc(d.role)}</span><div class="doctor-card-info"><div>▣　ID: ${esc(d.code||'--')}</div><div>☎　${esc(d.phone||'--')}</div><div>▢　${esc(d.workdays||d.av||'Available')}</div></div><div class="doctor-card-actions"><button class="btn s" data-a="edit:dr:${i}">Edit</button><button type="button" class="doctor-history-button" data-a="doctorhistory:${d.id}" title="Doctor history" aria-label="Doctor history">◷</button><button class="btn s r" data-a="del:dr:${i}">✕</button></div></div>`).join('')||'<p class="emp">No doctors added yet.</p>'}</div>`},
-echo(){return hd('Echo Templates','',add('echo','Create Template'))+`<div class="gr">${D.echo.map((e,i)=>`<div class="card" style="padding:14px"><div style="display:flex;justify-content:space-between"><b>${esc(e.name)}</b><span class="bd">${K(e.price)}</span></div><p class="mu" style="font-size:12px">Font: ${e.font}</p><div style="margin-top:8px;text-align:right"><button class="btn s" data-a="edit:echo:${i}">Edit</button> <button class="btn s r" data-a="del:echo:${i}">✕</button></div></div>`).join('')}</div>`},
+echo(){return echoPage()},
 pos(){const T=Object.entries(cart).reduce((s,[i,n])=>s+mi(i).price*n,0),L=ft('med');
 return hd('POS','',sr('Search medicines…')+add('med','Add item'))+`<div class="pos"><div class="pr">${L.map(([m,i])=>`<div class="card pc" data-a="cart:${m.id}">${m.photo?`<img class="ph" src="${API_BASE}/uploads/${esc(m.photo)}" alt="">`:'<div class="ph"></div>'}<b>${esc(m.name)}</b><br><span style="color:#2563eb">${K(m.price)}</span><br><span style="color:${m.stock>0?'#16a34a':'#dc2626'}">Stock: ${m.stock}</span></div>`).join('')}</div><div class="card" style="padding:16px;align-self:start"><b>🛒 POS</b>${Object.keys(cart).length?Object.entries(cart).map(([i,n])=>`<div class="cl"><span>${esc(mi(i).name)} × ${n}</span><span>${K(mi(i).price*n)} <a href="#" data-a="rm:${i}">✕</a></span></div>`).join(''):'<p class="mu" style="padding:20px 0;text-align:center">Cart is empty</p>'}<hr><div class="cl"><b>Total</b><b>${K(T)}</b></div><div class="tools" style="margin:8px 0"><button class="btn ${pay=='Cash'?'p':''}" data-a="pay:Cash">Cash</button><button class="btn ${pay=='Bank'?'p':''}" data-a="pay:Bank">Bank</button></div><button class="btn p" style="width:100%" data-a="co">Checkout</button></div></div>`},
 ch(){return hd('Chat','Internal messages')+`<div class="card" style="padding:16px">${D.ch.map(m=>`<p translate="no">💬 ${esc(m)}</p>`).join('')||'<p class="mu">No messages yet.</p>'}<div class="tools" style="margin-top:12px"><input id="cm" class="in" style="flex:1" placeholder="Type a message"><button class="btn p" data-a="send">Send</button></div></div>`},
 an(){const m={};D.med.forEach(x=>m[x.name]=x.stock);return hd('Analytics','Stock and revenue overview')+`<div class="cs">${bars('Stock by medicine',D.med.map(x=>[x.name,Math.max(0,x.stock)]))}${bars('Revenue by day (KHR 1,000)',D.bill.map(b=>[b.day.slice(5),b.amt/1000]),'#22c55e')}</div>`},
 da(){return hd('Doctor Analytics','Appointments per doctor')+`<div class="cs">${bars('Appointments',Object.entries(D.ap.reduce((a,x)=>(a[x.doc]=(a[x.doc]||0)+1,a),{})))}</div>`},
 sv(){const rows=ft('sv');return hd('Services','Manage all clinic services.',sr()+`<button class="btn" type="button" data-a="svimport">Import Excel</button><input id="sv-import-file" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" title="Choose an Excel workbook or CSV with name, price, and description columns" hidden>`+ex+add('sv','Add Service'))+(rows.length?`<div class="service-grid">${rows.map(([s,i])=>`<article class="card service-card"><h3>${esc(s.name)}</h3><strong class="service-price">${K(s.price)}</strong>${s.description?`<p class="service-description">${esc(s.description)}</p>`:'<div class="service-description service-description-empty"></div>'}<div class="service-actions"><button class="btn s" data-a="edit:sv:${i}">Edit</button><button class="btn s r" data-a="del:sv:${i}">Delete</button></div></article>`).join('')}</div>`:'<div class="card"><p class="emp">Nothing here yet.</p></div>')}}
+R.lab=()=>labPage();
 R.med=function(){
   if(medicineEditIndex!=null){
     const medicine=D.med[medicineEditIndex];
@@ -165,6 +166,180 @@ function viewMedicineComposition(index){const m=D.med[index];if(!m)return toast(
 async function printMedicineCode(index,kind){const m=D.med[index];if(!m)return toast('Medicine not found');try{const result=await api('GET',`medicines/${m.id}/code/${kind}`);if(!result||typeof result.svg!='string'||!result.svg.startsWith('<svg'))throw new Error('Could not generate the medicine code');printDoc(kind=='qr'?'Medicine QR Code':'Medicine Barcode',`<div class="medicine-code-label"><h2>${esc(m.name)}</h2>${result.svg}<p>Medicine ID: ${m.id}</p></div>`)}catch(error){toast(error.message)}}
 async function exportMedicineCodes(kind){const medicines=ft('med').map(([medicine])=>medicine);if(!medicines.length)return toast('No medicines to export');try{const response=await fetch(API_BASE+`/api/medicines/codes/${kind}`,{method:'POST',headers:{'Content-Type':'application/json',...(tok?{Authorization:'Bearer '+tok}:{})},body:JSON.stringify({ids:medicines.map(m=>m.id)})});if(response.status==401&&tok)logout();if(!response.ok){const error=await response.json().catch(()=>null);throw new Error(error&&error.error||'Could not export medicine codes')}const url=URL.createObjectURL(await response.blob()),a=document.createElement('a');a.href=url;a.download=`medicine-${kind}-codes.svg`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}catch(error){toast(error.message)}}
 const FM={pt:[['Name','name'],['Age','age'],['Sex','sex'],['Phone','phone'],['Address','addr']],dr:[['Name','name'],['Role','role'],['ID','code'],['Phone','phone'],['Photo','photo','img']],echo:[['Name','name'],['Price (KHR)','price']]};
+let labFieldSequence=0;
+function labFieldRow(value=''){
+  const id=labFieldSequence++;
+  return `<div class="lab-field-row"><input class="in" name="lab_field_${id}" value="${esc(value)}" placeholder="${esc(T('Field name'))}"><button type="button" class="btn s r" data-a="labfielddel" aria-label="${esc(T('Remove field'))}" title="${esc(T('Remove field'))}">×</button></div>`;
+}
+function labFieldValues(template){
+  try{const fields=JSON.parse(template.fields||'[]');return Array.isArray(fields)?fields.map(field=>typeof field=='string'?field:String(field.name||'')).filter(Boolean):[]}catch(e){return[]}
+}
+function labPage(){
+  const rows=ft('lab'),heading=hd(T('Lab Templates'),T('Manage lab test templates and prices.'),sr(T('Search lab templates…'))+`<button class="btn" data-a="labimport">↑ ${T('Upload Lab')}</button><input id="lab-import-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>`+ex+`<button class="btn" data-a="labcategoryadd">⊕ ${T('Add Type')}</button><button class="btn g" data-a="labadd">＋ ${T('Add Lab Template')}</button>`);
+  return heading+`<div class="card lab-template-table-wrap"><table class="lab-template-table"><thead><tr><th>${T('Name')}</th><th>${T('Price')}</th><th>${T('Type')}</th><th>${T('Actions')}</th></tr></thead><tbody>${rows.map(([lab,i])=>`<tr><td><b>${esc(lab.name)}</b></td><td>${K(lab.price)}</td><td>${esc(lab.cat||'')}</td><td class="lab-template-actions"><button class="btn s" data-a="labedit:${i}" aria-label="${T('Edit')}" title="${T('Edit')}">✎</button><button class="btn s r" data-a="labdel:${i}" aria-label="${T('Delete')}" title="${T('Delete')}">♜</button></td></tr>`).join('')||`<tr><td colspan="4" class="emp">${T('Nothing here yet.')}</td></tr>`}</tbody></table></div>`;
+}
+function labForm(index=null){
+  const editing=index!=null,lab=editing?D.lab[index]:{};
+  if(editing&&!lab)return toast(T('Lab template not found'));
+  const categories=[...new Set([...D.labcategories.map(category=>category.name),...D.lab.map(item=>item.cat)].filter(Boolean))];
+  const fields=lab?labFieldValues(lab):[];
+  labFieldSequence=0;
+  const body=`<div class="lab-template-form-fields"><label>${T('Name')}<input class="in" name="name" value="${esc(lab?.name||'')}" required autofocus></label><label>${T('Price (KHR)')}<input class="in" name="price" type="number" min="0" step="1" value="${esc(lab?.price??0)}" required></label><label>${T('Type')}<input class="in" name="cat" list="lab-category-options" value="${esc(lab?.cat||'')}"><datalist id="lab-category-options">${categories.map(category=>`<option value="${esc(category)}">`).join('')}</datalist></label></div><section class="lab-fields-editor"><h4>${T('Fields')}</h4><div id="lab-fields-list">${fields.map(labFieldRow).join('')}</div><button type="button" class="btn lab-add-field" data-a="labfieldadd">＋ ${T('Add Field')}</button></section><div class="tools lab-form-actions"><button type="button" class="btn" data-a="close">${T('Cancel')}</button><button class="btn p">${T('Save')}</button></div>`;
+  const form=$('#mf');form.className='lab-template-form';form.innerHTML=`<div class="lab-form-heading"><h3>${T(editing?'Edit Lab Template':'Add Lab Template')}</h3><button type="button" class="btn s" data-a="close" aria-label="${T('Close')}">×</button></div>${body}`;$('#md').classList.add('on');
+  form.onsubmit=async event=>{event.preventDefault();const values=Object.fromEntries(new FormData(form)),templateFields=Object.entries(values).filter(([key,value])=>key.startsWith('lab_field_')&&String(value).trim()).map(([,value])=>String(value).trim());const name=String(values.name||'').trim(),price=Number(values.price);if(!name)return toast(T('Name is required'));if(!Number.isInteger(price)||price<0)return toast(T('Price must be a non-negative whole number'));
+    const body={name,price,cat:String(values.cat||'').trim(),fields:JSON.stringify(templateFields)};
+    try{await api(editing?'PUT':'POST',editing?'labs/'+lab.id:'labs',body);await load();$('#md').classList.remove('on');render();toast(T('Saved'))}catch(error){toast(error.message)}
+  };
+}
+function labCategoryForm(){
+  modal(T('Add Type'),[[T('Type'),'name']],{},async values=>{const name=String(values.name||'').trim();if(!name)throw new Error(T('Type is required'));if(D.labcategories.some(category=>category.name.toLowerCase()==name.toLowerCase()))throw new Error(T('Type already exists'));await api('POST','labcategories',{name})},{submit:T('Add')});
+}
+async function importLabsFile(file){
+  if(!file)return;
+  try{
+    if(!/\.xlsx$/i.test(file.name||''))throw new Error(T('Choose an Excel workbook'));
+    if(file.size>1e6)throw new Error(T('Import file must be smaller than 1 MB'));
+    const response=await fetch(API_BASE+'/api/labs/import-xlsx',{method:'POST',headers:{'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',...(tok?{Authorization:'Bearer '+tok}:{})},body:await file.arrayBuffer()});
+    const result=await response.json().catch(()=>null);
+    if(!response.ok)throw new Error(result&&result.error||T('Lab import failed'));
+    await load();render();toast(`${T('Imported')} ${result.imported} ${T('lab templates')}`);
+  }catch(error){toast(error.message)}
+}
+let echoSectionSequence=0,echoFieldSequence=0,echoTableSectionId=null,echoTableSelection=null,echoToolbarSelection=null;
+function echoList(value){
+  try{const parsed=JSON.parse(value||'[]');return Array.isArray(parsed)?parsed:[]}catch{return[]}
+}
+function echoSectionHtml(section={}){
+  const id=echoSectionSequence++;
+  const fields=Array.isArray(section.fields)&&section.fields.length?section.fields:[''];
+  return `<section class="echo-section-card" data-echo-section="${id}"><div class="echo-section-top"><span class="echo-section-grip" aria-hidden="true">⠿</span><button type="button" class="btn s r" data-a="echosectiondel" aria-label="${T('Remove section')}">▣</button></div><label>${T('Section title')}<input class="in" name="echo_title_${id}" value="${esc(section.title||'')}" placeholder="${esc(T('Optional section title'))}"></label><div class="echo-editor-label">${T('Section Content (Title/Body)')}</div><div class="echo-rich-toolbar"><select class="in echo-font-select" data-echo-command="fontName" data-echo-section="${id}" aria-label="${T('Font')}"><option>Arial</option><option>Times New Roman</option><option>Khmer OS</option><option>Moul</option><option>Koulen</option></select><select class="in echo-size-select" data-echo-command="formatBlock" data-echo-section="${id}" aria-label="${T('Text style')}"><option value="p">${T('Normal')}</option><option value="h2">${T('Heading')}</option><option value="blockquote">${T('Quote')}</option></select>${[['bold','B'],['italic','I'],['underline','U'],['foreColor','A'],['hiliteColor','▨'],['insertUnorderedList','☷'],['insertOrderedList','1.'],['createLink','<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 13a5 5 0 0 0 7.1 0l3-3a5 5 0 0 0-7.1-7.1l-1.7 1.7m2.7 6.4a5 5 0 0 0-7.1 0l-3 3a5 5 0 0 0 7.1 7.1l1.7-1.7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>'],['insertImage','<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="8.5" cy="9" r="1.5" fill="currentColor"/><path d="m21 15-5-5L5 20" fill="none" stroke="currentColor" stroke-width="2"/></svg>'],['justifyLeft','☰'],['removeFormat','Tx']].map(([command,label])=>command=='foreColor'||command=='hiliteColor'?`<label class="echo-color-tool" title="${command=='foreColor'?T('Text Color'):T('Highlight Color')}" aria-label="${command=='foreColor'?T('Text Color'):T('Highlight Color')}"><span class="echo-tool echo-tool-${command}">${label}</span><input type="color" data-echo-color="${command}" data-echo-section="${id}" value="${command=='foreColor'?'#000000':'#ffff00'}" aria-label="${command=='foreColor'?T('Text Color'):T('Highlight Color')}"></label>`:`<button type="button" class="btn s echo-tool echo-tool-${command}" data-a="echoformat:${id}:${command}" aria-label="${esc(command)}" title="${esc(command)}">${label}</button>`).join('')}<button type="button" class="btn s echo-tool" data-a="echoformat:${id}:insertTable" title="${T('Insert Table')}">▦ ${T('Insert Table')}</button></div><div class="echo-rich-editor" contenteditable="true" role="textbox" aria-multiline="true" data-echo-editor="${id}">${section.content||''}</div><input type="hidden" name="echo_content_${id}" data-echo-content value="${esc(section.content||'')}"><div class="echo-extra-fields"><label>${T('Additional Fields (Optional)')}</label><div class="echo-fields-list">${echoFieldRows(fields,id)}</div><button type="button" class="btn s" data-a="echofieldadd">${T('Add Field')}</button></div></section>`;
+}
+function echoFieldRows(fields=[],sectionId=0){
+  return fields.map(value=>echoFieldRow(value,sectionId)).join('');
+}
+function echoFieldRow(value='',sectionId=0){
+  const id=echoFieldSequence++;
+  return `<div class="echo-field-row"><input class="in" name="echo_field_${sectionId}_${id}" value="${esc(value)}" placeholder="${esc(T('Field Name'))}"><button type="button" class="btn s" data-a="echofielddel" aria-label="${T('Remove field')}">×</button></div>`;
+}
+function echoPage(){
+  const rows=ft('echo');
+  const controls=sr(T('Search echo templates…'))+`<button class="btn g" data-a="echoadd">＋ ${T('Create Template')}</button><button class="btn" data-a="echoimport">↑ ${T('Upload')}</button><input id="echo-import-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden><button class="btn" data-a="echoexport">↓ ${T('Download')}</button>`;
+  return hd(T('Echo Templates'),'',controls)+`<div class="echo-template-grid">${rows.map(([template,index])=>`<article class="card echo-template-card"><div class="echo-template-summary"><h3>${esc(template.name)}</h3><span class="echo-template-price">${K(template.price)}</span></div><p class="mu">Font: ${esc(template.font||'Moul')}</p><div class="echo-template-actions"><button type="button" class="btn s" data-a="echoedit:${index}" aria-label="${T('Edit')}" title="${T('Edit')}">✎</button><button type="button" class="btn s r" data-a="echodel:${index}" aria-label="${T('Delete')}" title="${T('Delete')}">▣</button></div></article>`).join('')||`<div class="card echo-template-empty">${T('Nothing here yet.')}</div>`}</div>`;
+}
+function echoForm(index=null){
+  const editing=index!=null,template=editing?D.echo[index]:{};
+  if(editing&&!template)return toast(T('Echo template not found'));
+  const sections=template?echoList(template.sections):[];
+  if(!sections.length)sections.push({title:'',content:'',fields:echoList(template&&template.fields)});
+  echoSectionSequence=0;echoFieldSequence=0;
+  const form=$('#mf');
+  form.className='echo-template-form';
+  form.innerHTML=`<div class="echo-form-heading"><h3>${T(editing?'Edit Echo Template':'Create Echo Template')}</h3><button type="button" class="btn s" data-a="close" aria-label="${T('Close')}">×</button></div><div class="echo-template-basic"><label>${T('Template Name')}<input class="in" name="name" value="${esc(template?.name||'')}" required autofocus></label><label>${T('Price')}<input class="in" name="price" type="number" min="0" step="1" value="${esc(template?.price??0)}" required></label><label>${T('Default Font')}<select class="in" name="font">${['Moul','Koulen','Battambang','Khmer OS'].map(font=>`<option value="${font}" ${template?.font==font?'selected':''}>${font}</option>`).join('')}</select></label></div><div id="echo-sections-list">${sections.map(echoSectionHtml).join('')}</div><button type="button" class="btn echo-add-section" data-a="echosectionadd">＋ ${T('Add New Section')}</button><div class="tools echo-form-actions"><button type="button" class="btn" data-a="close">${T('Cancel')}</button><button type="submit" class="btn p">▣ ${T('Save Template')}</button></div>`;
+  $('#md').classList.add('on');
+  form.onsubmit=async event=>{
+    event.preventDefault();
+    const values=Object.fromEntries(new FormData(form)),sectionsOut=Object.keys(values).filter(key=>key.startsWith('echo_title_')).map(key=>{const id=key.slice('echo_title_'.length);return{id,title:String(values[key]||'').trim(),content:String(values['echo_content_'+id]||''),fields:Object.entries(values).filter(([fieldKey,value])=>fieldKey.startsWith(`echo_field_${id}_`)&&String(value).trim()).map(([,value])=>String(value).trim())}});
+    const name=String(values.name||'').trim(),price=Number(values.price);
+    if(!name)return toast(T('Template name is required'));
+    if(!Number.isInteger(price)||price<0)return toast(T('Price must be a non-negative whole number'));
+    if(!sectionsOut.length)return toast(T('At least one section is required'));
+    try{await api(editing?'PUT':'POST',editing?'echo/'+template.id:'echo',{name,price,font:String(values.font||'Moul'),sections:JSON.stringify(sectionsOut.map(({title,content,fields})=>({title,content,fields}))),fields:JSON.stringify(sectionsOut.flatMap(section=>section.fields))});await load();$('#md').classList.remove('on');render();toast(T('Saved'))}catch(error){toast(error.message)}
+  };
+}
+function echoFormat(sectionId,command){
+  const editor=$(`[data-echo-editor="${sectionId}"]`);if(!editor)return;
+  if(command=='insertTable')return echoTableDialog(sectionId);
+  editor.focus();
+  echoRestoreSelection(editor);
+  if(command=='createLink')return echoLink(editor);
+  if(command=='insertImage')return echoImage(editor);
+  if(typeof document.execCommand!='function')return;
+  document.execCommand(command,false,null);
+}
+function echoRestoreSelection(editor){
+  const selection=window.getSelection&&window.getSelection();
+  if(echoToolbarSelection&&selection){selection.removeAllRanges();selection.addRange(echoToolbarSelection)}
+  else if(selection&&selection.rangeCount&&!editor.contains(selection.anchorNode)){const range=document.createRange();range.selectNodeContents(editor);range.collapse(false);selection.removeAllRanges();selection.addRange(range)}
+}
+function echoLink(editor){
+  if(typeof window.prompt!='function')return toast(T('Link prompt is unavailable'));
+  const url=window.prompt(T('Enter link URL'));
+  if(url==null||!url.trim())return;
+  let parsed;try{parsed=new URL(url.trim())}catch{return toast(T('Enter a valid HTTP or HTTPS URL'))}
+  if(!['http:','https:'].includes(parsed.protocol))return toast(T('Enter a valid HTTP or HTTPS URL'));
+  echoRestoreSelection(editor);
+  if(typeof document.execCommand=='function')document.execCommand('createLink',false,parsed.href);
+  else editor.insertAdjacentHTML('beforeend',`<a href="${esc(parsed.href)}">${esc(parsed.href)}</a>`);
+  echoToolbarSelection=null;
+}
+function echoImage(editor){
+  if(typeof window.prompt!='function')return toast(T('Image prompt is unavailable'));
+  const url=window.prompt(T('Enter HTTPS image URL'));
+  if(url==null||!url.trim())return;
+  let parsed;try{parsed=new URL(url.trim())}catch{return toast(T('Enter a valid HTTPS image URL'))}
+  if(parsed.protocol!='https:')return toast(T('Enter a valid HTTPS image URL'));
+  echoRestoreSelection(editor);
+  if(typeof document.execCommand=='function')document.execCommand('insertImage',false,parsed.href);
+  else editor.insertAdjacentHTML('beforeend',`<img src="${esc(parsed.href)}" alt="">`);
+  echoToolbarSelection=null;
+}
+function echoTableDialog(sectionId){
+  echoTableSectionId=String(sectionId);echoTableSelection=null;
+  const editor=$(`[data-echo-editor="${sectionId}"]`),selection=window.getSelection&&window.getSelection();
+  if(editor&&selection&&selection.rangeCount&&editor.contains(selection.anchorNode))echoTableSelection=selection.getRangeAt(0).cloneRange();
+  const existing=$('#echo-table-dialog');if(existing)existing.remove();
+  $('#md').insertAdjacentHTML('beforeend',`<div id="echo-table-dialog" class="echo-table-dialog" role="dialog" aria-modal="true" aria-labelledby="echo-table-title"><div class="echo-table-dialog-card"><div class="echo-table-dialog-heading"><h3 id="echo-table-title">${T('Insert Table')}</h3><button type="button" class="btn s" data-a="echotablecancel" aria-label="${T('Close')}">×</button></div><label>${T('Rows')}<input class="in" id="echo-table-rows" type="number" min="1" max="30" value="2"></label><label>${T('Columns')}<input class="in" id="echo-table-columns" type="number" min="1" max="20" value="2"></label><label>${T('Header Color')}<span class="echo-color-control"><input id="echo-table-header-color" type="color" value="#ffffff"><input class="in" id="echo-table-header-hex" value="#ffffff" maxlength="7" aria-label="${T('Header Color')}"></span></label><label>${T('Border Color')}<span class="echo-color-control"><input id="echo-table-border-color" type="color" value="#d1d5db"><input class="in" id="echo-table-border-hex" value="#d1d5db" maxlength="7" aria-label="${T('Border Color')}"></span></label><label>${T('Border Style')}<select class="in" id="echo-table-border-style"><option value="solid">${T('Solid')}</option><option value="dashed">${T('Dashed')}</option><option value="dotted">${T('Dotted')}</option><option value="double">${T('Double')}</option></select></label><div class="echo-table-dialog-actions"><button type="button" class="btn" data-a="echotablecancel">${T('Cancel')}</button><button type="button" class="btn p" data-a="echotableinsert">${T('Insert')}</button></div></div></div>`);
+}
+function echoTableMarkup(rows,columns,headerColor,borderColor,borderStyle){
+  const rowCount=Math.max(1,Math.min(30,Math.floor(Number(rows)||2))),columnCount=Math.max(1,Math.min(20,Math.floor(Number(columns)||2)));
+  const color=value=>/^#[0-9a-f]{6}$/i.test(value)?value.toLowerCase():null;
+  const header=color(headerColor)||'#ffffff',border=color(borderColor)||'#d1d5db',style=['solid','dashed','dotted','double'].includes(borderStyle)?borderStyle:'solid';
+  const cells=(isHeader)=>Array.from({length:columnCount},()=>`<${isHeader?'th':'td'} style="border:1px ${style} ${border};padding:6px;${isHeader?`background-color:${header};`:''}">&nbsp;</${isHeader?'th':'td'}>`).join('');
+  const tableRows=Array.from({length:rowCount},(_,index)=>`<tr>${cells(index===0)}</tr>`).join('');
+  return `<table style="width:100%;border-collapse:collapse;border:1px ${style} ${border};"><tbody>${tableRows}</tbody></table><p><br></p>`;
+}
+function echoTableInsert(){
+  const rows=$('#echo-table-rows').value,columns=$('#echo-table-columns').value,header=$('#echo-table-header-hex').value.trim(),border=$('#echo-table-border-hex').value.trim(),style=$('#echo-table-border-style').value;
+  const editor=$(`[data-echo-editor="${echoTableSectionId}"]`);if(!editor)return toast(T('Echo editor not found'));
+  if(!Number.isInteger(Number(rows))||Number(rows)<1||Number(rows)>30)return toast(T('Rows must be between 1 and 30'));
+  if(!Number.isInteger(Number(columns))||Number(columns)<1||Number(columns)>20)return toast(T('Columns must be between 1 and 20'));
+  if(!/^#[0-9a-f]{6}$/i.test(header)||!/^#[0-9a-f]{6}$/i.test(border))return toast(T('Enter valid hex colors'));
+  const html=echoTableMarkup(rows,columns,header,border,style),selection=window.getSelection&&window.getSelection();
+  editor.focus();
+  if(echoTableSelection&&selection){selection.removeAllRanges();selection.addRange(echoTableSelection)}
+  if(typeof document.execCommand=='function')document.execCommand('insertHTML',false,html);
+  else editor.insertAdjacentHTML('beforeend',html);
+  const section=editor.closest&&editor.closest('[data-echo-section]'),hidden=section&&section.querySelector('[data-echo-content]');if(hidden)hidden.value=editor.innerHTML;
+  const dialog=$('#echo-table-dialog');if(dialog)dialog.remove();
+  echoTableSelection=null;echoTableSectionId=null;
+}
+function echoApplyColor(input){
+  const editor=$(`[data-echo-editor="${input.dataset.echoSection}"]`);if(!editor)return;
+  editor.focus();echoRestoreSelection(editor);
+  if(typeof document.execCommand=='function')document.execCommand(input.dataset.echoColor,false,input.value);
+  echoToolbarSelection=null;
+}
+async function importEchoFile(file){
+  if(!file)return;
+  try{
+    if(!/\.xlsx$/i.test(file.name||''))throw new Error(T('Choose an Excel workbook'));
+    if(file.size>1e6)throw new Error(T('Import file must be smaller than 1 MB'));
+    const response=await fetch(API_BASE+'/api/echo/import-xlsx',{method:'POST',headers:{'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',...(tok?{Authorization:'Bearer '+tok}:{})},body:await file.arrayBuffer()});
+    const result=await response.json().catch(()=>null);
+    if(!response.ok)throw new Error(result&&result.error||T('Echo import failed'));
+    await load();q='';render();toast(`${T('Imported')} ${result.imported} ${T('echo templates')}`);
+  }catch(error){toast(error.message)}
+}
+async function exportEchoTemplates(){
+  const rows=ft('echo').map(([template])=>({name:template.name,price:template.price,font:template.font||'Moul',sections:template.sections||'[]',fields:template.fields||'[]'}));
+  if(!rows.length)return toast(T('No echo templates to download'));
+  try{
+    const response=await fetch(API_BASE+'/api/export/xlsx',{method:'POST',headers:{'Content-Type':'application/json',...(tok?{Authorization:'Bearer '+tok}:{})},body:JSON.stringify({rows})});
+    if(response.status==401&&tok)logout();
+    if(!response.ok){const error=await response.json().catch(()=>null);throw new Error(error&&error.error||T('Echo export failed'))}
+    const url=URL.createObjectURL(await response.blob()),anchor=document.createElement('a');anchor.href=url;anchor.download='echo-templates.xlsx';anchor.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }catch(error){toast(error.message)}
+}
 FM.sv=[['Service name','name',null,null,'e.g. Facial treatment'],['Price (KHR)','price','number',null,'e.g. 60000'],['Description','description','ta',null,'Enter service details']];
 function serviceForm(index=null){const editing=index!=null,r=editing?D.sv[index]:{};if(editing&&!r)return toast('Service not found');modal(editing?'Edit Service':'Add Service',FM.sv,r||{},o=>api(editing?'PUT':'POST',editing?'services/'+r.id:'services',o),{submit:editing?'Save':'Add',className:'service-form'})}
 function parseServiceCsv(text){
@@ -281,7 +456,7 @@ function payrollPrint(id){
   if(typeof printDoc=='function')printDoc('Payslip',`<table class="pk">${rows.filter(([,v])=>v).map(([k,v])=>`<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')}</table>`);
 }
 let tok=null,needSetup=false;try{tok=localStorage.getItem('kt')}catch(e){}
-const RS={pt:'patients',ap:'appointments',ipd:'ipd',dr:'doctors',payslips:'payslips',med:'medicines',sv:'services',lab:'labs',echo:'echo',dx:'diagnoses',rx:'prescriptions',sy:'symptoms',ad:'addresses',sf:'files',ch:'chat'};
+const RS={pt:'patients',ap:'appointments',ipd:'ipd',dr:'doctors',payslips:'payslips',med:'medicines',sv:'services',lab:'labs',labcategories:'labcategories',echo:'echo',dx:'diagnoses',rx:'prescriptions',sy:'symptoms',ad:'addresses',sf:'files',ch:'chat'};
 async function api(m,u,b){const r=await fetch(API_BASE+'/api/'+u,{method:m,headers:{'Content-Type':'application/json',...(tok?{Authorization:'Bearer '+tok}:{})},body:b?JSON.stringify(b):undefined});let j=null;try{j=await r.json()}catch(e){}if(r.status==401&&tok&&u!='auth/login')logout();if(!r.ok)throw new Error(j&&j.error||'Request failed');return j}
 async function load(){const k=Object.keys(RS),[rows,dash,bill,cl,schedules,payments,investigations]=await Promise.all([Promise.all(k.map(x=>api('GET',RS[x]+'?limit=5000'))),api('GET','dashboard'),api('GET','reports/daily?days=30'),api('GET','clinic'),api('GET','records?kind=schedule&limit=5000'),api('GET','records?kind=payment&limit=5000'),api('GET','records?kind=investigation&limit=5000')]);D.clinic=cl;k.forEach((x,i)=>D[x]=rows[i]);D.ch=D.ch.map(r=>r.msg);D.rev=dash.revenueToday;D.bill=bill;D.billing=[...schedules,...payments,...investigations];Object.keys(cart).forEach(i=>{if(!D.med.some(m=>m.id==i))delete cart[i]})}
 function logout(){tok=null;try{localStorage.removeItem('kt')}catch(e){}$('#lg').style.display='grid'}
@@ -304,8 +479,8 @@ else if(a=='payslipprint')payrollPrint(+x);
 else if(a=='payslipdel'){if(confirm('Delete this payslip?'))run(api('DELETE','payslips/'+x))}
 else if(a=='del'){if(confirm(T('Delete this record?'))){const r=D[x][+y];run(api('DELETE',RS[x]+'/'+r.id).then(()=>x=='ipd'&&!r.out?syncOpd(r):0))}}
 else if(a=='out'){const r=D.ipd[+x];run(api('PUT','ipd/'+r.id,{out:1}).then(()=>syncOpd(r)))}
-else if(a=='add'){const k=x;if(k=='dr')return doctorForm();if(k=='sv')return serviceForm();const F=FM[k]||P[k].f,d={...(df[k]||P[k]?.d||{})};modal('Add',F,d,o=>api('POST',RS[k],{...d,...o}))}
-else if(a=='edit'){if(x=='dr')return doctorForm(+y);if(x=='sv')return serviceForm(+y);const F=FM[x]||P[x].f,r=D[x][+y];modal('Edit',F,r,o=>api('PUT',RS[x]+'/'+r.id,o))}
+else if(a=='add'){const k=x;if(k=='dr')return doctorForm();if(k=='sv')return serviceForm();if(k=='echo')return echoForm();const F=FM[k]||P[k].f,d={...(df[k]||P[k]?.d||{})};modal('Add',F,d,o=>api('POST',RS[k],{...d,...o}))}
+else if(a=='edit'){if(x=='dr')return doctorForm(+y);if(x=='sv')return serviceForm(+y);if(x=='echo')return echoForm(+y);const F=FM[x]||P[x].f,r=D[x][+y];modal('Edit',F,r,o=>api('PUT',RS[x]+'/'+r.id,o))}
 else if(a=='medadd'){medicineEditIndex=null;medicineFormOpen=true;render()}
 else if(a=='mededit'){medicineViewId=null;medicineEditIndex=+x;medicineFormOpen=true;render()}
 else if(a=='medview'){medicineViewId=x;medicineFormOpen=false;render()}
@@ -323,6 +498,25 @@ else if(a=='medphoto')$('#pf_photo').click();
 else if(a=='medunitadd')$('#medicine-units-list').insertAdjacentHTML('beforeend',medicineUnitRow());
 else if(a=='medunitdel'){const rows=$('#medicine-units-list').querySelectorAll('.medicine-unit-row');if(rows.length<=1)return toast('At least one sales unit is required');el.closest('.medicine-unit-row').remove()}
 else if(a=='svimport')$('#sv-import-file').click();
+else if(a=='labimport')$('#lab-import-file').click();
+else if(a=='labadd')labForm();
+else if(a=='labedit')labForm(+x);
+else if(a=='labdel'){const lab=D.lab[+x];if(lab&&confirm(T('Delete this lab template?')))run(api('DELETE','labs/'+lab.id))}
+else if(a=='labcategoryadd')labCategoryForm();
+else if(a=='labfieldadd')$('#lab-fields-list').insertAdjacentHTML('beforeend',labFieldRow());
+else if(a=='labfielddel')el.closest('.lab-field-row').remove();
+else if(a=='echoadd')echoForm();
+else if(a=='echoedit')echoForm(+x);
+else if(a=='echodel'){const template=D.echo[+x];if(template&&confirm(T('Delete this echo template?')))run(api('DELETE','echo/'+template.id))}
+else if(a=='echoimport')$('#echo-import-file').click();
+else if(a=='echoexport')run(exportEchoTemplates());
+else if(a=='echosectionadd')$('#echo-sections-list').insertAdjacentHTML('beforeend',echoSectionHtml());
+else if(a=='echosectiondel'){const section=el.closest('[data-echo-section]');if($('#echo-sections-list').querySelectorAll('[data-echo-section]').length<=1)return toast(T('At least one section is required'));section.remove()}
+else if(a=='echofieldadd'){const section=el.closest('[data-echo-section]');section.querySelector('.echo-fields-list').insertAdjacentHTML('beforeend',echoFieldRow('',section.dataset.echoSection))}
+else if(a=='echofielddel')el.closest('.echo-field-row').remove();
+else if(a=='echoformat')echoFormat(x,y);
+else if(a=='echotablecancel'){const dialog=$('#echo-table-dialog');if(dialog)dialog.remove();echoTableSelection=null;echoTableSectionId=null}
+else if(a=='echotableinsert')echoTableInsert();
 else if(a=='drphoto')$('#pf_photo').click();
 else if(a=='drcolor'){doctorSigColor=x;document.querySelectorAll('.dr-color').forEach(b=>b.classList.toggle('selected',b.dataset.a=='drcolor:'+x))}
 else if(a=='drsigclear'){doctorSignature={strokes:[]};doctorDrawSignature()}
@@ -334,7 +528,9 @@ try{const bmp=await createImageBitmap(file),sc=Math.min(1,(k=='banner'?1300:480)
 const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',.85)),r=await fetch(API_BASE+'/api/uploads',{method:'POST',headers:{'Content-Type':'image/jpeg',Authorization:'Bearer '+tok},body:blob}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Upload failed');
 $('#pk_'+k).value=j.photo;$('#pv_'+k).src=API_BASE+'/uploads/'+j.photo;$('#pv_'+k).hidden=false;if(k=='photo'&&$('#doctor-photo-placeholder'))$('#doctor-photo-placeholder').hidden=true;if(k=='photo'&&$('#medicine-photo-placeholder'))$('#medicine-photo-placeholder').hidden=true;$('#ts').style.display='none'}catch(e){toast(e.message)}}
 document.addEventListener('submit',e=>{if(e.target.id=='medicine-form')medicineSave(e)});
-document.addEventListener('change',e=>{const i=e.target.id||'';if(i=='sv-import-file')return importServicesFile(e.target.files[0]).finally(()=>{e.target.value=''});if(i=='med-import-file')return importMedicinesFile(e.target.files[0]).finally(()=>{e.target.value=''});if(i.startsWith('pf_'))pick(e.target.files[0],i.slice(3))});
+document.addEventListener('change',e=>{const i=e.target.id||'';if(i=='sv-import-file')return importServicesFile(e.target.files[0]).finally(()=>{e.target.value=''});if(i=='med-import-file')return importMedicinesFile(e.target.files[0]).finally(()=>{e.target.value=''});if(i=='lab-import-file')return importLabsFile(e.target.files[0]).finally(()=>{e.target.value=''});if(i=='echo-import-file')return importEchoFile(e.target.files[0]).finally(()=>{e.target.value=''});if(e.target.dataset&&e.target.dataset.echoColor)return echoApplyColor(e.target);if(i=='echo-table-header-color')$('#echo-table-header-hex').value=e.target.value;if(i=='echo-table-border-color')$('#echo-table-border-hex').value=e.target.value;if(e.target.dataset&&e.target.dataset.echoCommand){const editor=$(`[data-echo-editor="${e.target.dataset.echoSection}"]`);if(editor){editor.focus();echoRestoreSelection(editor);if(typeof document.execCommand=='function')document.execCommand(e.target.dataset.echoCommand,false,e.target.value)}}if(i.startsWith('pf_'))pick(e.target.files[0],i.slice(3))});
+document.addEventListener('input',e=>{if(e.target.dataset&&e.target.dataset.echoEditor!=null){const hidden=e.target.closest('[data-echo-section]').querySelector('[data-echo-content]');hidden.value=e.target.innerHTML}else if(e.target.id=='echo-table-header-hex'&&/^#[0-9a-f]{6}$/i.test(e.target.value))$('#echo-table-header-color').value=e.target.value;else if(e.target.id=='echo-table-border-hex'&&/^#[0-9a-f]{6}$/i.test(e.target.value))$('#echo-table-border-color').value=e.target.value});
+document.addEventListener('mousedown',e=>{const button=e.target.closest&&e.target.closest('[data-a^="echoformat:"]'),color=e.target.closest&&e.target.closest('[data-echo-color]');if(button||color){const sectionId=button?button.dataset.a.split(':')[1]:color.dataset.echoSection,editor=$(`[data-echo-editor="${sectionId}"]`),selection=window.getSelection&&window.getSelection();if(editor&&selection&&selection.rangeCount&&editor.contains(selection.anchorNode)){echoToolbarSelection=selection.getRangeAt(0).cloneRange();echoTableSelection=echoToolbarSelection.cloneRange()}if(button)e.preventDefault()}});
 document.addEventListener('input',e=>{if(e.target.id=='q'){q=e.target.value;pg=1;render()}else if(e.target.classList&&e.target.classList.contains('payroll-money'))payrollRecalculate()});
 document.addEventListener('change',e=>{if(e.target.name=='period_month'||e.target.name=='period_year'){const f=$('#mf'),month=Number(f.elements.period_month.value),year=Number(f.elements.period_year.value);if(month>=1&&month<=12&&year>=2000&&year<=2100){f.elements.date_start.value=`${year}-${String(month).padStart(2,'0')}-01`;f.elements.date_end.value=`${year}-${String(month).padStart(2,'0')}-${String(new Date(year,month,0).getDate()).padStart(2,'0')}`}}});
 /*I18N*/
@@ -350,6 +546,8 @@ const L={'Sign in':'ចូលគណនី','Please sign in to your account.':'�
 'Cart is empty':'កន្ត្រកទំនិញនៅទទេ','Nothing here yet.':'មិនទាន់មានទិន្នន័យទេ។','No patients.':'គ្មានអ្នកជំងឺទេ។','No messages yet.':'មិនទាន់មានសារទេ។','Delete this record?':'លុបកំណត់ត្រានេះមែនទេ?',
 'Wrong email or password':'អ៊ីមែល ឬពាក្យសម្ងាត់មិនត្រឹមត្រូវ','Sign in required':'សូមចូលគណនីជាមុនសិន','Too many attempts. Try again later.':'ព្យាយាមច្រើនដងពេក។ សូមព្យាយាមម្តងទៀតពេលក្រោយ។','Enter a valid email':'សូមបញ្ចូលអ៊ីមែលឱ្យត្រឹមត្រូវ','Password must be at least 8 characters':'ពាក្យសម្ងាត់ត្រូវមានយ៉ាងតិច ៨ តួអក្សរ','Admin only':'សម្រាប់អ្នកគ្រប់គ្រងប៉ុណ្ណោះ','Request failed':'សំណើបរាជ័យ','Setup already completed':'ការដំឡើងបានបញ្ចប់រួចហើយ'};
 L['Import Excel']='នាំចូល Excel';L['Choose an Excel workbook or CSV file']='សូមជ្រើសរើសសៀវភៅការងារ Excel ឬឯកសារ CSV';L['Import file must be smaller than 1 MB']='ឯកសារនាំចូលត្រូវតែមានទំហំតិចជាង 1 MB';L['CSV can contain up to 1,000 services']='ឯកសារ CSV អាចមានសេវាកម្មបានរហូតដល់ 1,000';L['CSV contains an unterminated quoted field']='CSV មានវាលសញ្ញាសម្រង់ដែលមិនបានបិទ';L['CSV must include a header and at least one service']='CSV ត្រូវមានចំណងជើងជួរឈរ និងសេវាកម្មយ៉ាងតិចមួយ';L['CSV needs name and price columns']='CSV ត្រូវមានជួរឈរឈ្មោះ និងតម្លៃ';L['Invalid Excel workbook']='សៀវភៅការងារ Excel មិនត្រឹមត្រូវ';L['Excel workbook must include a header and at least one service']='សៀវភៅការងារ Excel ត្រូវមានចំណងជើង និងសេវាកម្មយ៉ាងតិចមួយ';L['Excel workbook needs name and price columns']='សៀវភៅការងារ Excel ត្រូវមានជួរឈរឈ្មោះ និងតម្លៃ';L['Choose an Excel workbook or CSV with name, price, and description columns']='សូមជ្រើសរើសសៀវភៅការងារ Excel ឬ CSV ដែលមានជួរឈរឈ្មោះ តម្លៃ និងការពិពណ៌នា';L['Excel export API not found. Restart the backend server to load the latest changes.']='រកមិនឃើញ API នាំចេញ Excel ទេ។ សូមចាប់ផ្តើម server backend ឡើងវិញ ដើម្បីផ្ទុកការកែប្រែថ្មី។';
+Object.assign(L,{'Upload Lab':'នាំចូល Lab','Add Type':'បន្ថែមប្រភេទ','Type':'ប្រភេទ','Type is required':'ត្រូវបញ្ចូលប្រភេទ','Type already exists':'ប្រភេទនេះមានរួចហើយ','Add Lab Template':'បន្ថែមទម្រង់ Lab','Manage lab test templates and prices.':'គ្រប់គ្រងទម្រង់ និងតម្លៃតេស្ត Lab។','Fields':'វាលទិន្នន័យ','Add Field':'បន្ថែមវាល','Field name':'ឈ្មោះវាល','Remove field':'លុបវាល','Lab template not found':'រកមិនឃើញទម្រង់ Lab','Delete this lab template?':'លុបទម្រង់ Lab នេះមែនទេ?','Choose an Excel workbook':'សូមជ្រើសរើសសៀវភៅការងារ Excel','Lab import failed':'ការនាំចូល Lab បរាជ័យ','Imported':'បាននាំចូល','lab templates':'ទម្រង់ Lab','rows must contain 1–1,000 lab templates':'ត្រូវមានទម្រង់ Lab ចន្លោះពី 1 ដល់ 1,000','Each lab template must be an object':'ទម្រង់ Lab នីមួយៗត្រូវជាវត្ថុ','Excel workbook must include a header and at least one lab template':'សៀវភៅការងារ Excel ត្រូវមានចំណងជើង និងទម្រង់ Lab យ៉ាងតិចមួយ','Excel workbook can contain up to 1,000 lab templates':'សៀវភៅការងារ Excel អាចមានទម្រង់ Lab បានរហូតដល់ 1,000','Excel workbook needs name and price columns':'សៀវភៅការងារ Excel ត្រូវមានជួរឈរឈ្មោះ និងតម្លៃ','fields must contain up to 50 entries':'វាលអាចមានធាតុបានរហូតដល់ 50'});
+Object.assign(L,{'Create Template':'បង្កើតទម្រង់','Create Echo Template':'បង្កើតទម្រង់អេកូ','Edit Echo Template':'កែប្រែទម្រង់អេកូ','Template Name':'ឈ្មោះទម្រង់','Default Font':'ពុម្ពអក្សរលំនាំដើម','Section title':'ចំណងជើងផ្នែក','Optional section title':'ចំណងជើងផ្នែក (មិនចាំបាច់)','Section Content (Title/Body)':'មាតិកាផ្នែក (ចំណងជើង/ខ្លឹមសារ)','Additional Fields (Optional)':'វាលបន្ថែម (មិនចាំបាច់)','Field Name':'ឈ្មោះវាល','Remove field':'លុបវាល','Remove section':'លុបផ្នែក','Add New Section':'បន្ថែមផ្នែកថ្មី','Save Template':'រក្សាទុកទម្រង់','Upload':'នាំចូល','Download':'ទាញយក','Search echo templates…':'ស្វែងរកទម្រង់អេកូ…','Insert Table':'បញ្ចូលតារាង','Normal':'ធម្មតា','Heading':'ចំណងជើង','Quote':'សម្រង់','Text style':'រចនាប័ទ្មអត្ថបទ','Echo template not found':'រកមិនឃើញទម្រង់អេកូ','Delete this echo template?':'លុបទម្រង់អេកូនេះមែនទេ?','Template name is required':'ត្រូវបញ្ចូលឈ្មោះទម្រង់','At least one section is required':'ត្រូវមានយ៉ាងតិចមួយផ្នែក','Echo import failed':'ការនាំចូលទម្រង់អេកូបរាជ័យ','Echo export failed':'ការនាំចេញទម្រង់អេកូបរាជ័យ','No echo templates to download':'គ្មានទម្រង់អេកូសម្រាប់ទាញយក','echo templates':'ទម្រង់អេកូ'});
 const RX=[[/^(\d+) services imported$/,'បាននាំចូលសេវាកម្ម $1'],[/^Row (\d+): service name is required$/,'ជួរទី $1៖ ត្រូវបញ្ចូលឈ្មោះសេវាកម្ម'],[/^Row (\d+): price must be a whole number$/,'ជួរទី $1៖ តម្លៃត្រូវជាចំនួនគត់'],[/^rows must contain 1–1000 services$/,'ត្រូវមានសេវាកម្មចន្លោះពី 1 ដល់ 1,000'],[/^Each service must include a name and price$/,'សេវាកម្មនីមួយៗត្រូវមានឈ្មោះ និងតម្លៃ'],[/^Showing (\S+) of (\d+)$/,'បង្ហាញ $1 នៃ $2'],[/^Stock: (.+)$/,'ស្តុក៖ $1'],[/^Not enough stock for (.+)$/,'ស្តុក $1 មិនគ្រប់គ្រាន់'],[/^Paid (.+) by (Cash|Bank)$/,(m,a,b)=>`បានបង់ ${a} តាម${L[b]}`]];
 function T(s){if(lang!='km'||typeof s!='string')return s;const k=s.trim();if(!k)return s;if(L[k])return s.replace(k,L[k]);for(const[r,v]of RX)if(r.test(k))return s.replace(k,k.replace(r,v));const m=/^([^A-Za-z]*)([\s\S]*)$/.exec(k);return m&&m[2]&&L[m[2]]?s.replace(k,m[1]+L[m[2]]):s}
 function tr(root){const w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT,{acceptNode:n=>n.parentElement&&!n.parentElement.closest('[translate=no],script,style')?1:3}),ns=[];while(w.nextNode())ns.push(w.currentNode);

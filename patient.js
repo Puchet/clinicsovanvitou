@@ -129,6 +129,11 @@ function recCard(r) {
   if (r.kind == 'vitals') return `<div class="rc">${act}<div class="mu">${when}</div><div class="vs">${VSF.filter(([k]) => d[k]).map(([k, l]) => `<span><b>${l.replace(/ \(.*/, '')}:</b> ${esc(d[k])} ${(l.match(/\((.*)\)/) || [])[1] || ''}</span>`).join('') || '—'}</div></div>`;
   if (r.kind == 'medical') return `<div class="rc">${act}<div class="mu">${when}</div><b>${esc(d.dx || d.cc || 'Medical Record')}</b><div class="mu">${esc((d.cc || '').slice(0, 140))}</div><div class="ra2"><button class="btn s" data-a="rprint:${r.id}">Print</button></div></div>`;
   if (r.kind == 'investigation' && Array.isArray(d.items)) return `<div class="rc investigation-record">${act}<div class="mu">${when}</div><b>Requested services</b><div class="investigation-record-items">${d.items.map((item) => { const qty = Math.max(1, +item.quantity || 1), unit = +item.unit_price || +item.price || 0; return `<div><span>${esc(item.name)}${qty > 1 ? ` × ${qty}` : ''}</span><b>${K(unit * qty)}</b></div>`; }).join('')}</div><div class="investigation-record-total">Total: <b>${K(d.items.reduce((sum, item) => sum + (+item.unit_price || +item.price || 0) * Math.max(1, +item.quantity || 1), 0))}</b></div></div>`;
+  if (r.kind == 'vaccination') {
+    const doses = Array.isArray(d.doses) ? d.doses : d.vaccine ? [{ vaccine: d.vaccine, dose: d.dose, date: d.next_due, given: false, notes: d.lot ? `Lot / Batch: ${d.lot}` : '' }] : [];
+    const categoryLabel = d.category == 'child' ? 'Child vaccination' : d.category == 'adult' ? 'Adult vaccination' : d.category == 'other' ? 'Other' : d.category;
+    return `<div class="rc vaccination-record">${act}<div class="mu">${when}</div><b>${esc(d.vaccine_group || d.vaccine_type || T('Vaccination'))}</b>${categoryLabel ? `<span class="bd">${esc(T(categoryLabel))}</span>` : ''}<div class="vaccination-record-doses">${doses.filter((dose) => dose.vaccine || dose.date || dose.notes).map((dose) => `<div><span>${esc(dose.vaccine || '')}</span><span>${esc(dose.date || '')}</span><span>${dose.given ? T('Given') : T('Not given')}</span>${dose.notes ? `<span>${esc(dose.notes)}</span>` : ''}</div>`).join('')}</div>${d.notes || r.notes ? `<div class="mu">${esc(d.notes || r.notes)}</div>` : ''}${d.administered_by ? `<div class="mu">${T('Administered by')}: ${esc(d.administered_by)}</div>` : ''}</div>`;
+  }
   const img = r.image ? `<a href="/uploads/${esc(r.image)}" target="_blank"><img class="rimg" src="/uploads/${esc(r.image)}" alt=""></a>` : '';
   if (CARE_MODULES[r.kind]) {
     const fields = CARE_MODULES[r.kind].fields.filter(([k]) => d[k]).map(([k, label]) => `<div><span class="mu">${esc(label)}:</span> ${esc(d[k])}</div>`).join('');
@@ -153,6 +158,38 @@ function investigationServiceList() {
 function investigationPanel(records) {
   return `<section class="investigation-request card"><div class="investigation-request-head"><h2 class="rh">${T('Request service')}</h2><div class="tools"><input id="investigation-service-search" class="in" type="search" placeholder="${esc(T('Search services…'))}" value="${esc(investigationQuery)}"><button class="btn p" data-a="investigation-request" ${investigationSelection.size ? '' : 'disabled'}>${T('Add selected')}${investigationSelection.size ? ` (${investigationSelection.size})` : ''}</button></div></div><div class="investigation-service-grid" id="investigation-service-list">${investigationServiceList()}</div></section><section class="investigation-history"><h3>${T('Service requests')}</h3>${records.map(recCard).join('') || `<p class="emp">${T('No services requested yet.')}</p>`}</section>`;
 }
+const VACCINE_DOSE_COUNT = 6;
+const vaccineRows = (d) => Array.from({ length: VACCINE_DOSE_COUNT }, (_, i) => {
+  const row = (Array.isArray(d.doses) && d.doses[i]) || {};
+  const name = row.vaccine || (!d.doses && i == 0 ? d.vaccine : '') || '';
+  const date = row.date || (!d.doses && i == 0 ? d.next_due : '') || '';
+  const notes = row.notes || (!d.doses && i == 0 && d.lot ? `Lot / Batch: ${d.lot}` : '') || '';
+  return `<tr><td><label class="vax-name"><span class="vax-dose-index">${i + 1}</span><input class="in" name="vax_name_${i}" value="${esc(name)}" placeholder="${esc(T('Vaccine name'))} ${i + 1}"></label></td><td><input class="in" name="vax_date_${i}" type="date" value="${esc(date)}"></td><td><label class="vax-check"><input type="checkbox" name="vax_given_${i}" value="1" ${row.given ? 'checked' : ''}><span class="sr-only">${esc(T('Given'))}</span></label></td><td><input class="in" name="vax_note_${i}" value="${esc(notes)}" placeholder="${esc(T('Notes'))}"></td></tr>`;
+}).join('');
+function vaccinationForm(r) {
+  const editing = !!r, d = r ? jd(r) : {}, date = (r && r.date ? r.date : ymd(new Date())).slice(0, 10);
+  const categories = [['Child vaccination', 'child'], ['Adult vaccination', 'adult'], ['Other', 'other']];
+  const category = d.category || 'child';
+  const body = `<div class="vaccination-form">
+    <label class="fl">${T('Vaccine category')}<div class="vax-categories">${categories.map(([label, value]) => `<label class="cb"><input type="radio" name="category" value="${value}" ${category == value ? 'checked' : ''}> ${T(label)}</label>`).join('')}</div></label>
+    ${fIn(T('Vaccine group'), 'vaccine_group', d.vaccine_group || (!d.doses ? d.vaccine : ''), 'text', `placeholder="${esc(T('Enter vaccine group'))}"`)}
+    <div class="vax-table-wrap"><table class="vax-table"><thead><tr><th>${T('Vaccine name')}</th><th>${T('Dose date')}</th><th>${T('Given')}</th><th>${T('Notes')}</th></tr></thead><tbody>${vaccineRows(d)}</tbody></table></div>
+    ${fTa(T('Notes'), 'notes', d.notes || r && r.notes || '', 2)}
+    <div class="g2 vax-footer">${fIn(T('Date'), 'date', date, 'date')}${fIn(T('Administered by'), 'administered_by', d.administered_by || '')}</div>
+  </div>`;
+  openForm(T(editing ? 'Edit Vaccination' : 'Add Vaccination'), body, async (f) => {
+    const m = new FormData(f), doses = Array.from({ length: VACCINE_DOSE_COUNT }, (_, i) => ({
+      vaccine: String(m.get(`vax_name_${i}`) || '').trim(),
+      date: m.get(`vax_date_${i}`) || '',
+      given: m.get(`vax_given_${i}`) === '1',
+      notes: String(m.get(`vax_note_${i}`) || '').trim()
+    })).filter((dose) => dose.vaccine || dose.date || dose.given || dose.notes);
+    const data = { category: m.get('category') || 'child', vaccine_group: String(m.get('vaccine_group') || '').trim(), doses, notes: m.get('notes') || '', administered_by: String(m.get('administered_by') || '').trim() };
+    const body = { patient_id: pdId, kind: 'vaccination', title: data.vaccine_group || T('Vaccination'), date: m.get('date') || date, notes: data.notes, data };
+    editing ? await api('PUT', 'records/' + r.id, body) : await api('POST', 'records', body);
+    await loadRecs(); render(); toast('Saved');
+  }, { cls: 'vaccination-form-dialog' });
+}
 async function requestInvestigationServices() {
   const services = [...investigationSelection].map((id) => D.sv.find((service) => String(service.id) == id)).filter(Boolean);
   if (!services.length) return toast('Select at least one service');
@@ -170,6 +207,7 @@ async function requestInvestigationServices() {
 }
 function genForm(r) {
   const k = ptab, e = !!r; r = r || { date: ymd(new Date()) };
+  if (k == 'vaccination') { vaccinationForm(e ? r : null); return; }
   const module = CARE_MODULES[k];
   if (module) {
     const d = r ? jd(r) : {}, fields = module.fields.map(([key, label, type, opts]) => type == 'sel'
@@ -1081,6 +1119,7 @@ Object.assign(L, { 'All': 'ទាំងអស់', 'With record': 'មានក�
 Object.assign(L, { 'Columns': 'ជួរឈរ', '☰ Columns': '☰ ជួរឈរ', 'Filters': 'តម្រង', 'Show all': 'បង្ហាញទាំងអស់', 'Show or hide columns': 'បង្ហាញ ឬលាក់ជួរឈរ', 'At least one column must stay visible': 'ត្រូវទុកយ៉ាងហោចណាស់ជួរឈរមួយ' });
 Object.assign(L, { 'Request service': 'ស្នើសុំសេវាកម្ម', 'Search services…': 'ស្វែងរកសេវាកម្ម…', 'Add selected': 'បន្ថែមសេវាកម្មដែលបានជ្រើស', 'Service requests': 'សំណើសេវាកម្ម', 'No services requested yet.': 'មិនទាន់មានសំណើសេវាកម្មទេ។', 'No matching services.': 'រកមិនឃើញសេវាកម្មដែលត្រូវគ្នាទេ។', 'Requested services': 'សេវាកម្មដែលបានស្នើ', 'Select at least one service': 'សូមជ្រើសរើសសេវាកម្មយ៉ាងតិចមួយ', 'Services requested': 'បានស្នើសេវាកម្ម' });
 Object.assign(L, { 'Service Charges': 'ថ្លៃសេវាកម្ម', 'Treatment Charges': 'ថ្លៃព្យាបាល', 'Total Unpaid Amount': 'ចំនួនទឹកប្រាក់មិនទាន់បង់សរុប', 'Items': 'មុខទំនិញ' });
+Object.assign(L, { 'Add Vaccination': 'បញ្ចូលបញ្ជីចាក់វ៉ាក់សាំង', 'Edit Vaccination': 'កែប្រែបញ្ជីចាក់វ៉ាក់សាំង', 'Vaccine category': 'ប្រភេទវ៉ាក់សាំង', 'Child vaccination': 'វ៉ាក់សាំងកុមារ', 'Adult vaccination': 'វ៉ាក់សាំងមនុស្សពេញវ័យ', 'Other': 'ផ្សេងៗ', 'Vaccine group': 'ឈ្មោះក្រុមវ៉ាក់សាំង', 'Enter vaccine group': 'បញ្ចូលប្រភេទវ៉ាក់សាំង', 'Vaccine name': 'ឈ្មោះវ៉ាក់សាំង', 'Dose date': 'ថ្ងៃ ខែ ឆ្នាំ', 'Given': 'ចាក់រួច', 'Not given': 'មិនទាន់ចាក់', 'Administered by': 'បុគ្គលិកចាក់វ៉ាក់សាំង' });
 
 // ---------- OPD -> IPD: click the OPD badge (or the bed icon) to enter Room and Bed ----------
 function bedForm(pid) {
