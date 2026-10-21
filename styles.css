@@ -2368,6 +2368,111 @@ table.ipdt td {
 .medicine-table-wrap {
   margin-top: 12px;
 }
+.medicine-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+  margin-top: 12px;
+}
+.medicine-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  overflow: hidden;
+  padding: 0;
+}
+.medicine-card-photo {
+  width: calc(100% - 12px);
+  height: auto;
+  min-height: 0;
+  aspect-ratio: 1;
+  margin: 12px 0 12px 12px;
+  object-fit: cover;
+  background: var(--bg);
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+}
+.medicine-card-body {
+  min-width: 0;
+  padding: 12px;
+}
+.medicine-card-body h3,
+.medicine-card-body p {
+  margin: 0 0 8px;
+}
+.medicine-card-stock,
+.medicine-detail-units > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.medicine-card-dates {
+  display: grid;
+  gap: 3px;
+  margin: 8px 0;
+  color: var(--mu);
+  font-size: 12px;
+}
+.medicine-card .medicine-actions {
+  margin-top: 10px;
+}
+.medicine-detail {
+  margin-top: 12px;
+  padding: 18px;
+}
+.medicine-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.medicine-detail-hero {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin: 18px 0;
+}
+.medicine-detail-hero h2,
+.medicine-detail-hero p {
+  margin: 0 0 8px;
+}
+.medicine-detail-photo {
+  width: 132px;
+  height: 132px;
+  flex: 0 0 132px;
+  object-fit: cover;
+  border: 1px solid var(--bd);
+  border-radius: 12px;
+  background: var(--bg);
+}
+.medicine-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.medicine-detail-grid > section {
+  padding: 14px;
+  border: 1px solid var(--bd);
+  border-radius: 10px;
+}
+.medicine-detail-grid h3 {
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+.medicine-detail-grid p {
+  margin: 6px 0;
+  white-space: pre-wrap;
+}
+.medicine-detail-units {
+  display: grid;
+  gap: 8px;
+}
+.medicine-detail-units > div {
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--bd);
+}
 .medicine-table {
   min-width: 720px;
 }
@@ -2447,6 +2552,14 @@ table.ipdt td {
   height: auto;
 }
 @media (max-width: 680px) {
+  .medicine-detail-hero {
+    align-items: flex-start;
+  }
+  .medicine-detail-photo {
+    width: 88px;
+    height: 88px;
+    flex-basis: 88px;
+  }
   .medicine-basic-grid,
   .medicine-dates-grid,
   .medicine-unit-row {
