@@ -675,12 +675,31 @@ const apOpen = (a) => modal(a ? 'Edit' : 'Add appointment', P.ap.f, a || { ...P.
 // ---------- Excel export ----------
 async function exportExcel() {
   const key = (P[rt] && P[rt].k) || rt, rows = rt == 'pt' ? ptRows().map(([r]) => r) : D[key]; if (!Array.isArray(rows) || !rows.length) return toast('Nothing here yet.');
-  const cols = Object.keys(rows[0]).filter((c) => !['created_at', 'updated_at', 'user_id', 'photo', 'data'].includes(c));
+  const medicineExport = key == 'med';
+  const cols = medicineExport
+    ? ['id', 'name', 'type', 'price', 'stock', 'sold', 'damaged', 'last_stock_date', 'last_stock', 'expiry_date', 'reminder_date', 'units', 'image_url', 'composition']
+    : Object.keys(rows[0]).filter((c) => !['created_at', 'updated_at', 'user_id', 'photo', 'data'].includes(c));
+  const exportRows = medicineExport ? rows.map((row) => ({
+    id: row.id,
+    name: row.name,
+    type: row.type || '',
+    price: row.price ?? '',
+    stock: row.stock ?? '',
+    sold: row.sold ?? '',
+    damaged: row.damaged ?? '',
+    last_stock_date: row.last_stock_date ?? '',
+    last_stock: row.last_stock ?? '',
+    expiry_date: row.expiry_date || row.expiration_date || '',
+    reminder_date: row.reminder_date || row.notification_date || '',
+    units: row.units || '',
+    image_url: row.photo ? `${API_BASE}/uploads/${row.photo}` : '',
+    composition: row.composition || '',
+  })) : rows.map((row) => Object.fromEntries(cols.map((col) => [col, row[col] ?? ''])));
   try {
     const response = await fetch(API_BASE + '/api/export/xlsx', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(tok ? { Authorization: 'Bearer ' + tok } : {}) },
-      body: JSON.stringify({ rows: rows.map((row) => Object.fromEntries(cols.map((col) => [col, row[col] ?? '']))) }),
+      body: JSON.stringify({ rows: exportRows }),
     });
     if (response.status == 401 && tok) logout();
     if (!response.ok) {

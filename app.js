@@ -9,7 +9,7 @@ const patientDue=id=>{const rs=D.billing.filter(r=>String(r.patient_id)==String(
 const ipdPaid=r=>{const p=D.pt.find(q=>String(q.id)==String(r.code));return p?patientDue(p.id)<=0:!!r.paid};
 const mi=i=>D.med.find(m=>m.id==i)||{name:'(removed)',price:0};
 let rt='dash',q='',pg=1,tab='OPD',pay='Cash',cart={},nt=0;
-let doctorProfileId=null,doctorTab='payroll';
+let doctorProfileId=null,doctorTab='payroll',medicineFormOpen=false,medicineEditIndex=null;
 const hd=(t,s,b='')=>`<div class="hd"><div><h1>${t}</h1><p class="mu">${s||''}</p></div><div class="tools">${b}</div></div>`,
 sr=ph=>`<input id="q" class="in" placeholder="${ph||'Search…'}" value="${esc(q)}">`,
 ex=`<button class="btn" data-a="csv">Export Excel</button>`,
@@ -57,8 +57,54 @@ function doctorProfileHtml(){
 <section class="doctor-profile-card"><div class="doctor-profile-top"><div class="doctor-identity"><div class="doctor-profile-avatar">${photo}</div><div><h2>${esc(d.name)}</h2><span class="bd b">${esc(d.role||'Staff')}</span><p><span class="doctor-icon">⚿</span> ${esc(d.code)}　<a href="#" data-a="edit:dr:${D.dr.indexOf(d)}">✎</a></p></div></div><div class="doctor-badges"><div><span>Staff ID</span><b>${esc(d.code)}</b></div><div><span>Role</span><b>${esc(d.role||'--')}</b></div><div><span>Designation</span><b>${esc(d.specialist||d.role||'--')}</b></div><div class="doctor-barcode"><span>Barcode</span><div>${bars}</div><b>${esc(d.code)}</b></div></div></div>${details}</section>
 <section class="doctor-profile-content">${nav}<div class="doctor-tab-content">${content}</div></section>`;
 }
+function medicineUnits(m){
+  if(m.units){const rows=JSON.parse(m.units);if(Array.isArray(rows)&&rows.length)return rows}
+  return[{name:'Unit',price:Number(m.price)||0,qty:1}];
+}
+function medicineUnitRow(unit={name:'',price:'',qty:1}){
+  return `<div class="medicine-unit-row"><label>Unit name<input class="in unit-name" value="${esc(unit.name||'')}" placeholder="e.g. Tablet" required></label><label>Price (KHR)<input class="in unit-price" type="number" min="0" step="1" value="${esc(unit.price??'')}" placeholder="e.g. 5000" required></label><label>Qty per unit<input class="in unit-qty" type="number" min="1" step="1" value="${esc(unit.qty??1)}" required></label><button type="button" class="btn s r" data-a="medunitdel" aria-label="Remove sales unit">×</button></div>`;
+}
+function medicineFormHtml(){
+  const editing=medicineEditIndex!=null,r=editing?D.med[medicineEditIndex]:{},units=editing?medicineUnits(r):[{name:'',price:'',qty:1}];
+  return `<section class="card medicine-form-card"><button type="button" class="medicine-form-toggle" data-a="medformclose"><span>បញ្ចូលឱសថថ្មី / ${editing?'Edit Medicine':'Add New Medicine'}</span><span>⌃</span></button><form id="medicine-form" class="medicine-form">
+<div class="medicine-image-field"><label>រូបភាពឱសថ / Medicine Image</label><div class="medicine-image-control"><div class="medicine-image-preview"><img id="pv_photo" src="${r.photo?`${API_BASE}/uploads/${esc(r.photo)}`:''}" alt="" ${r.photo?'':'hidden'}><span id="medicine-photo-placeholder" ${r.photo?'hidden':''}>⇧</span></div><input type="file" id="pf_photo" accept="image/*" hidden><input type="hidden" name="photo" id="pk_photo" value="${esc(r.photo||'')}"><button class="btn" type="button" data-a="medphoto">Upload</button></div></div>
+<div class="medicine-basic-grid"><label>ឈ្មោះថ្នាំ / Drug name<input class="in" name="name" value="${esc(r.name||'')}" placeholder="e.g. Paracetamol" required maxlength="255"></label><label>សមាសធាតុ / Composition<input class="in" name="composition" value="${esc(r.composition||'')}" placeholder="e.g. 500mg"></label><label class="medicine-stock-field">ចំនួនក្នុងស្តុក / In Stock<input class="in" name="stock" type="number" min="0" step="1" value="${esc(r.stock??'')}" placeholder="e.g. 100" required></label></div>
+<section class="medicine-units"><div class="medicine-units-heading"><b>ឯកតាលក់ / Sales unit</b><span class="mu">Set each selling unit, price, and base-stock quantity.</span></div><div id="medicine-units-list">${units.map(medicineUnitRow).join('')}</div><button type="button" class="btn s" data-a="medunitadd">＋ Add sales unit</button></section>
+<div class="medicine-dates-grid"><label>ថ្ងៃផុតកំណត់ / Expiration date<input class="in" name="expiration_date" type="date" value="${esc(r.expiration_date||'')}"></label><label>ថ្ងៃជូនដំណឹង / Notification date<input class="in" name="notification_date" type="date" value="${esc(r.notification_date||'')}"></label></div>
+<div class="medicine-form-actions"><button type="button" class="btn" data-a="medformclose">Cancel</button><button type="submit" class="btn p">${editing?'Save changes':'បន្ថែម / Add'}</button></div></form></section>`;
+}
+async function medicineSave(e){
+  e.preventDefault();const form=e.target,fields=Object.fromEntries(new FormData(form));
+  const units=Array.from(form.querySelectorAll('.medicine-unit-row')).map(row=>({
+    name:row.querySelector('.unit-name').value.trim(),
+    price:Number(row.querySelector('.unit-price').value),
+    qty:Number(row.querySelector('.unit-qty').value),
+  }));
+  if(!units.length)return toast('Add at least one sales unit');
+  const payload={...fields,stock:Number(fields.stock),price:units[0].price,units:JSON.stringify(units)};
+  try{
+    const editing=medicineEditIndex!=null,item=editing?D.med[medicineEditIndex]:null;
+    await api(editing?'PUT':'POST',editing?'medicines/'+item.id:'medicines',payload);
+    await load();medicineFormOpen=false;medicineEditIndex=null;render();toast(editing?'Medicine updated':'Medicine added');
+  }catch(error){toast(error.message)}
+}
+async function importMedicinesFile(file){
+  if(!file)return;
+  try{
+    if(!/\.xlsx$/i.test(file.name||''))throw new Error('Choose an Excel workbook (.xlsx)');
+    if(file.size>1e6)throw new Error('Import file must be smaller than 1 MB');
+    const response=await fetch(API_BASE+'/api/medicines/import-xlsx',{method:'POST',headers:{'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',...(tok?{Authorization:'Bearer '+tok}:{})},body:await file.arrayBuffer()});
+    const result=await response.json().catch(()=>null);
+    if(response.status==401&&tok)logout();
+    if(!response.ok)throw new Error(result&&result.error||'Request failed');
+    await load();q='';render();toast(`${result.imported} medicines imported`);
+  }catch(error){toast(error.message)}
+}
 let dFrom='',dTo='';
-const R={set(){const c=D.clinic||{},ck=(k,l)=>`<label class="ck"><input type="checkbox" name="${k}" ${c[k]?'checked':''}> ${l}</label>`;
+const R={med(){const rows=ft('med');return hd('Medicines','Manage your pharmacy list.',sr('Search medicines…')+`<button class="btn" data-a="medimport">Import Excel</button><input id="med-import-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>`+ex+`<button class="btn g" data-a="medadd">+ Add New Medicine</button>`)+
+(medicineFormOpen?medicineFormHtml():'')+
+`<div class="card medicine-table-wrap"><table class="medicine-table"><thead><tr><th>Medicine</th><th>Sales units / Price</th><th>In stock</th><th>Expiration / Notification</th><th>Actions</th></tr></thead><tbody>${rows.map(([m,i])=>{const units=medicineUnits(m),today=new Date().toISOString().slice(0,10),alert=(m.expiration_date&&m.expiration_date<=today)||(m.notification_date&&m.notification_date<=today);return`<tr><td><div class="medicine-name">${m.photo?`<img class="medicine-thumb" src="${API_BASE}/uploads/${esc(m.photo)}" alt="">`:'<span class="medicine-thumb medicine-thumb-empty">💊</span>'}<div><b>${esc(m.name)}</b>${m.composition?`<small>${esc(m.composition)}</small>`:''}</div></div></td><td><div class="medicine-unit-list">${units.map(u=>`<span>${esc(u.name)}: <b>${K(u.price)}</b> <small>× ${u.qty}</small></span>`).join('')||'<span>—</span>'}</div></td><td><span class="bd ${m.stock>0?'':'x'}">${Number(m.stock)||0}</span></td><td><span class="${alert?'medicine-expired':''}">${m.expiration_date?`Expiry: ${esc(m.expiration_date)}`:'—'}</span>${m.notification_date?`<small class="medicine-notify ${m.notification_date<=today?'medicine-expired':''}">Notify: ${esc(m.notification_date)}</small>`:''}</td><td><div class="medicine-actions"><button class="btn s" title="Update Stock" aria-label="Update Stock" data-a="medstock:${i}">↻</button><button class="btn s" title="View Composition" aria-label="View Composition" data-a="medcomposition:${i}">▤</button><button class="btn s" title="Print QR Code" aria-label="Print QR Code" data-a="medqr:${i}">▦</button><button class="btn s" title="Print Barcode" aria-label="Print Barcode" data-a="medbarcode:${i}">▥</button><button class="btn s" title="Edit" aria-label="Edit" data-a="mededit:${i}">✎</button><button class="btn s r" title="Delete" aria-label="Delete" data-a="del:med:${i}">×</button></div></td></tr>`}).join('')||'<tr><td colspan="5" class="emp">Nothing here yet.</td></tr>'}</tbody></table></div>`},
+set(){const c=D.clinic||{},ck=(k,l)=>`<label class="ck"><input type="checkbox" name="${k}" ${c[k]?'checked':''}> ${l}</label>`;
 return hd('Clinic Settings','Manage your clinic information.','<button class="btn" data-a="go:dr">Doctor Settings</button><button class="btn" data-a="pwd">Change password</button>')+`<div class="card" style="padding:20px;overflow:visible"><b>Preferences</b><div class="tools" style="margin:10px 0 4px"><div class="tabs" translate="no"><button class="${lang=='en'?'on':''}" data-a="lang:en">English</button><button class="${lang=='km'?'on':''}" data-a="lang:km">ខ្មែរ</button></div><div class="tabs"><button data-a="th:light">Light</button><button data-a="th:dark">Dark</button></div></div><hr><div id="cf"><div class="gr2">${imgField('Logo','logo',c.logo,'Delete image')}${imgField('Bank QR code','qr',c.qr,'Delete image')}</div><hr><b>Print settings</b>${imgField('Clinic banner','banner',c.banner,'Delete image')}<p class="mu" style="font-size:12px">Recommended: 1300×200 px</p><div class="gr2">${ck('show_name','Show clinic name')}${ck('show_address','Show address')}${ck('show_phone','Show phone number')}</div><hr>${[['Clinic name','name'],['Specialty','specialty'],['Address','address'],['Phone numbers','phone']].map(([l,k])=>`<label class="fl">${l}<input class="in" name="${k}" value="${esc(c[k])}"></label>`).join('')}<div class="gr2"><label class="fl">Currency<select class="in" name="currency"><option value="KHR" ${c.currency!='USD'?'selected':''}>Riel (KHR)</option><option value="USD" ${c.currency=='USD'?'selected':''}>US dollar (USD)</option></select></label><label class="fl">Exchange rate (KHR per $1)<input class="in" name="rate" type="number" min="1" value="${c.rate||4000}"></label></div>${typeof cnfSettingsHtml=='function'?cnfSettingsHtml(c):''}<button class="btn p" style="margin-top:16px" data-a="saveclinic">Save</button></div></div>`},
 dash(){const ip=D.ipd.filter(r=>!r.out).length,ad={},ag={'0-10':0,'11-20':0,'21-30':0,'31-40':0,'41-50':0,'51+':0},inR=p=>{const d=(p.reg_date||p.created_at||'').slice(0,10);return(!dFrom||d>=dFrom)&&(!dTo||d<=dTo)},P2=D.pt.filter(inR);
 P2.forEach(p=>{ad[p.addr||'Unknown']=(ad[p.addr||'Unknown']||0)+1;const y=ageYears(p);ag[y>50?'51+':['0-10','11-20','21-30','31-40','41-50'][Math.min(4,Math.floor(Math.max(0,y-1)/10))]]++});
@@ -83,6 +129,9 @@ function nav(){$('#nv').innerHTML=NV.map(([g,it])=>`<div class="gh" data-a="grp:
 function render(){const f=document.activeElement&&document.activeElement.id=='q';const cl=D.clinic||{};$('#tt').textContent=cl.name||'Sovanvitou';$('#lgo').innerHTML=cl.logo?`<img src="${API_BASE}/uploads/${esc(cl.logo)}" alt="" style="max-height:34px;max-width:100%">`:'CLINIC SOVANVITOU';$('#v').classList.toggle('tight',rt=='pt');$('#v').innerHTML=`<div class="w">${(R[rt]||(()=>tp(rt)))()}</div>`;nav();if(f){const e=$('#q');e.focus();e.setSelectionRange(99,99)}}
 function toast(m){const t=$('#ts');t.textContent=T(m);t.style.display='block';clearTimeout(nt);nt=setTimeout(()=>t.style.display='none',2200)}
 function modal(t,F,V,cb,opts={}){$('#mf').className=opts.className||'';$('#mf').innerHTML=`<h3 style="margin:0">${t}</h3>${F.map(([l,k,ty,o4,placeholder])=>ty=='img'?imgField(l,k,V[k]):ty=='ta'?`<label class="fl">${l}<textarea class="in" name="${k}" placeholder="${esc(placeholder||'')}">${esc(V[k]??'')}</textarea></label>`:ty=='number'?`<label class="fl">${l}<input class="in" type="number" name="${k}" min="0" step="1" value="${esc(V[k]??'')}" placeholder="${esc(placeholder||'')}"></label>`:ty&&ty!='pw'?fld(l,k,ty,V[k],o4):ty=='pw'?`<label>${l}<input class="in" type="password" name="${k}" required></label>`:`<label>${l}<input class="in" name="${k}" value="${esc(V[k]??'')}" placeholder="${esc(placeholder||'')}" ${k=='name'?'required':''}></label>`).join('')}<div class="tools" style="justify-content:flex-end"><button type="button" class="btn" data-a="close">Cancel</button><button class="btn p">${opts.submit||'Save'}</button></div>`;$('#md').classList.add('on');$('#mf').onsubmit=async e=>{e.preventDefault();const o=Object.fromEntries(new FormData(e.target));F.forEach(([l,k])=>{if(!isNaN(V[k])&&V[k]!=='')o[k]=+o[k]});try{await cb(o);await load();$('#md').classList.remove('on');render()}catch(er){toast(er.message)}}}
+function updateMedicineStock(index){const m=D.med[index];if(!m)return toast('Medicine not found');modal('Update Stock',[['In Stock','stock','number']],{stock:Number(m.stock)||0},async o=>{const stock=Number(o.stock);if(!Number.isInteger(stock)||stock<0)throw new Error('Stock must be a non-negative whole number');await api('PUT','medicines/'+m.id,{stock})},{submit:'Update Stock'});$('#mf [name="stock"]').required=true}
+function viewMedicineComposition(index){const m=D.med[index];if(!m)return toast('Medicine not found');$('#mf').innerHTML=`<h3 style="margin:0 0 12px">${esc(m.name)} — Composition</h3><div class="medicine-composition-view">${m.composition?esc(m.composition):'<span class="mu">No composition has been added.</span>'}</div><div class="tools" style="justify-content:flex-end;margin-top:16px"><button type="button" class="btn p" data-a="close">Close</button></div>`;$('#md').classList.add('on')}
+async function printMedicineCode(index,kind){const m=D.med[index];if(!m)return toast('Medicine not found');try{const result=await api('GET',`medicines/${m.id}/code/${kind}`);if(!result||typeof result.svg!='string'||!result.svg.startsWith('<svg'))throw new Error('Could not generate the medicine code');printDoc(kind=='qr'?'Medicine QR Code':'Medicine Barcode',`<div class="medicine-code-label"><h2>${esc(m.name)}</h2>${result.svg}<p>Medicine ID: ${m.id}</p></div>`)}catch(error){toast(error.message)}}
 const FM={pt:[['Name','name'],['Age','age'],['Sex','sex'],['Phone','phone'],['Address','addr']],dr:[['Name','name'],['Role','role'],['ID','code'],['Phone','phone'],['Photo','photo','img']],echo:[['Name','name'],['Price (KHR)','price']]};
 FM.sv=[['Service name','name',null,null,'e.g. Facial treatment'],['Price (KHR)','price','number',null,'e.g. 60000'],['Description','description','ta',null,'Enter service details']];
 function serviceForm(index=null){const editing=index!=null,r=editing?D.sv[index]:{};if(editing&&!r)return toast('Service not found');modal(editing?'Edit Service':'Add Service',FM.sv,r||{},o=>api(editing?'PUT':'POST',editing?'services/'+r.id:'services',o),{submit:editing?'Save':'Add',className:'service-form'})}
@@ -209,7 +258,7 @@ const run=p=>p.then(()=>load()).then(render).catch(e=>toast(e.message));
 document.addEventListener('click',e=>{const el=e.target.closest('[data-a]');if(!el)return;e.preventDefault();const[a,x,y]=el.dataset.a.split(':');
 if(a=='login')doLogin();else if(a=='logout')logout();
 else if(a=='go'){rt=x;q='';pg=1;doctorProfileId=null;$('#sd').classList.remove('on');render()}else if(a=='grp'){cl[x]=!cl[x];nav()}else if(a=='menu'){if((window.innerWidth||0)>820){const on=document.body.classList.toggle('sbc');try{localStorage.setItem('sbc',on?'1':'0')}catch(e){}}else $('#sd').classList.toggle('on')}
-else if(a=='rmpic'){$('#pk_'+x).value='';$('#pv_'+x).hidden=true;$('#pf_'+x).value='';if(x=='photo'&&$('#doctor-photo-placeholder'))$('#doctor-photo-placeholder').hidden=false}else if(a=='settings'){rt='set';q='';$('#sd').classList.remove('on');render()}else if(a=='lang')setLang(x);else if(a=='th'){document.documentElement.dataset.theme=x;render()}else if(a=='pwd')modal('Change password',[['Current password','current','pw'],['New password','password','pw']],{},o=>api('POST','auth/password',o).then(()=>toast('Password changed')))
+else if(a=='rmpic'){$('#pk_'+x).value='';$('#pv_'+x).hidden=true;$('#pf_'+x).value='';if(x=='photo'&&$('#doctor-photo-placeholder'))$('#doctor-photo-placeholder').hidden=false;if(x=='photo'&&$('#medicine-photo-placeholder'))$('#medicine-photo-placeholder').hidden=false}else if(a=='settings'){rt='set';q='';$('#sd').classList.remove('on');render()}else if(a=='lang')setLang(x);else if(a=='th'){document.documentElement.dataset.theme=x;render()}else if(a=='pwd')modal('Change password',[['Current password','current','pw'],['New password','password','pw']],{},o=>api('POST','auth/password',o).then(()=>toast('Password changed')))
 else if(a=='saveclinic'){const o={};document.querySelectorAll('#cf [name]').forEach(e=>{o[e.name]=e.type=='checkbox'?(e.checked?1:0):e.value});o.rate=+o.rate;const ct={};Object.keys(o).forEach(k=>{if(k.startsWith('cnf_')){ct[k.slice(4)]=o[k];delete o[k]}});if(Object.keys(ct).length)o.cnf_text=ct;api('PUT','clinic',o).then(c=>{D.clinic=c;toast('Saved');render()}).catch(er=>toast(er.message))}
 else if(a=='theme'){const r=document.documentElement;r.dataset.theme=(r.dataset.theme||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'))=='dark'?'light':'dark'}
 else if(a=='toast')toast(x);else if(a=='close')$('#md').classList.remove('on');else if(a=='tab'){tab=x;pg=1;render()}else if(a=='pg'){pg=Math.max(1,+x);render()}
@@ -225,6 +274,17 @@ else if(a=='del'){if(confirm(T('Delete this record?'))){const r=D[x][+y];run(api
 else if(a=='out'){const r=D.ipd[+x];run(api('PUT','ipd/'+r.id,{out:1}).then(()=>syncOpd(r)))}
 else if(a=='add'){const k=x;if(k=='dr')return doctorForm();if(k=='sv')return serviceForm();const F=FM[k]||P[k].f,d={...(df[k]||P[k]?.d||{})};modal('Add',F,d,o=>api('POST',RS[k],{...d,...o}))}
 else if(a=='edit'){if(x=='dr')return doctorForm(+y);if(x=='sv')return serviceForm(+y);const F=FM[x]||P[x].f,r=D[x][+y];modal('Edit',F,r,o=>api('PUT',RS[x]+'/'+r.id,o))}
+else if(a=='medadd'){medicineEditIndex=null;medicineFormOpen=true;render()}
+else if(a=='mededit'){medicineEditIndex=+x;medicineFormOpen=true;render()}
+else if(a=='medstock')updateMedicineStock(+x)
+else if(a=='medcomposition')viewMedicineComposition(+x)
+else if(a=='medqr')run(printMedicineCode(+x,'qr'))
+else if(a=='medbarcode')run(printMedicineCode(+x,'barcode'))
+else if(a=='medformclose'){medicineFormOpen=false;medicineEditIndex=null;render()}
+else if(a=='medimport')$('#med-import-file').click();
+else if(a=='medphoto')$('#pf_photo').click();
+else if(a=='medunitadd')$('#medicine-units-list').insertAdjacentHTML('beforeend',medicineUnitRow());
+else if(a=='medunitdel'){const rows=$('#medicine-units-list').querySelectorAll('.medicine-unit-row');if(rows.length<=1)return toast('At least one sales unit is required');el.closest('.medicine-unit-row').remove()}
 else if(a=='svimport')$('#sv-import-file').click();
 else if(a=='drphoto')$('#pf_photo').click();
 else if(a=='drcolor'){doctorSigColor=x;document.querySelectorAll('.dr-color').forEach(b=>b.classList.toggle('selected',b.dataset.a=='drcolor:'+x))}
@@ -235,8 +295,9 @@ else if(a=='send'){const v=$('#cm').value.trim();if(v)run(api('POST','chat',{msg
 async function pick(file,k){if(!file)return;if(!/^image\//.test(file.type))return toast('Use a JPG, PNG or WebP picture');toast('Uploading…');
 try{const bmp=await createImageBitmap(file),sc=Math.min(1,(k=='banner'?1300:480)/Math.max(bmp.width,bmp.height)),c=document.createElement('canvas');c.width=Math.max(1,Math.round(bmp.width*sc));c.height=Math.max(1,Math.round(bmp.height*sc));const g=c.getContext('2d');g.fillStyle='#fff';g.fillRect(0,0,c.width,c.height);g.drawImage(bmp,0,0,c.width,c.height);
 const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',.85)),r=await fetch(API_BASE+'/api/uploads',{method:'POST',headers:{'Content-Type':'image/jpeg',Authorization:'Bearer '+tok},body:blob}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Upload failed');
-$('#pk_'+k).value=j.photo;$('#pv_'+k).src=API_BASE+'/uploads/'+j.photo;$('#pv_'+k).hidden=false;if(k=='photo'&&$('#doctor-photo-placeholder'))$('#doctor-photo-placeholder').hidden=true;$('#ts').style.display='none'}catch(e){toast(e.message)}}
-document.addEventListener('change',e=>{const i=e.target.id||'';if(i=='sv-import-file')return importServicesFile(e.target.files[0]).finally(()=>{e.target.value=''});if(i.startsWith('pf_'))pick(e.target.files[0],i.slice(3))});
+$('#pk_'+k).value=j.photo;$('#pv_'+k).src=API_BASE+'/uploads/'+j.photo;$('#pv_'+k).hidden=false;if(k=='photo'&&$('#doctor-photo-placeholder'))$('#doctor-photo-placeholder').hidden=true;if(k=='photo'&&$('#medicine-photo-placeholder'))$('#medicine-photo-placeholder').hidden=true;$('#ts').style.display='none'}catch(e){toast(e.message)}}
+document.addEventListener('submit',e=>{if(e.target.id=='medicine-form')medicineSave(e)});
+document.addEventListener('change',e=>{const i=e.target.id||'';if(i=='sv-import-file')return importServicesFile(e.target.files[0]).finally(()=>{e.target.value=''});if(i=='med-import-file')return importMedicinesFile(e.target.files[0]).finally(()=>{e.target.value=''});if(i.startsWith('pf_'))pick(e.target.files[0],i.slice(3))});
 document.addEventListener('input',e=>{if(e.target.id=='q'){q=e.target.value;pg=1;render()}else if(e.target.classList&&e.target.classList.contains('payroll-money'))payrollRecalculate()});
 document.addEventListener('change',e=>{if(e.target.name=='period_month'||e.target.name=='period_year'){const f=$('#mf'),month=Number(f.elements.period_month.value),year=Number(f.elements.period_year.value);if(month>=1&&month<=12&&year>=2000&&year<=2100){f.elements.date_start.value=`${year}-${String(month).padStart(2,'0')}-01`;f.elements.date_end.value=`${year}-${String(month).padStart(2,'0')}-${String(new Date(year,month,0).getDate()).padStart(2,'0')}`}}});
 /*I18N*/
