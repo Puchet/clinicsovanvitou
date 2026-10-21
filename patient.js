@@ -94,15 +94,15 @@ const CARE_MODULES = {
 };
 const VSF = [['t', 'Temperature (°C)'], ['hr', 'Heart rate (bpm)'], ['rr', 'Respiratory rate (bpm)'], ['bp', 'Blood pressure (mmHg)'], ['spo2', 'SpO2 (%)'], ['p', 'Pulse (P)'], ['w', 'Weight (kg)'], ['h', 'Height (cm)']];
 const COLORS = ['#e5e7eb', '#ef4444', '#f97316', '#f59e0b', '#22c55e', '#3b82f6', '#6366f1', '#a855f7', '#ec4899'];
-let pdId = null, ptab = 'vitals', recs = [], pdDate = '';
+let pdId = null, ptab = 'vitals', recs = [], pdDate = '', investigationQuery = '', investigationSelection = new Set();
 const curPt = () => D.pt.find((x) => x.id == pdId);
 const jd = (r) => { try { return JSON.parse(r.data || '{}'); } catch { return {}; } };
 async function loadRecs() {
   recs = await api('GET', 'records?patient_id=' + pdId + '&limit=5000');
-  D.billing = D.billing.filter((r) => String(r.patient_id) != String(pdId) || !['schedule', 'payment'].includes(r.kind))
-    .concat(recs.filter((r) => ['schedule', 'payment'].includes(r.kind)));
+  D.billing = D.billing.filter((r) => String(r.patient_id) != String(pdId) || !['schedule', 'payment', 'investigation'].includes(r.kind))
+    .concat(recs.filter((r) => ['schedule', 'payment', 'investigation'].includes(r.kind)));
 }
-async function openPatient(id) { pdId = id; ptab = 'vitals'; pdDate = ''; rt = 'pd'; await loadRecs(); render(); }
+async function openPatient(id) { pdId = id; ptab = 'vitals'; pdDate = ''; investigationQuery = ''; investigationSelection.clear(); rt = 'pd'; await loadRecs(); render(); }
 const lbl = (k) => (PT.find((x) => x[0] == k) || [0, k])[1];
 // ---- patient file layout & "hide" controls (saved in this browser) ----
 const PTI = { vitals: '🩺', medical: '📝', mdhistory: '📋', beu: '🖼️', schedule: '📅', consultation: '💬', operation: '✂️', investigation: '🔬', lab: '🧪', echo: '💓', xray: '🩻', homecare: '🏠', prescription: '💊', medlist: '📑', documents: '📁', billing: '💰', appts: '🗓️', allergy: '♡', vaccination: '💉', referral: '↗', diagnosis_history: '📖', laborder: '🧫', imagingorder: '🩻' };
@@ -125,9 +125,10 @@ R.pd = function () {
   return top + ctl + head + body;
 };
 function recCard(r) {
-  const d = jd(r), act = `<div class="ra"><button class="btn s" data-a="redit:${r.id}">Edit</button><button class="btn s r" data-a="rdel:${r.id}">✕</button></div>`, when = esc((r.date || '').replace('T', ' '));
+  const d = jd(r), act = r.kind == 'investigation' ? `<div class="ra"><button class="btn s r" data-a="rdel:${r.id}" title="Delete request">✕</button></div>` : `<div class="ra"><button class="btn s" data-a="redit:${r.id}">Edit</button><button class="btn s r" data-a="rdel:${r.id}">✕</button></div>`, when = esc((r.date || '').replace('T', ' '));
   if (r.kind == 'vitals') return `<div class="rc">${act}<div class="mu">${when}</div><div class="vs">${VSF.filter(([k]) => d[k]).map(([k, l]) => `<span><b>${l.replace(/ \(.*/, '')}:</b> ${esc(d[k])} ${(l.match(/\((.*)\)/) || [])[1] || ''}</span>`).join('') || '—'}</div></div>`;
   if (r.kind == 'medical') return `<div class="rc">${act}<div class="mu">${when}</div><b>${esc(d.dx || d.cc || 'Medical Record')}</b><div class="mu">${esc((d.cc || '').slice(0, 140))}</div><div class="ra2"><button class="btn s" data-a="rprint:${r.id}">Print</button></div></div>`;
+  if (r.kind == 'investigation' && Array.isArray(d.items)) return `<div class="rc investigation-record">${act}<div class="mu">${when}</div><b>Requested services</b><div class="investigation-record-items">${d.items.map((item) => { const qty = Math.max(1, +item.quantity || 1), unit = +item.unit_price || +item.price || 0; return `<div><span>${esc(item.name)}${qty > 1 ? ` × ${qty}` : ''}</span><b>${K(unit * qty)}</b></div>`; }).join('')}</div><div class="investigation-record-total">Total: <b>${K(d.items.reduce((sum, item) => sum + (+item.unit_price || +item.price || 0) * Math.max(1, +item.quantity || 1), 0))}</b></div></div>`;
   const img = r.image ? `<a href="/uploads/${esc(r.image)}" target="_blank"><img class="rimg" src="/uploads/${esc(r.image)}" alt=""></a>` : '';
   if (CARE_MODULES[r.kind]) {
     const fields = CARE_MODULES[r.kind].fields.filter(([k]) => d[k]).map(([k, label]) => `<div><span class="mu">${esc(label)}:</span> ${esc(d[k])}</div>`).join('');
@@ -141,7 +142,31 @@ function recPanel() {
   if (ptab == 'billing') return billPanel();
   if (ptab == 'appts') { const L = D.ap.filter((a) => (a.name || '').toLowerCase() == (p.name || '').toLowerCase()); return `<h2 class="rh">${lbl(ptab)}</h2>${L.map((a) => `<div class="rc"><b>${esc(a.date)} ${esc(a.time || '')}</b> ${esc(a.svc || '')} <span class="mu">${esc(a.doc || '')}</span> <span class="bd">${esc(a.st)}</span></div>`).join('') || '<p class="emp">Nothing here yet.</p>'}`; }
   const L = recs.filter((r) => r.kind == ptab && (!pdDate || (r.date || '').startsWith(pdDate)));
+  if (ptab == 'investigation') return investigationPanel(L);
   return `<div class="hd"><h2 class="rh">${lbl(ptab)}</h2>${ptab == 'medical' ? '<div class="tools"><button class="btn" data-a="htc" title="HT Controls">⚙</button><button class="btn" data-a="mhist">History</button><button class="btn" data-a="mrd">MRD</button><button class="btn g" data-a="radd">+ Add</button></div>' : '<button class="btn g" data-a="radd">+ Add</button>'}</div>${ptab == 'beu' ? `<div class="gr">${L.map(recCard).join('')}</div>` : L.map(recCard).join('')}${L.length ? '' : '<p class="emp">Nothing here yet.</p>'}`;
+}
+function investigationServiceList() {
+  const query = investigationQuery.trim().toLowerCase();
+  const services = D.sv.filter((service) => !query || String(service.name || '').toLowerCase().includes(query));
+  return services.map((service) => `<label class="investigation-service ${investigationSelection.has(String(service.id)) ? 'selected' : ''}"><input type="checkbox" data-investigation-service="${service.id}" ${investigationSelection.has(String(service.id)) ? 'checked' : ''}><span>${esc(service.name)} (${K(service.price)})</span></label>`).join('') || '<p class="emp investigation-empty">No matching services.</p>';
+}
+function investigationPanel(records) {
+  return `<section class="investigation-request card"><div class="investigation-request-head"><h2 class="rh">${T('Request service')}</h2><div class="tools"><input id="investigation-service-search" class="in" type="search" placeholder="${esc(T('Search services…'))}" value="${esc(investigationQuery)}"><button class="btn p" data-a="investigation-request" ${investigationSelection.size ? '' : 'disabled'}>${T('Add selected')}${investigationSelection.size ? ` (${investigationSelection.size})` : ''}</button></div></div><div class="investigation-service-grid" id="investigation-service-list">${investigationServiceList()}</div></section><section class="investigation-history"><h3>${T('Service requests')}</h3>${records.map(recCard).join('') || `<p class="emp">${T('No services requested yet.')}</p>`}</section>`;
+}
+async function requestInvestigationServices() {
+  const services = [...investigationSelection].map((id) => D.sv.find((service) => String(service.id) == id)).filter(Boolean);
+  if (!services.length) return toast('Select at least one service');
+  await api('POST', 'records', {
+    patient_id: pdId,
+    kind: 'investigation',
+    title: 'Service request',
+    date: nowLocal(),
+    data: { items: services.map((service) => ({ service_id: service.id, name: service.name, unit_price: Number(service.price) || 0, price: Number(service.price) || 0, quantity: 1 })) }
+  });
+  investigationSelection.clear();
+  await loadRecs();
+  render();
+  toast('Services requested');
 }
 function genForm(r) {
   const k = ptab, e = !!r; r = r || { date: ymd(new Date()) };
@@ -720,6 +745,8 @@ function pAct(a, x, y, el) {
   else if (a == 'agem') { $('#agebox').dataset.mode = x; document.querySelectorAll('#agem button').forEach((b) => b.classList.toggle('on', b.dataset.a == 'agem:' + x)); }
   else if (a == 'vsbtn') { $('#vsbox').hidden = !$('#vsbox').hidden; } else if (a == 'regprint') regPrint();
   else if (a == 'rtab') { ptab = x; render(); } else if (a == 'radd') { ptab == 'vitals' ? vsForm() : ptab == 'medical' ? mrForm() : ptab == 'schedule' ? schForm() : genForm(); }
+  else if (a == 'investigation-request') requestInvestigationServices().catch((e) => toast(e.message));
+  else if (a == 'svcplus' || a == 'svcminus') changeInvestigationQuantity(x, Number(y), a == 'svcplus' ? 1 : -1).catch((e) => toast(e.message));
   else if (a == 'redit') { const r = rec(); r.kind == 'vitals' ? vsForm(r) : r.kind == 'medical' ? mrForm(r) : r.kind == 'schedule' ? schForm(r) : r.kind == 'mrd' ? mrdForm(r) : r.kind == 'cnf' ? cnfForm(r) : genForm(r); }
   else if (a == 'rdel') { if (confirm(T('Delete this record?'))) api('DELETE', 'records/' + x).then(loadRecs).then(render).catch((e) => toast(e.message)); }
   else if (a == 'rprint') { const r = rec(); printDoc('Medical Record', ptBlock(curPt()) + `<p>${esc((r.date || '').replace('T', ' '))}</p>` + mrPrintHtml(jd(r))); }
@@ -764,9 +791,24 @@ document.addEventListener('change', async (e) => {
   const t = e.target;
   if (t.id == 'pfp') { try { toast('Uploading…'); const ph = await upl(t.files[0]); await api('PUT', 'patients/' + pdId, { photo: ph }); await load(); render(); } catch (er) { toast(er.message); } }
   else if (t.id == 'sch-selection') schItemChanged(t.value);
+  else if (t.dataset && t.dataset.investigationService) {
+    const id = String(t.dataset.investigationService);
+    if (t.checked) investigationSelection.add(id); else investigationSelection.delete(id);
+    const card = t.closest('.investigation-service');
+    if (card) card.classList.toggle('selected', t.checked);
+    const button = document.querySelector('[data-a="investigation-request"]');
+    if (button) { button.disabled = !investigationSelection.size; button.textContent = T('Add selected') + (investigationSelection.size ? ` (${investigationSelection.size})` : ''); }
+  }
   else if (t.dataset && t.dataset.fill && t.value) { const ta = t.parentElement.querySelector('textarea'); ta.value = (ta.value ? ta.value.replace(/[,\s]+$/, '') + ', ' : '') + t.value; t.value = ''; }
 });
-document.addEventListener('input', (e) => { if (e.target.id == 'pdd') { pdDate = e.target.value; $('#rp').innerHTML = recPanel(); } });
+document.addEventListener('input', (e) => {
+  if (e.target.id == 'pdd') { pdDate = e.target.value; $('#rp').innerHTML = recPanel(); }
+  else if (e.target.id == 'investigation-service-search') {
+    investigationQuery = e.target.value;
+    const list = $('#investigation-service-list');
+    if (list) list.innerHTML = investigationServiceList();
+  }
+});
 
 // ---------- Khmer ----------
 Object.assign(L, { 'Register new patient': 'ចុះឈ្មោះអ្នកជំងឺថ្មី', 'Register Patient': 'ចុះឈ្មោះអ្នកជំងឺ', 'Edit patient': 'កែប្រែអ្នកជំងឺ', 'Patient registered': 'បានចុះឈ្មោះអ្នកជំងឺ', 'Basic information': 'ព័ត៌មានមូលដ្ឋាន', 'Patient name *': 'ឈ្មោះអ្នកជំងឺ *', 'Latin name (optional)': 'ឈ្មោះឡាតាំង (ស្រេចចិត្ត)', 'Latin name': 'ឈ្មោះឡាតាំង', 'Demographics': 'ប្រជាសាស្ត្រ', 'Sex': 'ភេទ', 'Select sex': 'ជ្រើសរើសភេទ', 'Male': 'ប្រុស', 'Female': 'ស្រី', 'Year': 'ឆ្នាំ', 'Month': 'ខែ', 'Day': 'ថ្ងៃ', 'Khmer national': 'ជនជាតិខ្មែរ', 'Clinical details': 'ព័ត៌មានគ្លីនិក', 'Complaints / symptoms': 'ពាក្យបណ្តឹង / រោគសញ្ញា', '+ Add symptom': '+ បន្ថែមរោគសញ្ញា', '+ Pick address': '+ ជ្រើសអាសយដ្ឋាន', 'Past medical history': 'ប្រវត្តិជំងឺកន្លងមក', '+ Record vital signs': '+ កត់ត្រាសញ្ញាជីវិត', 'Registration date': 'កាលបរិច្ឆេទចុះឈ្មោះ', 'Print': 'បោះពុម្ព', 'History': 'ប្រវត្តិ', 'Change photo': 'ប្តូររូបភាព', 'Patient Management': 'ការគ្រប់គ្រងអ្នកជំងឺ', 'Gender': 'ភេទ', 'Date': 'កាលបរិច្ឆេទ', 'Time': 'ម៉ោង',
@@ -926,23 +968,69 @@ function tfPrintAll() {
   }).join('');
   printDoc('Treatment Follow-up', ptBlock(p) + (body || `<p>${T('No history records yet.')}</p>`));
 }
-// ---------- billing: schedule charges minus payments ----------
+// ---------- billing ----------
 async function payForm(pid, payAll = false) {
   const p = ptById(pid); if (!p) return;
   const list = await api('GET', 'records?patient_id=' + pid + '&limit=5000'), due = billTotals(list).bal;
   if (!(due > 0)) return toast('Paid');
   openForm('Record payment', `<p>${esc(p.name)} — Amount due: <b>${K(due)}</b> <span class="mu">(${usd(due)})</span></p>${fIn('Amount paid (KHR)', 'amount', due, 'number', `min="1" max="${due}" ${payAll ? 'readonly' : ''} required`)}${fSel('Method', 'method', 'Cash', ['Cash', 'Bank'])}`, async (f) => {
     const m = new FormData(f), amt = Math.round(+m.get('amount') || 0); if (amt < 1) throw new Error('Enter an amount'); if (amt > due) throw new Error('Amount is more than the balance'); if (payAll && amt !== due) throw new Error('Payment must match the full balance');
-    await api('POST', 'records', { patient_id: pid, kind: 'payment', date: ymd(new Date()), data: { amount: amt, method: m.get('method') } });
+    const outstandingItems = billingOutstandingItems(list);
+    await api('POST', 'records', { patient_id: pid, kind: 'payment', date: ymd(new Date()), data: { amount: amt, method: m.get('method'), item_count: outstandingItems.length } });
     await load(); if (rt == 'pd' && pdId == pid) await loadRecs(); render(); toast('Saved');
   }, { cls: 'wide', ok: 'Save' });
 }
-const billTotals = (list) => { const ch = list.filter((r) => r.kind == 'schedule' && schBillable(r)).reduce((t, r) => t + (+jd(r).amount || 0), 0), pd = list.filter((r) => r.kind == 'payment').reduce((t, r) => t + (+jd(r).amount || 0), 0); return { ch, pd, bal: Math.max(0, ch - pd) }; };
+function billingLineItems(list) {
+  return list.slice().sort((a, b) => (a.date || '').localeCompare(b.date || '') || (+a.id || 0) - (+b.id || 0)).flatMap((r) => {
+    const d = jd(r);
+    if (r.kind == 'schedule' && schBillable(r)) return [{ category: 'Treatment Charges', name: [d.selection, d.treatment_type, d.diagnosis || d.dx, r.notes].filter(Boolean).join(' — ') || r.title || 'Treatment charge', price: +d.amount || 0 }];
+    if (r.kind == 'investigation' && Array.isArray(d.items)) return d.items.map((item, itemIndex) => {
+      const quantity = Math.max(1, +item.quantity || 1), unitPrice = +item.unit_price || +item.price || 0;
+      return { category: 'Service Charges', name: item.name || 'Service', price: unitPrice * quantity, quantity, unitPrice, recordId: r.id, itemIndex };
+    });
+    return [];
+  });
+}
+function billingOutstandingItems(list) {
+  let paid = list.filter((r) => r.kind == 'payment').reduce((sum, r) => sum + (+jd(r).amount || 0), 0);
+  return billingLineItems(list).map((item) => {
+    const applied = Math.min(paid, item.price);
+    paid -= applied;
+    return { ...item, price: item.price - applied };
+  }).filter((item) => item.price > 0);
+}
+const billTotals = (list) => { const ch = billingLineItems(list).reduce((t, item) => t + item.price, 0), pd = list.filter((r) => r.kind == 'payment').reduce((t, r) => t + (+jd(r).amount || 0), 0); return { ch, pd, bal: Math.max(0, ch - pd) }; };
 function billPanel() {
-  const t = billTotals(recs), pays = recs.filter((r) => r.kind == 'payment');
-  return `<div class="hd"><h2 class="rh">Billing history</h2><div class="tools"><button class="btn" data-a="schinv">Invoice</button><button class="btn g" data-a="payall" ${t.bal ? '' : 'disabled'}><span>Pay All</span>: <b>${K(t.bal)}</b></button><button class="btn" data-a="recpay" ${t.bal ? '' : 'disabled'}>+ Record payment</button></div></div>
-<div class="gr2" style="margin-bottom:12px"><div class="rc"><span class="mu">Charges</span><br><b>${K(t.ch)}</b></div><div class="rc"><span class="mu">Paid</span><br><b>${K(t.pd)}</b></div><div class="rc" style="${t.bal ? 'border-color:#dc2626' : ''}"><span class="mu">Balance</span><br><b>${K(t.bal)}</b></div></div>
-${pays.map((r) => `<div class="rc"><div class="ra"><button class="btn s" data-a="payreceipt:${r.id}">Receipt</button><button class="btn s r" data-a="rdel:${r.id}">✕</button></div><b>${K(jd(r).amount)}</b> <span class="bd">${esc(jd(r).method || '')}</span> <span class="mu">${esc(r.date || '')}</span></div>`).join('') || '<p class="emp">Nothing here yet.</p>'}`;
+  const t = billTotals(recs), items = billingOutstandingItems(recs), pays = recs.filter((r) => r.kind == 'payment').sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
+  const categories = [...new Set(items.map((item) => item.category))];
+  const unpaidItems = categories.map((category) => {
+    const group = items.filter((item) => item.category == category), total = group.reduce((sum, item) => sum + item.price, 0);
+    return `<div class="bill-charge-group"><div class="bill-charge-heading"><b>◇ ${T(category)}</b><b>${K(total)}</b></div>${group.map((item) => `<div class="bill-charge-item"><div>${esc(item.name)}<small>${K(item.unitPrice ?? item.price)}${item.quantity > 1 ? ` × ${item.quantity}` : ''}</small></div><div class="bill-charge-right"><b>${K(item.price)}</b>${item.category == 'Service Charges' ? `<div class="bill-quantity"><button type="button" class="btn s" data-a="svcminus:${item.recordId}:${item.itemIndex}" title="${T('Remove one')}">−</button><span>${item.quantity}</span><button type="button" class="btn s" data-a="svcplus:${item.recordId}:${item.itemIndex}" title="${T('Add one')}">+</button></div>` : ''}</div></div>`).join('')}</div>`;
+  }).join('');
+  const paidRows = pays.map((r) => {
+    const d = jd(r), count = Number.isFinite(+d.item_count) ? +d.item_count : Array.isArray(d.items) ? d.items.length : billingLineItems(recs).length;
+    return `<div class="bill-payment"><div class="bill-payment-head"><div><b>${esc(r.date || '')}</b><div class="mu">Ref: PAY-${esc(r.id)}</div></div><span class="bd">${T('Paid')}</span><button class="btn s" data-a="payreceipt:${r.id}">▣ ${T('Receipt')}</button></div><div class="bill-payment-meta"><span>${T('Items')}:</span><span>${count}</span></div><div class="bill-payment-total"><span>${T('Total Paid')}:</span><b>${K(d.amount || 0)}</b></div></div>`;
+  }).join('');
+  return `<div class="billing-page"><div class="billing-toolbar"><h2 class="rh">▱ ${T('Billing history')}</h2><div class="tools"><button class="btn" data-a="schinv">${T('Invoice')}</button><button class="btn" data-a="recpay" ${t.bal ? '' : 'disabled'}>+ ${T('Record payment')}</button><button class="btn g billing-payall" data-a="payall" ${t.bal ? '' : 'disabled'}>$ ${T('Pay All')}: ${K(t.bal)}</button></div></div>
+<div class="billing-columns"><section class="billing-panel"><h4><span>◇ ${T('Unpaid')}</span><span class="billing-total-badge">${T('Total')}: ${K(t.bal)}</span></h4>${t.bal ? unpaidItems : `<p class="emp">${T('No unpaid bills found.')}</p>`}<div class="bill-total"><b>${T('Total Unpaid Amount')}:</b><b>${K(t.bal)}</b></div></section>
+<section class="billing-panel"><h4>◇ ${T('Paid History')}</h4>${paidRows || `<p class="emp">${T('No paid bills found.')}</p>`}</section></div></div>`;
+}
+async function changeInvestigationQuantity(recordId, itemIndex, delta) {
+  const r = recs.find((record) => String(record.id) == String(recordId) && record.kind == 'investigation');
+  if (!r) throw new Error('Investigation request not found');
+  const d = jd(r);
+  if (!Array.isArray(d.items) || !d.items[itemIndex]) throw new Error('Service charge item not found');
+  const item = d.items[itemIndex], quantity = Math.max(0, Math.max(1, +item.quantity || 1) + delta);
+  if (quantity == 0) d.items.splice(itemIndex, 1);
+  else {
+    const unitPrice = +item.unit_price || +item.price || 0;
+    d.items[itemIndex] = { ...item, unit_price: unitPrice, price: unitPrice, quantity };
+  }
+  if (!d.items.length) await api('DELETE', 'records/' + r.id);
+  else await api('PUT', 'records/' + r.id, { data: d });
+  await loadRecs();
+  await load();
+  render();
 }
 function paymentReceipt(id) {
   const r = recs.find((x) => x.id == id && x.kind == 'payment');
@@ -954,16 +1042,18 @@ async function openIpdBilling(pid) {
   const p = ptById(pid); if (!p) return toast('Patient not found.');
   pdId = pid;
   await loadRecs();
-  const charges = recs.filter((r) => r.kind == 'schedule' && schBillable(r)).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const charges = recs.filter((r) => (r.kind == 'schedule' && schBillable(r)) || (r.kind == 'investigation' && Array.isArray(jd(r).items) && jd(r).items.length)).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   const pays = recs.filter((r) => r.kind == 'payment').sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
   const t = billTotals(recs), unpaid = t.bal > 0;
   const chargeRows = charges.map((r) => {
     const d = jd(r);
+    if (r.kind == 'investigation') return `<div class="bill-item"><div><b>${T('Service Charges')}</b><div class="mu">${esc(r.date || '')}</div>${d.items.map((item) => { const qty = Math.max(1, +item.quantity || 1), unit = +item.unit_price || +item.price || 0; return `<div class="bill-charge-item"><span>${esc(item.name)}${qty > 1 ? ` × ${qty}` : ''}</span><b>${K(unit * qty)}</b></div>`; }).join('')}</div><b>${K(d.items.reduce((sum, item) => sum + (+item.unit_price || +item.price || 0) * Math.max(1, +item.quantity || 1), 0))}</b></div>`;
     return `<div class="bill-item"><div><b>${esc([d.selection, d.treatment_type, d.diagnosis || d.dx, r.notes].filter(Boolean).join(' — ') || r.title || 'Charge')}</b><div class="mu">${esc(r.date || '')}</div></div><b>${K(d.amount || 0)}</b></div>`;
   }).join('');
   const paidRows = pays.map((r) => {
     const d = jd(r);
-    return `<div class="bill-payment"><div class="bill-payment-head"><b>${esc(r.date || '')}</b><span class="bd">${T('Paid')}</span><button type="button" class="btn s" data-a="payreceipt:${r.id}">Receipt</button></div><div class="mu">${esc(T('Method'))}: ${esc(d.method || '—')}</div><div class="bill-payment-total"><span>${T('Total Paid')}:</span><b>${K(d.amount || 0)}</b></div></div>`;
+    const count = Number.isFinite(+d.item_count) ? +d.item_count : Array.isArray(d.items) ? d.items.length : billingLineItems(recs).length;
+    return `<div class="bill-payment"><div class="bill-payment-head"><div><b>${esc(r.date || '')}</b><div class="mu">Ref: PAY-${esc(r.id)}</div></div><span class="bd">${T('Paid')}</span><button type="button" class="btn s" data-a="payreceipt:${r.id}">Receipt</button></div><div class="bill-payment-meta"><span>${T('Items')}:</span><span>${count}</span></div><div class="mu">${esc(T('Method'))}: ${esc(d.method || '—')}</div><div class="bill-payment-total"><span>${T('Total Paid')}:</span><b>${K(d.amount || 0)}</b></div></div>`;
   }).join('');
   const f = $('#mf');
   f.className = 'xl billing-dialog';
@@ -974,8 +1064,13 @@ async function openIpdBilling(pid) {
   $('#md').classList.add('on');
 }
 async function invoicePrint(pid) {
-  const p = ptById(pid), list = await api('GET', 'records?patient_id=' + pid + '&limit=5000'), rows = list.filter((r) => r.kind == 'schedule').sort((a, b) => (a.date || '').localeCompare(b.date || '')), t = billTotals(list);
-  printDoc('Invoice', ptBlock(p) + `<table class="pk full"><tr><th>No.</th><th>Date</th><th>Description</th><th>Amount</th></tr>${rows.map((r, i) => { const d = jd(r); return `<tr><td>${i + 1}</td><td>${esc((r.date || '').slice(0, 10))}</td><td>${esc([r.title, d.dx, r.notes].filter(Boolean).join(' – '))}</td><td>${K(d.amount || 0)}</td></tr>`; }).join('')}<tr><th colspan="3">Total</th><td><b>${K(t.ch)}</b></td></tr><tr><th colspan="3">Paid</th><td>${K(t.pd)}</td></tr><tr><th colspan="3">Balance</th><td><b>${K(t.bal)}</b></td></tr></table>`);
+  const p = ptById(pid), list = await api('GET', 'records?patient_id=' + pid + '&limit=5000'), rows = list.filter((r) => r.kind == 'schedule' || (r.kind == 'investigation' && Array.isArray(jd(r).items) && jd(r).items.length)).sort((a, b) => (a.date || '').localeCompare(b.date || '')), t = billTotals(list);
+  const invoiceRows = rows.flatMap((r) => {
+    const d = jd(r);
+    if (r.kind == 'investigation') return d.items.map((item) => [r.date, `${item.name}${(+item.quantity || 1) > 1 ? ` × ${+item.quantity}` : ''}`, (+item.unit_price || +item.price || 0) * Math.max(1, +item.quantity || 1)]);
+    return [[r.date, [r.title, d.selection, d.dx || d.diagnosis, r.notes].filter(Boolean).join(' – '), +d.amount || 0]];
+  });
+  printDoc('Invoice', ptBlock(p) + `<table class="pk full"><tr><th>No.</th><th>Date</th><th>Description</th><th>Amount</th></tr>${invoiceRows.map(([date, description, amount], i) => `<tr><td>${i + 1}</td><td>${esc((date || '').slice(0, 10))}</td><td>${esc(description)}</td><td>${K(amount)}</td></tr>`).join('')}<tr><th colspan="3">Total</th><td><b>${K(t.ch)}</b></td></tr><tr><th colspan="3">Paid</th><td>${K(t.pd)}</td></tr><tr><th colspan="3">Balance</th><td><b>${K(t.bal)}</b></td></tr></table>`);
 }
 RX.push([/^Showing (\d+) to (\d+) of (\d+) records$/, 'បង្ហាញ $1 ដល់ $2 នៃ $3 កំណត់ត្រា']);
 Object.assign(L, { 'IPD/OPD': 'IPD/OPD', 'Treatment': 'ការព្យាបាល', 'Medical Record': 'Medical Record', 'Complaints': 'ពាក្យបណ្តឹង', 'Registration date': 'កាលបរិច្ឆេទចុះឈ្មោះ', 'Details': 'ព័ត៌មានលម្អិត', 'Search Name, Phone, NSSF, National ID…': 'ស្វែងរកឈ្មោះ លេខទូរស័ព្ទ NSSF អត្តសញ្ញាណប័ណ្ណ…', 'Billing history': 'ប្រវត្តិគិតលុយ', 'Record payment': 'កត់ត្រាការបង់ប្រាក់', '+ Record payment': '+ កត់ត្រាការបង់ប្រាក់', 'Pay All': 'បង់ប្រាក់ទាំងអស់', 'Paid History': 'ប្រវត្តិបង់ប្រាក់', 'No unpaid bills found.': 'មិនមានវិក្កយបត្រមិនទាន់បង់ទេ។', 'No paid bills found.': 'មិនមានប្រវត្តិបង់ប្រាក់ទេ។', 'Total Paid': 'សរុបបានបង់', 'Outstanding balance': 'សមតុល្យមិនទាន់បង់', 'Total': 'សរុប', 'Close': 'បិទ', 'Receipt': 'បង្កាន់ដៃ', 'Payment Receipt': 'បង្កាន់ដៃបង់ប្រាក់', 'Charges': 'ការគិតថ្លៃ', 'Balance': 'សមតុល្យ', 'Method': 'វិធីសាស្ត្រ', 'Amount paid (KHR)': 'ទឹកប្រាក់បានបង់ (KHR)', 'No patients.': 'គ្មានអ្នកជំងឺទេ។', 'Patient card': 'កាតអ្នកជំងឺ', 'Amount is more than the balance': 'ចំនួនទឹកប្រាក់លើសសមតុល្យ', 'Enter an amount': 'សូមបញ្ចូលចំនួនទឹកប្រាក់' });
@@ -984,6 +1079,8 @@ try { if (localStorage.getItem('sbc') == '1' && document.body.classList) documen
 Object.assign(L, { 'Menu': 'ម៉ឺនុយ' });
 Object.assign(L, { 'All': 'ទាំងអស់', 'With record': 'មានកំណត់ត្រា', 'No record': 'គ្មានកំណត់ត្រា', '✕ Clear filters': '✕ សម្អាតតម្រង', 'Export Excel': 'នាំចេញ Excel' });
 Object.assign(L, { 'Columns': 'ជួរឈរ', '☰ Columns': '☰ ជួរឈរ', 'Filters': 'តម្រង', 'Show all': 'បង្ហាញទាំងអស់', 'Show or hide columns': 'បង្ហាញ ឬលាក់ជួរឈរ', 'At least one column must stay visible': 'ត្រូវទុកយ៉ាងហោចណាស់ជួរឈរមួយ' });
+Object.assign(L, { 'Request service': 'ស្នើសុំសេវាកម្ម', 'Search services…': 'ស្វែងរកសេវាកម្ម…', 'Add selected': 'បន្ថែមសេវាកម្មដែលបានជ្រើស', 'Service requests': 'សំណើសេវាកម្ម', 'No services requested yet.': 'មិនទាន់មានសំណើសេវាកម្មទេ។', 'No matching services.': 'រកមិនឃើញសេវាកម្មដែលត្រូវគ្នាទេ។', 'Requested services': 'សេវាកម្មដែលបានស្នើ', 'Select at least one service': 'សូមជ្រើសរើសសេវាកម្មយ៉ាងតិចមួយ', 'Services requested': 'បានស្នើសេវាកម្ម' });
+Object.assign(L, { 'Service Charges': 'ថ្លៃសេវាកម្ម', 'Treatment Charges': 'ថ្លៃព្យាបាល', 'Total Unpaid Amount': 'ចំនួនទឹកប្រាក់មិនទាន់បង់សរុប', 'Items': 'មុខទំនិញ' });
 
 // ---------- OPD -> IPD: click the OPD badge (or the bed icon) to enter Room and Bed ----------
 function bedForm(pid) {
