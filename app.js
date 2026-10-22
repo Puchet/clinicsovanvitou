@@ -1,7 +1,7 @@
 const API_BASE=((typeof window!=='undefined'&&window.API_BASE)||'').replace(/\/+$/,'');
 const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])),K=n=>D.clinic&&D.clinic.currency=='USD'?'$'+(Number(n)/(D.clinic.rate||4000)).toFixed(2):'KHR '+Number(n).toLocaleString('en-US');
 const NM=['Sok Dara','Chan Sreyneang','Vann Rithy','Keo Sophea','Lim Sokha','Heng Vuthy','Pich Srey','Seng Bunthoeun','Mao Channary','Ouk Samnang','Tep Vanna','Nguon Sreymom'],AD=['Phnom Penh','Siem Reap','Kandal','Takeo','Battambang'];
-const D={pt:[],ap:[],ipd:[],dr:[],payslips:[],med:[],sv:[],lab:[],labcategories:[],echo:[],dx:[],rx:[],sy:[],ad:[],sf:[],ch:[],rev:0,bill:[],billing:[],clinic:{}};
+const D={pt:[],ap:[],ipd:[],dr:[],payslips:[],med:[],sv:[],lab:[],labcategories:[],echo:[],dx:[],rx:[],sy:[],ad:[],sf:[],ch:[],expenses:[],sales:[],medicineSales:[],rev:0,bill:[],billing:[],clinic:{},user:{}};
 // an admitted patient (IPD row linked by patient ID) goes back to OPD when the stay ends
 const syncOpd=r=>{const p=D.pt.find(q=>String(q.id)==String(r.code));return p&&p.type=='IPD'?api('PUT','patients/'+p.id,{type:'OPD'}):0};
 const billingData=r=>{try{return JSON.parse(r.data||'{}')}catch{return{}}};
@@ -36,6 +36,9 @@ mr:{k:'med',t:'Medicine Report',s:'Stock status.',h:['Name','Stock','Status'],c:
 st:{k:'med',t:'Store',s:'Add items and manage stock and prices.',al:'Add item',h:['Item','Stock','Unit price','Value'],c:r=>[nm(r),r.stock,K(r.price),K(Math.max(0,r.stock)*r.price)]},
 ns:{k:'sf',t:'NSSF',s:'Patients covered by NSSF.',h:['ID','Date','Name','NSSF ID','Treatment','Age','Unpaid'],c:()=>[],nf:1}};
 function tp(id){let o={...P[id]};if(o.k)o={...P[o.k]||P.ipd,...o};const k=o.k||id,rows=ft(k).filter(([r])=>!o.fl||o.fl(r));
+if(id==='dx'){
+  return hd(o.t,o.s,`<button class="btn diagnosis-secondary" data-a="go:sy"><span>☰</span> Symptoms List</button><button class="btn diagnosis-primary" data-a="add:dx" aria-label="Add diagnosis">＋</button>`)+`<div class="diagnosis-shell"><div class="diagnosis-search"><span class="diagnosis-search-icon">⌕</span><input id="q" class="diagnosis-input" placeholder="Search diagnoses..." value="${esc(q)}"></div><div class="diagnosis-list">${rows.length?rows.map(([r,i])=>`<div class="diagnosis-row"><span class="diagnosis-name">${esc(r.name)}</span><div class="diagnosis-actions"><button class="btn diagnosis-edit" data-a="edit:${k}:${i}">Edit</button><button class="btn diagnosis-delete" data-a="del:${k}:${i}" aria-label="Delete ${esc(r.name)}">🗑</button></div></div>`).join(''):`<div class="diagnosis-empty">Nothing here yet.</div>`}</div></div>`;
+}
 return hd(o.t,o.s,sr()+(o.ex?ex:'')+(o.nf?'':add(id=='cur'?'ipd':k,o.al)))+`<div class="card"><table><thead><tr>${o.h.map(x=>`<th>${x}</th>`).join('')}${o.nf?'':'<th>Actions</th>'}</tr></thead><tbody>${rows.length&&id!='ns'?rows.map(([r,i])=>`<tr>${o.c(r,i).map(x=>`<td>${typeof x=='string'&&x[0]=='<'?x.replace('IDX',i):esc(x)}</td>`).join('')}${o.nf?'':`<td><button class="btn s" data-a="edit:${k}:${i}">Edit</button> <button class="btn s r" data-a="del:${k}:${i}">✕</button></td>`}</tr>`).join(''):`<tr><td colspan="9" class="emp">Nothing here yet.</td></tr>`}</tbody></table></div>`}
 const moneyCents=n=>'$'+((Number(n)||0)/100).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
 const slipPeriod=s=>`${new Date(+s.period_year,(+s.period_month)-1,1).toLocaleString('en-US',{month:'short'})} ${s.period_year}`;
@@ -102,12 +105,287 @@ async function importMedicinesFile(file){
     await load();q='';render();toast(`${result.imported} medicines imported`);
   }catch(error){toast(error.message)}
 }
+async function exportDiagnoses(){
+  try{
+    const rows=D.dx.map((item)=>({name:item.name}));
+    const response=await fetch(API_BASE+'/api/export/xlsx',{method:'POST',headers:{'Content-Type':'application/json',...(tok?{Authorization:'Bearer '+tok}:{})},body:JSON.stringify({rows})});
+    const blob=await response.blob();
+    if(!response.ok){
+      let err='';
+      try{const data=await response.json();err=data.error||'';}catch(e){}
+      throw new Error(err||'Export failed');
+    }
+    const url=URL.createObjectURL(blob),anchor=document.createElement('a');
+    anchor.href=url;anchor.download='diagnoses.xlsx';anchor.click();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }catch(error){toast(error.message)}
+}
+async function importDiagnosesFile(file){
+  if(!file)return;
+  try{
+    const isXlsx=/\.xlsx$/i.test(file.name||'');
+    const isCsv=/\.csv$/i.test(file.name||'');
+    if(!isXlsx&&!isCsv)throw new Error('Choose an Excel workbook or CSV file');
+    if(file.size>1e6)throw new Error('Import file must be smaller than 1 MB');
+    const response=await fetch(API_BASE+'/api/diagnoses/import-xlsx',{method:'POST',headers:{'Content-Type':isCsv?'text/csv; charset=utf-8':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',...(tok?{Authorization:'Bearer '+tok}:{})},body:await file.arrayBuffer()});
+    const result=await response.json().catch(()=>null);
+    if(response.status==401&&tok)logout();
+    if(response.status==404)throw new Error('Diagnosis import API not found. Restart or redeploy the backend, then try again.');
+    if(!response.ok)throw new Error(result&&result.error||'Request failed');
+    await load();q='';render();toast(`${result.imported} diagnoses imported`);
+  }catch(error){toast(error.message)}
+}
 let dFrom='',dTo='';
+let reportFrom='',reportTo='',reportQuery='',reportRange='';
+let medicineReportFrom='',medicineReportTo='';
+let doctorAnalyticsFrom='',doctorAnalyticsTo='',doctorAnalyticsId='';
 function medicineActions(m,showView=true){const i=D.med.indexOf(m);return`<div class="medicine-actions">${showView?`<button class="btn s" title="View details" aria-label="View details" data-a="medview:${m.id}">View</button>`:''}<button class="btn s" title="Update Stock" aria-label="Update Stock" data-a="medstock:${i}">↻</button><button class="btn s" title="View Composition" aria-label="View Composition" data-a="medcomposition:${i}">▤</button><button class="btn s" title="Print QR Code" aria-label="Print QR Code" data-a="medqr:${i}">▦</button><button class="btn s" title="Print Barcode" aria-label="Print Barcode" data-a="medbarcode:${i}">▥</button><button class="btn s" title="Edit" aria-label="Edit" data-a="mededit:${i}">✎</button><button class="btn s r" title="Delete" aria-label="Delete" data-a="del:med:${i}">×</button></div>`}
+let analyticsFrom='',analyticsTo='',analyticsPeriod='daily';
+function analyticsDate(value){
+  const text=String(value||'');
+  if(/^\d{4}-\d{2}-\d{2}$/.test(text))return text;
+  const date=new Date(text);
+  return Number.isNaN(date.getTime())?'':`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+}
+function analyticsInRange(date){return !!date&&(!analyticsFrom||date>=analyticsFrom)&&(!analyticsTo||date<=analyticsTo)}
+function analyticsRecords(){
+  const income=[
+    ...D.billing.filter(record=>record.kind=='payment').map(record=>({date:analyticsDate(record.date),amount:Number(billingData(record).amount)||0})),
+    ...D.sales.map(sale=>({date:analyticsDate(sale.created_at),amount:Number(sale.total)||0}))
+  ].filter(record=>analyticsInRange(record.date));
+  const expenses=D.expenses.map(expense=>({date:analyticsDate(expense.date),amount:Number(expense.amount)||0})).filter(record=>analyticsInRange(record.date));
+  const periods=new Map(),add=(date,key,amount)=>{const row=periods.get(key)||{label:key,income:0,expenses:0};row[date]+=amount;periods.set(key,row)};
+  const periodKey=date=>analyticsPeriod=='yearly'?date.slice(0,4):analyticsPeriod=='monthly'?date.slice(0,7):date;
+  income.forEach(record=>add('income',periodKey(record.date),record.amount));
+  expenses.forEach(record=>add('expenses',periodKey(record.date),record.amount));
+  const series=[...periods.values()].sort((a,b)=>a.label.localeCompare(b.label));
+  const medicines=new Map();
+  D.medicineSales.filter(row=>analyticsInRange(analyticsDate(row.date))).forEach(row=>{
+    const name=String(row.name||'').trim();if(name)medicines.set(name,(medicines.get(name)||0)+(Number(row.qty)||0));
+  });
+  const services=new Map();
+  D.ap.filter(row=>analyticsInRange(analyticsDate(row.date))&&String(row.st||'').toLowerCase()!='cancelled').forEach(row=>{
+    const name=String(row.svc||'').trim();if(name)services.set(name,(services.get(name)||0)+1);
+  });
+  return {series,medicines:[...medicines].map(([name,value])=>({name,value})).sort((a,b)=>b.value-a.value||a.name.localeCompare(b.name)).slice(0,6),services:[...services].map(([name,value])=>({name,value})).sort((a,b)=>b.value-a.value||a.name.localeCompare(b.name)).slice(0,6)};
+}
+function analyticsFinancialChart(series){
+  const width=900,height=300,left=70,right=20,top=18,bottom=48,chartWidth=width-left-right,chartHeight=height-top-bottom;
+  if(!series.length)return `<div class="analytics-chart-empty">${T('No financial activity found for this date range.')}</div>`;
+  const values=series.flatMap(row=>[row.income,row.expenses,row.income-row.expenses]),min=Math.min(0,...values),max=Math.max(1,...values),range=max-min||1;
+  const x=index=>left+(series.length==1?chartWidth/2:index*chartWidth/(series.length-1)),y=value=>top+(max-value)*chartHeight/range;
+  const colors={income:'#22c55e',expenses:'#f97316',profit:'#6366f1'};
+  const line=(key,value)=>`<polyline fill="none" stroke="${colors[key]}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points="${series.map((row,index)=>`${x(index)},${y(value(row))}`).join(' ')}"/>`;
+  const grid=Array.from({length:5},(_,index)=>{const value=max-index*range/4,gy=y(value);return`<g><line x1="${left}" y1="${gy}" x2="${width-right}" y2="${gy}" stroke="var(--bd)" stroke-dasharray="3 4"/><text x="${left-10}" y="${gy+4}" text-anchor="end" class="analytics-axis-label">${Math.round(value).toLocaleString('en-US')}</text></g>`}).join('');
+  const stride=Math.max(1,Math.ceil(series.length/7)),labels=series.map((row,index)=>index%stride==0||index==series.length-1?`<text x="${x(index)}" y="${height-17}" text-anchor="middle" class="analytics-axis-label">${esc(row.label)}</text>`:'').join('');
+  const points=key=>series.map((row,index)=>{const value=key=='profit'?row.income-row.expenses:row[key];return`<circle cx="${x(index)}" cy="${y(value)}" r="3" fill="${colors[key]}"><title>${esc(row.label)} · ${T(key=='profit'?'Profit':key=='income'?'Income':'Expense')}: ${esc(K(value))}</title></circle>`}).join('');
+  return `<div class="analytics-chart-scroll"><svg class="analytics-financial-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="Income, expenses, and profit by ${analyticsPeriod}">${grid}<line x1="${left}" y1="${y(0)}" x2="${width-right}" y2="${y(0)}" stroke="var(--bd)"/>${labels}${line('income',row=>row.income)}${line('expenses',row=>row.expenses)}${line('profit',row=>row.income-row.expenses)}${points('income')}${points('expenses')}${points('profit')}</svg></div><div class="analytics-legend"><span><i style="background:${colors.income}"></i>${T('Income')}</span><span><i style="background:${colors.expenses}"></i>${T('Expense')}</span><span><i style="background:${colors.profit}"></i>${T('Profit')}</span></div>`;
+}
+function analyticsMedicineChart(items){
+  const max=Math.max(1,...items.map(item=>item.value));
+  return items.length?`<div class="analytics-bars">${items.map((item,index)=>`<div class="analytics-bar-row"><span title="${esc(item.name)}">${esc(item.name)}</span><div><i style="width:${item.value/max*100}%;background:${['#3b82f6','#14b8a6','#fbbf24','#f97316','#8b87d8','#ec4899'][index]}"></i></div><b>${item.value.toLocaleString('en-US')}</b></div>`).join('')}</div>`:`<div class="analytics-chart-empty">${T('No medicine sales found for this date range.')}</div>`;
+}
+function analyticsServiceChart(items){
+  if(!items.length)return `<div class="analytics-chart-empty">${T('No non-cancelled services found for this date range.')}</div>`;
+  const colors=['#1689f8','#00c49f','#ffbb28','#ff8042','#8884d8','#ec4899'],total=items.reduce((sum,item)=>sum+item.value,0);
+  let angle=-Math.PI/2;
+  const slices=items.map((item,index)=>{
+    const start=angle,portion=item.value/total;angle+=portion*Math.PI*2;
+    if(portion>=.9999)return`<circle cx="120" cy="105" r="76" fill="${colors[index]}"><title>${esc(item.name)}: ${item.value}</title></circle>`;
+    const x1=120+76*Math.cos(start),y1=105+76*Math.sin(start),x2=120+76*Math.cos(angle),y2=105+76*Math.sin(angle),large=portion>.5?1:0,mid=start+portion*Math.PI;
+    return`<path d="M 120 105 L ${x1} ${y1} A 76 76 0 ${large} 1 ${x2} ${y2} Z" fill="${colors[index]}"><title>${esc(item.name)}: ${item.value}</title></path><text x="${120+91*Math.cos(mid)}" y="${109+91*Math.sin(mid)}" text-anchor="middle" class="analytics-pie-label">${item.value}</text>`;
+  }).join('');
+  return `<svg class="analytics-pie-svg" viewBox="0 0 240 210" role="img" aria-label="Appointments by service">${slices}</svg><div class="analytics-service-legend">${items.map((item,index)=>`<span title="${esc(item.name)}"><i style="background:${colors[index]}"></i>${esc(item.name)} <b>${item.value}</b></span>`).join('')}</div>`;
+}
+function doctorAnalyticsRows(){
+  const names=new Map(D.dr.map(doctor=>[String(doctor.name||'').trim().toLocaleLowerCase(),String(doctor.name||'').trim()]).filter(([key])=>key));
+  D.ap.forEach(appointment=>{const name=String(appointment.doc||'').trim();if(name&&!names.has(name.toLocaleLowerCase()))names.set(name.toLocaleLowerCase(),name)});
+  const doctors=[...names.values()].sort((a,b)=>a.localeCompare(b));
+  const counts=new Map(doctors.map(name=>[name,new Set()]));
+  D.ap.forEach(appointment=>{
+    const date=analyticsDate(appointment.date),doctor=String(appointment.doc||'').trim(),key=doctor.toLocaleLowerCase();
+    if(!doctor||String(appointment.st||'').toLowerCase()=='cancelled'||(doctorAnalyticsId&&key!=doctorAnalyticsId)||!analyticsInDateRange(date,doctorAnalyticsFrom,doctorAnalyticsTo))return;
+    const canonical=names.get(key);if(!canonical)return;
+    const patient=String(appointment.phone||'').replace(/\D/g,'')||String(appointment.name||'').trim().toLocaleLowerCase();
+    if(patient)counts.get(canonical).add(patient);
+  });
+  return doctors.filter(name=>!doctorAnalyticsId||name.toLocaleLowerCase()==doctorAnalyticsId).map(name=>({name,count:counts.get(name).size}));
+}
+function analyticsInDateRange(date,from,to){return !!date&&(!from||date>=from)&&(!to||date<=to)}
+function doctorAnalyticsChart(rows){
+  if(!rows.length)return `<div class="doctor-analytics-empty">${T('No doctors found.')}</div>`;
+  const step=Math.max(1,Math.ceil(Math.max(1,...rows.map(row=>row.count))/4)),max=step*4,width=Math.max(1100,rows.length*140),height=270,left=52,right=18,top=18,bottom=44,chartWidth=width-left-right,chartHeight=height-top-bottom,slot=chartWidth/rows.length,barWidth=Math.min(76,slot*.72),y=value=>top+(max-value)*chartHeight/max;
+  const grid=Array.from({length:5},(_,index)=>{const value=max-index*step,gy=y(value);return`<g><line x1="${left}" y1="${gy}" x2="${width-right}" y2="${gy}" stroke="var(--bd)" stroke-dasharray="3 4"/><text x="${left-8}" y="${gy+4}" text-anchor="end" class="doctor-analytics-axis-label">${value}</text></g>`}).join('');
+  const bars=rows.map((row,index)=>{const x=left+slot*index+(slot-barWidth)/2,barHeight=(row.count/max)*chartHeight;return`<g class="doctor-analytics-bar" tabindex="0" role="img" aria-label="${esc(row.name)}. ${T('Number of Patients')}: ${row.count}"><rect x="${x}" y="${y(row.count)}" width="${barWidth}" height="${barHeight}" rx="1" fill="#8884d8"/><rect class="doctor-analytics-hover-target" x="${left+slot*index}" y="${top}" width="${slot}" height="${chartHeight}" fill="transparent"/><g class="doctor-analytics-tooltip" transform="translate(${Math.max(left,Math.min(width-right-230,x+barWidth/2-94))} ${Math.max(top,y(row.count)-72)})"><rect width="218" height="62" rx="2"/><text x="10" y="23" class="doctor-analytics-tooltip-name">${esc(row.name)}</text><text x="10" y="49" class="doctor-analytics-tooltip-count">${T('Number of Patients')}: ${row.count}</text></g><text x="${x+barWidth/2}" y="${height-bottom+18}" text-anchor="middle" class="doctor-analytics-axis-label">${esc(row.name)}</text></g>`}).join('');
+  return `<div class="doctor-analytics-chart-scroll"><svg class="doctor-analytics-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${T('Patients per Doctor')}">${grid}<line x1="${left}" y1="${height-bottom}" x2="${width-right}" y2="${height-bottom}" stroke="var(--mu)"/>${bars}</svg></div><div class="doctor-analytics-legend"><i></i>${T('Number of Patients')}</div>`;
+}
+let rxSelected=new Map(),rxMedicineSearch='';
+function rxTemplateMeds(value){
+  try{
+    const parsed=JSON.parse(value||'');
+    if(Array.isArray(parsed))return parsed.map(item=>typeof item=='string'?{name:item}:item).filter(item=>item&&item.name);
+  }catch(e){}
+  return String(value||'').split(',').map(name=>name.trim()).filter(Boolean).map(name=>({name}));
+}
+function rxMedicineRows(){
+  const query=rxMedicineSearch.trim().toLowerCase();
+  return D.med.filter(m=>!query||`${m.name} ${m.composition||''}`.toLowerCase().includes(query)).map(m=>{
+    const selected=rxSelected.has(String(m.id));
+    return `<button type="button" class="rx-medicine-option ${selected?'selected':''}" data-a="rxmedicine:${m.id}" aria-pressed="${selected}"><span class="rx-medicine-check">${selected?'✓':''}</span><span class="rx-medicine-description"><b>${esc(m.name)}</b><small>${esc([m.composition,`Stock: ${Number(m.stock)||0}`].filter(Boolean).join(' · '))}</small></span><b class="rx-medicine-price">${K(m.price)}</b></button>`;
+  }).join('')||`<p class="rx-empty">No medicines found.</p>`;
+}
+function rxTemplateRows(){
+  return [...rxSelected.entries()].map(([id,medicine])=>`<tr><td class="rx-template-medicine">${esc(medicine.name)}</td>${[['morning','Morning'],['noon','Noon'],['evening','Evening'],['duration','Days'],['quantity','Qty'],['instruction','Instructions']].map(([key,label])=>`<td><input class="in rx-dose-input" data-rx-id="${esc(id)}" data-rx-field="${key}" aria-label="${label} for ${esc(medicine.name)}" value="${esc(medicine[key]??'')}" ${key=='duration'||key=='quantity'?'type="number" min="0" step="1"':''}></td>`).join('')}<td><button type="button" class="btn s r" data-a="rxmedicine:${esc(id)}" aria-label="Remove ${esc(medicine.name)}">×</button></td></tr>`).join('')||'<tr><td colspan="8" class="rx-table-empty">Select medicines above to build the prescription.</td></tr>';
+}
+function rxTemplateForm(index=null){
+  const editing=index!=null,template=editing?D.rx[index]:null;
+  if(editing&&!template)return toast('Prescription template not found');
+  rxMedicineSearch='';
+  rxSelected=new Map();
+  if(template)rxTemplateMeds(template.meds).forEach((item,position)=>{
+    const medicine=D.med.find(candidate=>(item.medicine_id&&String(candidate.id)==String(item.medicine_id))||candidate.name.toLowerCase()==String(item.name).toLowerCase());
+    const id=String(medicine?medicine.id:item.medicine_id||`legacy-${position}`);
+    rxSelected.set(id,{...item,id,name:medicine?medicine.name:String(item.name),medicine_id:medicine?medicine.id:item.medicine_id});
+  });
+  const form=$('#mf');
+  form.className='rx-template-form';
+  form.innerHTML=`<div class="rx-template-heading"><h3>${editing?'Edit Template':'Create Template'}</h3><button type="button" class="btn s" data-a="close" aria-label="Close">×</button></div><label class="rx-disease-field">Disease Name <span>*</span><input class="in" name="name" value="${esc(template?.name||'')}" placeholder="Enter disease name" required autofocus></label><div class="rx-medicines-field"><label for="rx-medicine-search">Medicines</label><div class="rx-search-wrap"><span>⌕</span><input class="in" id="rx-medicine-search" placeholder="ស្វែងរកថ្នាំ / Search Medicine..."></div><div id="rx-medicine-list" class="rx-medicine-list">${rxMedicineRows()}</div></div><div class="rx-prescription-table-wrap"><table class="rx-prescription-table"><thead><tr><th>ឈ្មោះថ្នាំ</th><th>ព្រឹក</th><th>ថ្ងៃ</th><th>ល្ងាច</th><th>រយៈពេល (ថ្ងៃ)</th><th>ចំនួន</th><th>ការណែនាំ</th><th></th></tr></thead><tbody id="rx-prescription-rows">${rxTemplateRows()}</tbody></table></div><div class="rx-template-actions"><button type="button" class="btn" data-a="close">Cancel</button><button type="submit" class="btn p">${editing?'Update Template':'Save Template'}</button></div>`;
+  $('#md').classList.add('on');
+  $('#rx-medicine-search').addEventListener('input',event=>{
+    rxMedicineSearch=event.target.value;
+    $('#rx-medicine-list').innerHTML=rxMedicineRows();
+  });
+  form.onsubmit=async event=>{
+    event.preventDefault();
+    const name=String(new FormData(form).get('name')||'').trim();
+    if(!name)return toast('Disease name is required');
+    const meds=[...rxSelected.values()].map(({id,...item})=>item);
+    if(!meds.length)return toast('Select at least one medicine');
+    try{
+      await api(editing?'PUT':'POST',editing?'prescriptions/'+template.id:'prescriptions',{name,meds:JSON.stringify(meds)});
+      await load();$('#md').classList.remove('on');render();toast('Saved');
+    }catch(error){toast(error.message)}
+  };
+}
+function toggleRxMedicine(id){
+  id=String(id);
+  if(rxSelected.has(id))rxSelected.delete(id);
+  else{
+    const medicine=D.med.find(item=>String(item.id)==id);
+    if(!medicine)return;
+    rxSelected.set(id,{medicine_id:medicine.id,name:medicine.name,morning:'',noon:'',evening:'',duration:'',quantity:'',instruction:''});
+  }
+  const list=$('#rx-medicine-list'),rows=$('#rx-prescription-rows');
+  if(list)list.innerHTML=rxMedicineRows();
+  if(rows)rows.innerHTML=rxTemplateRows();
+}
 function medicineDetailHtml(m){const units=medicineUnits(m),today=new Date().toISOString().slice(0,10);return`<section class="card medicine-detail"><div class="medicine-detail-head"><button class="btn" data-a="medback">← Back to Medicines</button>${medicineActions(m,false)}</div><div class="medicine-detail-hero">${m.photo?`<img class="medicine-detail-photo" src="${API_BASE}/uploads/${esc(m.photo)}" alt="${esc(m.name)}">`:'<div class="medicine-detail-photo medicine-thumb-empty">💊</div>'}<div><h2>${esc(m.name)}</h2><p class="mu">Medicine ID: ${esc(m.id)}</p><span class="bd ${Number(m.stock)>0?'':'x'}">${Number(m.stock)||0} in stock</span></div></div><div class="medicine-detail-grid"><section><h3>Composition</h3><p>${m.composition?esc(m.composition):'<span class="mu">No composition has been added.</span>'}</p></section><section><h3>Sales units and prices</h3>${units.length?`<div class="medicine-detail-units">${units.map(u=>`<div><span>${esc(u.name)} <small>× ${esc(u.qty)}</small></span><b>${K(u.price)}</b></div>`).join('')}</div>`:'<p class="mu">No sales units have been added.</p>'}</section><section><h3>Inventory dates</h3><p>Expiration: <b class="${m.expiration_date&&m.expiration_date<=today?'medicine-expired':''}">${m.expiration_date?esc(m.expiration_date):'—'}</b></p><p>Notification: <b class="${m.notification_date&&m.notification_date<=today?'medicine-expired':''}">${m.notification_date?esc(m.notification_date):'—'}</b></p></section></div></section>`}
-const R={med(){const rows=ft('med');return hd('Medicines','Manage your pharmacy list.',sr('Search medicines…')+`<button class="btn" data-a="medimport">Import Excel</button><input id="med-import-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>`+ex+`<button class="btn" title="Export QR Codes for listed medicines" data-a="medqrbulk">Export QR Codes</button><button class="btn" title="Export Barcodes for listed medicines" data-a="medbarcodebulk">Export Barcodes</button><button class="btn g" data-a="medadd">+ Add New Medicine</button>`)+
-(medicineFormOpen?medicineFormHtml():'')+
+function reportEntries(){
+  const payments=D.billing.filter(record=>record.kind=='payment').map(record=>{
+    const data=billingData(record),patient=D.pt.find(item=>String(item.id)==String(record.patient_id));
+    return {id:record.id,kind:'payment',date:String(record.date||'').slice(0,10),person:patient?patient.name:'Patient',details:data.method||'Patient payment',amount:Number(data.amount)||0,canDelete:D.user.role=='admin'||record.created_by==D.user.id};
+  });
+  const sales=D.sales.map(sale=>({id:sale.id,kind:'sale',date:String(sale.created_at||'').slice(0,10),person:'POS',details:`Medicine sale · ${sale.method||'Cash'}`,amount:Number(sale.total)||0,canDelete:false}));
+  const expenses=D.expenses.map(expense=>({id:expense.id,kind:'expense',date:expense.date,person:expense.category||'Expense',details:expense.name,amount:Number(expense.amount)||0,canDelete:D.user.role=='admin'}));
+  const matches=entry=>{
+    if(reportFrom&&entry.date<reportFrom)return false;
+    if(reportTo&&entry.date>reportTo)return false;
+    if(reportQuery){
+      const patient=entry.kind=='payment'?D.pt.find(item=>String(item.id)==String(D.billing.find(record=>record.kind=='payment'&&record.id==entry.id)?.patient_id)):null;
+      if(!`${entry.person} ${entry.details} ${patient?patient.name:''} ${entry.amount}`.toLowerCase().includes(reportQuery.toLowerCase()))return false;
+    }
+    return true;
+  };
+  return {income:[...payments,...sales].filter(matches).sort((a,b)=>b.date.localeCompare(a.date)||b.id-a.id),expenses:expenses.filter(matches).sort((a,b)=>b.date.localeCompare(a.date)||b.id-a.id)};
+}
+function reportExpenseForm(){
+  const form=$('#mf');form.className='report-expense-form';
+  const today=new Date(Date.now()+7*60*60*1000).toISOString().slice(0,10);
+  form.innerHTML=`<div class="report-form-heading"><h3>${T('Add Expense')}</h3><button type="button" class="report-expense-close" data-a="close" aria-label="${T('Close')}">×</button></div><label class="report-expense-row"><span>${T('Date')}</span><input class="in" name="date" type="date" value="${today}" required></label><label class="report-expense-row"><span>${T('Item')}</span><input class="in" name="name" required autofocus></label><label class="report-expense-row"><span>${T('Category')}</span><input class="in" name="category"></label><label class="report-expense-row"><span>${T('Unit Price (KHR)')}</span><input class="in" name="unit_price" type="number" min="0" max="2000000000" step="1" required></label><label class="report-expense-row"><span>${T('Quantity')}</span><input class="in" name="quantity" type="number" min="1" max="2000000000" step="1" value="1" required></label><label class="report-expense-row"><span>${T('Total (KHR)')}</span><input class="in report-expense-total" name="total" value="0" readonly aria-readonly="true"></label><label class="report-expense-row report-expense-notes"><span>${T('Notes')}</span><textarea class="in" name="notes" rows="2"></textarea></label><div class="report-form-actions"><button type="submit" class="btn p">${T('Save Expense')}</button></div>`;
+  $('#md').classList.add('on');
+  const priceInput=form.querySelector('[name="unit_price"]'),quantityInput=form.querySelector('[name="quantity"]'),totalInput=form.querySelector('[name="total"]');
+  const updateTotal=()=>{const price=Number(priceInput.value)||0,quantity=Number(quantityInput.value)||0;totalInput.value=(price*quantity).toLocaleString('en-US')};
+  priceInput.addEventListener('input',updateTotal);quantityInput.addEventListener('input',updateTotal);
+  form.onsubmit=async event=>{
+    event.preventDefault();
+    const values=Object.fromEntries(new FormData(form)),name=String(values.name||'').trim(),unit_price=Number(values.unit_price),quantity=Number(values.quantity),amount=unit_price*quantity;
+    if(!name)return toast('Expense name is required');
+    if(!Number.isInteger(unit_price)||unit_price<0||unit_price>2000000000||!Number.isInteger(quantity)||quantity<1||quantity>2000000000||!Number.isSafeInteger(amount)||amount<1||amount>2000000000)return toast('Enter a valid unit price and quantity; total must be between 1 and 2,000,000,000 KHR');
+    try{await api('POST','expenses',{name,category:String(values.category||'').trim(),date:String(values.date||''),unit_price,quantity,amount,notes:String(values.notes||'').trim()});await load();$('#md').classList.remove('on');render();toast('Expense saved')}catch(error){toast(error.message)}
+  };
+}
+function reportSetRange(range){
+  const today=new Date(),date=value=>`${value.getFullYear()}-${String(value.getMonth()+1).padStart(2,'0')}-${String(value.getDate()).padStart(2,'0')}`;
+  reportRange=range;
+  if(range=='today')reportFrom=reportTo=date(today);
+  else if(range=='yesterday'){today.setDate(today.getDate()-1);reportFrom=reportTo=date(today)}
+  else if(range=='month'){reportFrom=date(new Date(today.getFullYear(),today.getMonth(),1));reportTo=date(today)}
+  render();
+}
+async function exportReport(){
+  const {income,expenses}=reportEntries(),rows=[...income.map(item=>({type:'Income',date:item.date,source:item.person,details:item.details,amount:item.amount})),...expenses.map(item=>({type:'Expense',date:item.date,source:item.person,details:item.details,amount:item.amount}))];
+  if(!rows.length)return toast('No report records to export');
+  try{
+    const response=await fetch(API_BASE+'/api/export/xlsx',{method:'POST',headers:{'Content-Type':'application/json',...(tok?{Authorization:'Bearer '+tok}:{})},body:JSON.stringify({rows})});
+    if(response.status==401&&tok)logout();
+    if(!response.ok){const result=await response.json().catch(()=>null);throw new Error(result&&result.error||'Report export failed')}
+    const url=URL.createObjectURL(await response.blob()),anchor=document.createElement('a');anchor.href=url;anchor.download='financial-report.xlsx';anchor.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }catch(error){toast(error.message)}
+}
+function reportPrint(kind){
+  const {income,expenses}=reportEntries(),sum=items=>items.reduce((total,item)=>total+item.amount,0);
+  if(kind=='payroll'){
+    const slips=D.payslips.filter(slip=>(!reportFrom||slip.date_start>=reportFrom)&&(!reportTo||slip.date_end<=reportTo));
+    const rows=slips.map(slip=>{const doctor=D.dr.find(item=>item.id==slip.doctor_id);return`<tr><td>${esc(doctor?doctor.name:'')}</td><td>${esc(slip.date_start)} – ${esc(slip.date_end)}</td><td>${moneyCents(slip.basic_cents)}</td><td>${moneyCents(slip.deduction_cents)}</td><td>${moneyCents(slip.basic_cents+slip.position_allowance_cents+slip.overtime_cents+slip.benefits_cents-slip.deduction_cents)}</td></tr>`}).join('');
+    return printDoc('Payroll Report',`<table><thead><tr><th>Employee</th><th>Period</th><th>Basic salary</th><th>Deduction</th><th>Net salary</th></tr></thead><tbody>${rows||'<tr><td colspan="5">No payroll records found.</td></tr>'}</tbody></table>`);
+  }
+  const selected=kind=='cash'?income.filter(item=>item.kind=='payment'):income;
+  const title=kind=='cash'?'Cash Payment Report':'Bill Summary';
+  const rows=selected.map(item=>`<tr><td>${esc(item.date)}</td><td>${esc(item.person)}</td><td>${esc(item.details)}</td><td>${K(item.amount)}</td></tr>`).join('');
+  printDoc(title,`<h2>${esc(title)}</h2><p>${esc(reportFrom||'All dates')} – ${esc(reportTo||'All dates')}</p><p>Total income: <b>${K(sum(income))}</b> | Expenses: <b>${K(sum(expenses))}</b> | Balance: <b>${K(sum(income)-sum(expenses))}</b></p><table><thead><tr><th>Date</th><th>Source</th><th>Details</th><th>Amount</th></tr></thead><tbody>${rows||'<tr><td colspan="4">No income records found.</td></tr>'}</tbody></table>`);
+}
+function medicineReportRows(){
+  return D.medicineSales.filter(row=>(!medicineReportFrom||row.date>=medicineReportFrom)&&(!medicineReportTo||row.date<=medicineReportTo));
+}
+async function medicineReportApply(){
+  const from=$('#medicine-report-from').value,to=$('#medicine-report-to').value;
+  if(from&&to&&from>to)return toast(T('From date must not be after To date'));
+  medicineReportFrom=from;medicineReportTo=to;
+  try{D.medicineSales=await api('GET',`reports/medicine-sales?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=5000`);render()}catch(error){toast(error.message)}
+}
+async function medicineReportExport(){
+  const rows=medicineReportRows().map(row=>({medicine:row.name,date:row.date,quantity:row.qty,unit_price:row.price,total:row.total}));
+  if(!rows.length)return toast(T('No medicine sales to export'));
+  try{
+    const response=await fetch(API_BASE+'/api/export/xlsx',{method:'POST',headers:{'Content-Type':'application/json',...(tok?{Authorization:'Bearer '+tok}:{})},body:JSON.stringify({rows})});
+    if(response.status==401&&tok)logout();
+    if(!response.ok){const result=await response.json().catch(()=>null);throw new Error(result&&result.error||T('Medicine report export failed'))}
+    const url=URL.createObjectURL(await response.blob()),anchor=document.createElement('a');anchor.href=url;anchor.download='medicine-report.xlsx';anchor.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }catch(error){toast(error.message)}
+}
+const R={mr(){
+  const rows=medicineReportRows(),quantity=rows.reduce((total,row)=>total+(Number(row.qty)||0),0),revenue=rows.reduce((total,row)=>total+(Number(row.total)||0),0);
+  const date=(label,id,value)=>`<label class="medicine-report-date"><span>${T(label)}</span><input class="in" id="${id}" type="date" value="${esc(value)}"></label>`;
+  const tableRows=rows.map(row=>`<tr><td><b>${esc(row.name)}</b></td><td>${new Date(`${row.date}T00:00:00`).toLocaleDateString('en-US')}</td><td>${Number(row.qty)||0}</td><td class="medicine-report-total">${K(row.total)}</td><td>${D.user.role=='admin'?`<button class="btn medicine-report-delete" data-a="medreportdelete:${row.sale_id}:${row.item_id}" aria-label="${T('Delete')} ${esc(row.name)}" title="${T('Delete')}">▣</button>`:''}</td></tr>`).join('')||`<tr><td class="medicine-report-empty" colspan="5">${T('No medicine sales found for this date range.')}</td></tr>`;
+  return `<header class="medicine-report-heading"><h2>${T('Medicine sales report')}</h2><p>${T('Track medicine quantities and sales revenue by date.')}</p></header><section class="card medicine-report-filters">${date('From date','medicine-report-from',medicineReportFrom)}${date('To date','medicine-report-to',medicineReportTo)}<button type="button" class="btn p" data-a="medreportapply">${T('Search')}</button><button type="button" class="btn medicine-report-export" data-a="medreportexport">${T('Export Excel')}</button></section><section class="medicine-report-summary"><article class="card"><span>${T('Quantity sold')}</span><strong>${quantity.toLocaleString('en-US')}</strong><i>▱</i></article><article class="card"><span>${T('Total revenue')}</span><strong>${K(revenue)}</strong><i>▥</i></article></section><section class="card medicine-report-table-wrap"><table class="medicine-report-table"><thead><tr><th>${T('Medicine name')}</th><th>${T('Date sold')}</th><th>${T('Quantity')}</th><th>${T('Total')}</th><th>${T('Actions')}</th></tr></thead><tbody>${tableRows}</tbody></table></section>`;
+},
+sf(){return sampleFilePage()},
+bill(){
+  const {income,expenses}=reportEntries(),sum=items=>items.reduce((total,item)=>total+item.amount,0),patientTotal=sum(income.filter(item=>item.kind=='payment')),salesTotal=sum(income.filter(item=>item.kind=='sale')),expenseTotal=sum(expenses),totalIncome=patientTotal+salesTotal;
+  const quick=(label,key)=>`<button class="btn report-quick ${reportRange==key?'active':''}" data-a="reportrange:${key}">${T(label)}</button>`;
+  const rows=(items,expense)=>items.map(item=>`<tr><td>${esc(item.date)}</td><td>${esc(item.person)}</td><td>${esc(item.details)}</td><td class="report-amount">${K(item.amount)}</td><td>${item.canDelete?`<button class="btn report-delete" data-a="reportdelete:${item.kind}:${item.id}" aria-label="Delete ${esc(item.details)}">▣</button>`:''}</td></tr>`).join('')||`<tr><td class="report-empty" colspan="5">No ${expense?'expenses':'income'} found for this period.</td></tr>`;
+  const dateInput=(label,id,value)=>`<label class="report-date-field">${label}<input id="${id}" type="date" class="in" value="${esc(value)}"></label>`;
+  const controls=`<div class="report-toolbar card"><div class="report-filter-line"><label class="report-search-field"><span>${T('Patient')}</span><input id="report-q" class="in" placeholder="${T('Search patient, details...')}" value="${esc(reportQuery)}"></label>${dateInput(T('From date'),'report-from',reportFrom)}${dateInput(T('To date'),'report-to',reportTo)}<button class="btn p" data-a="reportapply">⌕ ${T('Search')}</button><button class="btn p" data-a="reportexport">⇩ ${T('Export Excel')}</button><button class="btn p" data-a="reportexpense">＋ ${T('Add Expense')}</button></div><div class="report-action-line">${quick('Today','today')}${quick('Yesterday','yesterday')}${quick('This month','month')}<button class="btn" data-a="reportprint:summary">▣ ${T('Bill Summary')}</button><button class="btn" data-a="reportprint:cash">▣ ${T('CP')}</button><button class="btn" data-a="reportprint:payroll">▣ ${T('Payroll Report')}</button></div></div>`;
+  const cards=[[T('Patient Payments'),patientTotal,''],[T('POS Sales'),salesTotal,''],[T('Total Income'),totalIncome,'income'],[T('Expenses'),expenseTotal,'expense']];
+  const cashRows=`<section class="card report-ledger income-ledger"><h3><span>⊕</span> ${T('Income')}</h3><div class="report-ledger-scroll"><table><thead><tr><th>${T('Date')}</th><th>${T('Patient / Source')}</th><th>${T('Details')}</th><th>${T('Amount')}</th><th></th></tr></thead><tbody>${rows(income,false)}</tbody></table></div></section>`;
+  const expenseRows=`<section class="card report-ledger expense-ledger"><h3><span>⊖</span> ${T('Expenses')}</h3><div class="report-ledger-scroll"><table><thead><tr><th>${T('Date')}</th><th>${T('Category')}</th><th>${T('Expense')}</th><th>${T('Amount')}</th><th></th></tr></thead><tbody>${rows(expenses,true)}</tbody></table></div></section>`;
+  return hd(T('Financial Report'),'','')+controls+`<div class="report-summary">${cards.map(([label,amount,color])=>`<article class="card report-stat"><b>${label}</b><strong class="${color}">${K(amount)}</strong></article>`).join('')}</div><div class="report-ledgers">${cashRows}${expenseRows}</div>`;
+},
+med(){const rows=ft('med');return hd('Medicines','Manage your pharmacy list.',sr('Search medicines…')+`<button class="btn" data-a="medimport">Import Excel</button><input id="med-import-file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden>`+ex+`<button class="btn" title="Export QR Codes for listed medicines" data-a="medqrbulk">Export QR Codes</button><button class="btn" title="Export Barcodes for listed medicines" data-a="medbarcodebulk">Export Barcodes</button><button class="btn g" data-a="medadd">+ Add New Medicine</button>`)+
+ (medicineFormOpen?medicineFormHtml():'')+
 `<div class="card medicine-table-wrap"><table class="medicine-table"><thead><tr><th>Medicine</th><th>Sales units / Price</th><th>In stock</th><th>Expiration / Notification</th><th>Actions</th></tr></thead><tbody>${rows.map(([m,i])=>{const units=medicineUnits(m),today=new Date().toISOString().slice(0,10),alert=(m.expiration_date&&m.expiration_date<=today)||(m.notification_date&&m.notification_date<=today);return`<tr><td><div class="medicine-name">${m.photo?`<img class="medicine-thumb" src="${API_BASE}/uploads/${esc(m.photo)}" alt="">`:'<span class="medicine-thumb medicine-thumb-empty">💊</span>'}<div><b>${esc(m.name)}</b>${m.composition?`<small>${esc(m.composition)}</small>`:''}</div></div></td><td><div class="medicine-unit-list">${units.map(u=>`<span>${esc(u.name)}: <b>${K(u.price)}</b> <small>× ${u.qty}</small></span>`).join('')||'<span>—</span>'}</div></td><td><span class="bd ${m.stock>0?'':'x'}">${Number(m.stock)||0}</span></td><td><span class="${alert?'medicine-expired':''}">${m.expiration_date?`Expiry: ${esc(m.expiration_date)}`:'—'}</span>${m.notification_date?`<small class="medicine-notify ${m.notification_date<=today?'medicine-expired':''}">Notify: ${esc(m.notification_date)}</small>`:''}</td><td><div class="medicine-actions"><button class="btn s" title="Update Stock" aria-label="Update Stock" data-a="medstock:${i}">↻</button><button class="btn s" title="View Composition" aria-label="View Composition" data-a="medcomposition:${i}">▤</button><button class="btn s" title="Print QR Code" aria-label="Print QR Code" data-a="medqr:${i}">▦</button><button class="btn s" title="Print Barcode" aria-label="Print Barcode" data-a="medbarcode:${i}">▥</button><button class="btn s" title="Edit" aria-label="Edit" data-a="mededit:${i}">✎</button><button class="btn s r" title="Delete" aria-label="Delete" data-a="del:med:${i}">×</button></div></td></tr>`}).join('')||'<tr><td colspan="5" class="emp">Nothing here yet.</td></tr>'}</tbody></table></div>`},
+dx(){const rows=ft('dx');return hd('Diagnosis','Diagnoses available when writing a visit.',`<button class="btn diagnosis-secondary" data-a="go:sy">☰ Symptoms List</button><button class="btn diagnosis-icon" data-a="dximport" title="Import diagnoses">⇪</button><button class="btn diagnosis-icon" data-a="dxexport" title="Export diagnoses">⇩</button><button class="btn diagnosis-primary" data-a="add:dx" title="Add diagnosis">＋</button><input id="dx-import-file" type="file" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" hidden>`)+`<div class="diagnosis-shell"><div class="diagnosis-search"><span class="diagnosis-search-icon">⌕</span><input id="q" class="diagnosis-input" placeholder="Search diagnoses..." value="${esc(q)}"></div><div class="diagnosis-list">${rows.length?rows.map(([r,i])=>`<div class="diagnosis-row"><span class="diagnosis-name">${esc(r.name)}</span><div class="diagnosis-actions"><button class="btn diagnosis-edit" data-a="edit:dx:${i}">Edit</button><button class="btn diagnosis-delete" data-a="del:dx:${i}" aria-label="Delete ${esc(r.name)}">🗑</button></div></div>`).join(''):`<div class="diagnosis-empty">Nothing here yet.</div>`}</div></div>`;},
+rx(){const rows=ft('rx');return hd('Prescription Template','',sr('Search by disease name...')+ex+`<button class="btn g" data-a="add:rx">＋ Add Template</button>`)+`<div class="card rx-template-list-wrap"><table class="rx-template-list"><thead><tr><th>Disease Name</th><th>Medicines</th><th>Actions</th></tr></thead><tbody>${rows.map(([template,index])=>`<tr><td><b>${esc(template.name)}</b></td><td>${esc(rxTemplateMeds(template.meds).map(medicine=>medicine.name).join(', '))}</td><td><button class="btn s" data-a="edit:rx:${index}" aria-label="Edit template">Edit</button> <button class="btn s r" data-a="del:rx:${index}" aria-label="Delete template">×</button></td></tr>`).join('')||'<tr><td colspan="3" class="emp">Nothing here yet.</td></tr>'}</tbody></table></div>`},
 set(){const c=D.clinic||{},ck=(k,l)=>`<label class="ck"><input type="checkbox" name="${k}" ${c[k]?'checked':''}> ${l}</label>`;
 return hd('Clinic Settings','Manage your clinic information.','<button class="btn" data-a="go:dr">Doctor Settings</button><button class="btn" data-a="pwd">Change password</button>')+`<div class="card" style="padding:20px;overflow:visible"><b>Preferences</b><div class="tools" style="margin:10px 0 4px"><div class="tabs" translate="no"><button class="${lang=='en'?'on':''}" data-a="lang:en">English</button><button class="${lang=='km'?'on':''}" data-a="lang:km">ខ្មែរ</button></div><div class="tabs"><button data-a="th:light">Light</button><button data-a="th:dark">Dark</button></div></div><hr><div id="cf"><div class="gr2">${imgField('Logo','logo',c.logo,'Delete image')}${imgField('Bank QR code','qr',c.qr,'Delete image')}</div><hr><b>Print settings</b>${imgField('Clinic banner','banner',c.banner,'Delete image')}<p class="mu" style="font-size:12px">Recommended: 1300×200 px</p><div class="gr2">${ck('show_name','Show clinic name')}${ck('show_address','Show address')}${ck('show_phone','Show phone number')}</div><hr>${[['Clinic name','name'],['Specialty','specialty'],['Address','address'],['Phone numbers','phone']].map(([l,k])=>`<label class="fl">${l}<input class="in" name="${k}" value="${esc(c[k])}"></label>`).join('')}<div class="gr2"><label class="fl">Currency<select class="in" name="currency"><option value="KHR" ${c.currency!='USD'?'selected':''}>Riel (KHR)</option><option value="USD" ${c.currency=='USD'?'selected':''}>US dollar (USD)</option></select></label><label class="fl">Exchange rate (KHR per $1)<input class="in" name="rate" type="number" min="1" value="${c.rate||4000}"></label></div>${typeof cnfSettingsHtml=='function'?cnfSettingsHtml(c):''}<button class="btn p" style="margin-top:16px" data-a="saveclinic">Save</button></div></div>`},
 dash(){const ip=D.ipd.filter(r=>!r.out).length,ad={},ag={'0-10':0,'11-20':0,'21-30':0,'31-40':0,'41-50':0,'51+':0},inR=p=>{const d=(p.reg_date||p.created_at||'').slice(0,10);return(!dFrom||d>=dFrom)&&(!dTo||d<=dTo)},P2=D.pt.filter(inR);
@@ -134,8 +412,15 @@ posPrint(){
   if(typeof printDoc=='function')printDoc('',html,{headerHtml,printImmediately:true});
 },
 ch(){return hd('Chat','Internal messages')+`<div class="card" style="padding:16px">${D.ch.map(m=>`<p translate="no">💬 ${esc(m)}</p>`).join('')||'<p class="mu">No messages yet.</p>'}<div class="tools" style="margin-top:12px"><input id="cm" class="in" style="flex:1" placeholder="Type a message"><button class="btn p" data-a="send">Send</button></div></div>`},
-an(){const m={};D.med.forEach(x=>m[x.name]=x.stock);return hd('Analytics','Stock and revenue overview')+`<div class="cs">${bars('Stock by medicine',D.med.map(x=>[x.name,Math.max(0,x.stock)]))}${bars('Revenue by day (KHR 1,000)',D.bill.map(b=>[b.day.slice(5),b.amt/1000]),'#22c55e')}</div>`},
-da(){return hd('Doctor Analytics','Appointments per doctor')+`<div class="cs">${bars('Appointments',Object.entries(D.ap.reduce((a,x)=>(a[x.doc]=(a[x.doc]||0)+1,a),{})))}</div>`},
+an(){
+  const data=analyticsRecords(),periods=[['daily','Daily'],['monthly','Monthly'],['yearly','Yearly']];
+  return `<div class="analytics-dashboard"><header class="analytics-heading"><h1>${T('Analytics Dashboard')}</h1><p>${T('Comprehensive overview of your clinic’s performance.')}</p></header><section class="card analytics-filters"><h2><span>▽</span> ${T('Data Filters')}</h2><div class="analytics-filter-controls"><label>${T('Start Date')}<input class="in" id="analytics-from" type="date" value="${esc(analyticsFrom)}"></label><label>${T('End Date')}<input class="in" id="analytics-to" type="date" value="${esc(analyticsTo)}"></label><div class="analytics-period-field"><span>${T('View By')}</span><div class="analytics-period-switch">${periods.map(([key,label])=>`<button type="button" class="${analyticsPeriod==key?'active':''}" data-a="analytics-period:${key}" aria-pressed="${analyticsPeriod==key}">${T(label)}</button>`).join('')}</div></div><button type="button" class="btn p analytics-clear" data-a="analytics-clear">${T('Clear Filters')}</button></div></section><section class="card analytics-financial"><h2>${T('Income vs. Expenses')}</h2>${analyticsFinancialChart(data.series)}</section><div class="analytics-chart-grid"><section class="card analytics-chart-card"><h2>${T('Top Selling Medicines')}</h2>${analyticsMedicineChart(data.medicines)}</section><section class="card analytics-chart-card"><h2>${T('Top Selling Services')}</h2>${analyticsServiceChart(data.services)}</section></div></div>`;
+},
+da(){
+  const doctors=[...new Map([...D.dr.map(doctor=>String(doctor.name||'').trim()),...D.ap.map(appointment=>String(appointment.doc||'').trim())].filter(Boolean).map(name=>[name.toLocaleLowerCase(),name])).values()].sort((a,b)=>a.localeCompare(b));
+  const rows=doctorAnalyticsRows();
+  return `<div class="doctor-analytics-dashboard"><header class="doctor-analytics-heading"><h1>${T('Doctor Analytics')}</h1><p>${T('Overview of patient assignments per doctor.')}</p></header><section class="card doctor-analytics-filters"><h2><span>▽</span> ${T('Filters')}</h2><div class="doctor-analytics-filter-controls"><label>${T('Start Date')}<input class="in" id="doctor-analytics-from" type="date" value="${esc(doctorAnalyticsFrom)}"></label><label>${T('End Date')}<input class="in" id="doctor-analytics-to" type="date" value="${esc(doctorAnalyticsTo)}"></label><label>${T('Doctor')}<select class="in" id="doctor-analytics-doctor"><option value="">${T('All Doctors')}</option>${doctors.map(name=>`<option value="${esc(name.toLocaleLowerCase())}" ${doctorAnalyticsId==name.toLocaleLowerCase()?'selected':''}>${esc(name)}</option>`).join('')}</select></label><button type="button" class="btn p doctor-analytics-clear" data-a="doctor-analytics-clear">${T('Clear Filters')}</button></div></section><section class="card doctor-analytics-chart-card"><h2><span>♙</span> ${T('Patients per Doctor')}</h2>${doctorAnalyticsChart(rows)}</section></div>`;
+},
 sv(){const rows=ft('sv');return hd('Services','Manage all clinic services.',sr()+`<button class="btn" type="button" data-a="svimport">Import Excel</button><input id="sv-import-file" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" title="Choose an Excel workbook or CSV with name, price, and description columns" hidden>`+ex+add('sv','Add Service'))+(rows.length?`<div class="service-grid">${rows.map(([s,i])=>`<article class="card service-card"><h3>${esc(s.name)}</h3><strong class="service-price">${K(s.price)}</strong>${s.description?`<p class="service-description">${esc(s.description)}</p>`:'<div class="service-description service-description-empty"></div>'}<div class="service-actions"><button class="btn s" data-a="edit:sv:${i}">Edit</button><button class="btn s r" data-a="del:sv:${i}">Delete</button></div></article>`).join('')}</div>`:'<div class="card"><p class="emp">Nothing here yet.</p></div>')}}
 R.lab=()=>labPage();
 R.med=function(){
@@ -171,7 +456,7 @@ const NV=[['Patient Care',[['dash','Dashboard','▦'],['pt','Patients','👥'],[
 function nav(){$('#nv').innerHTML=NV.map(([g,it])=>`<div class="gh" data-a="grp:${g}">${g}<span>${cl[g]?'›':'⌄'}</span></div>${cl[g]?'':it.map(([id,l,ic])=>`<div class="it ${id==(rt=='pd'?'pt':rt)?'on':''}" data-a="go:${id}"><i>${ic}</i>${l}</div>`).join('')}`).join('')}
 function render(){if(validPage(rt))setPage(rt);const f=document.activeElement&&document.activeElement.id=='q';const cl=D.clinic||{};$('#tt').textContent=cl.name||'Sovanvitou';$('#lgo').innerHTML=cl.logo?`<img src="${API_BASE}/uploads/${esc(cl.logo)}" alt="" style="max-height:34px;max-width:100%">`:'CLINIC SOVANVITOU';$('#v').classList.toggle('tight',rt=='pt');$('#v').innerHTML=`<div class="w">${(R[rt]||(()=>tp(rt)))()}</div>`;nav();if(f){const e=$('#q');e.focus();e.setSelectionRange(99,99)}}
 function toast(m){const t=$('#ts');t.textContent=T(m);t.style.display='block';clearTimeout(nt);nt=setTimeout(()=>t.style.display='none',2200)}
-function modal(t,F,V,cb,opts={}){$('#mf').className=opts.className||'';$('#mf').innerHTML=`<h3 style="margin:0">${t}</h3>${F.map(([l,k,ty,o4,placeholder])=>ty=='img'?imgField(l,k,V[k]):ty=='ta'?`<label class="fl">${l}<textarea class="in" name="${k}" placeholder="${esc(placeholder||'')}">${esc(V[k]??'')}</textarea></label>`:ty=='number'?`<label class="fl">${l}<input class="in" type="number" name="${k}" min="0" step="1" value="${esc(V[k]??'')}" placeholder="${esc(placeholder||'')}"></label>`:ty&&ty!='pw'?fld(l,k,ty,V[k],o4):ty=='pw'?`<label>${l}<input class="in" type="password" name="${k}" required></label>`:`<label>${l}<input class="in" name="${k}" value="${esc(V[k]??'')}" placeholder="${esc(placeholder||'')}" ${k=='name'?'required':''}></label>`).join('')}<div class="tools" style="justify-content:flex-end"><button type="button" class="btn" data-a="close">Cancel</button><button class="btn p">${opts.submit||'Save'}</button></div>`;$('#md').classList.add('on');$('#mf').onsubmit=async e=>{e.preventDefault();const o=Object.fromEntries(new FormData(e.target));F.forEach(([l,k])=>{if(!isNaN(V[k])&&V[k]!=='')o[k]=+o[k]});try{await cb(o);await load();$('#md').classList.remove('on');render()}catch(er){toast(er.message)}}}
+function modal(t,F,V,cb,opts={}){$('#mf').className=opts.className||'';$('#mf').innerHTML=`<h3 style="margin:0">${t} New Symptom</h3>${F.map(([l,k,ty,o4,placeholder])=>ty=='img'?imgField(l,k,V[k]):ty=='ta'?`<label class="fl">${l}<textarea class="in" name="${k}" placeholder="${esc(placeholder||'')}">${esc(V[k]??'')}</textarea></label>`:ty=='number'?`<label class="fl">${l}<input class="in" type="number" name="${k}" min="0" step="1" value="${esc(V[k]??'')}" placeholder="${esc(placeholder||'')}"></label>`:ty&&ty!='pw'?fld(l,k,ty,V[k],o4):ty=='pw'?`<label>${l}<input class="in" type="password" name="${k}" required></label>`:`<label>${l}<input class="in" name="${k}" value="${esc(V[k]??'')}" placeholder="${esc(placeholder||'')}" ${k=='name'?'required':''}></label>`).join('')}<div class="tools" style="justify-content:flex-end"><button type="button" class="btn" data-a="close">Cancel</button><button class="btn p">${opts.submit||'Save'}</button></div>`;$('#md').classList.add('on');$('#mf').onsubmit=async e=>{e.preventDefault();const o=Object.fromEntries(new FormData(e.target));F.forEach(([l,k])=>{if(!isNaN(V[k])&&V[k]!=='')o[k]=+o[k]});try{await cb(o);await load();$('#md').classList.remove('on');render()}catch(er){toast(er.message)}}}
 function updateMedicineStock(index){const m=D.med[index];if(!m)return toast('Medicine not found');modal('Update Stock',[['In Stock','stock','number']],{stock:Number(m.stock)||0},async o=>{const stock=Number(o.stock);if(!Number.isInteger(stock)||stock<0)throw new Error('Stock must be a non-negative whole number');await api('PUT','medicines/'+m.id,{stock})},{submit:'Update Stock'});$('#mf [name="stock"]').required=true}
 function viewMedicineComposition(index){const m=D.med[index];if(!m)return toast('Medicine not found');$('#mf').innerHTML=`<h3 style="margin:0 0 12px">${esc(m.name)} — Composition</h3><div class="medicine-composition-view">${m.composition?esc(m.composition):'<span class="mu">No composition has been added.</span>'}</div><div class="tools" style="justify-content:flex-end;margin-top:16px"><button type="button" class="btn p" data-a="close">Close</button></div>`;$('#md').classList.add('on')}
 async function printMedicineCode(index,kind){const m=D.med[index];if(!m)return toast('Medicine not found');try{const result=await api('GET',`medicines/${m.id}/code/${kind}`);if(!result||typeof result.svg!='string'||!result.svg.startsWith('<svg'))throw new Error('Could not generate the medicine code');printDoc(kind=='qr'?'Medicine QR Code':'Medicine Barcode',`<div class="medicine-code-label"><h2>${esc(m.name)}</h2>${result.svg}<p>Medicine ID: ${m.id}</p></div>`)}catch(error){toast(error.message)}}
@@ -217,6 +502,7 @@ async function importLabsFile(file){
   }catch(error){toast(error.message)}
 }
 let echoSectionSequence=0,echoFieldSequence=0,echoTableSectionId=null,echoTableSelection=null,echoToolbarSelection=null;
+let sampleFileSelection=null;
 function echoList(value){
   try{const parsed=JSON.parse(value||'[]');return Array.isArray(parsed)?parsed:[]}catch{return[]}
 }
@@ -256,6 +542,57 @@ function echoForm(index=null){
     if(!sectionsOut.length)return toast(T('At least one section is required'));
     try{await api(editing?'PUT':'POST',editing?'echo/'+template.id:'echo',{name,price,font:String(values.font||'Moul'),sections:JSON.stringify(sectionsOut.map(({title,content,fields})=>({title,content,fields}))),fields:JSON.stringify(sectionsOut.flatMap(section=>section.fields))});await load();$('#md').classList.remove('on');render();toast(T('Saved'))}catch(error){toast(error.message)}
   };
+}
+function sampleFilePage(){
+  const rows=ft('sf');
+  return hd(T('Sample file'),'',`<button class="btn g" data-a="samplefileadd">＋ ${T('Add Template')}</button>`)+`<div class="card sample-file-list"><table><thead><tr><th>${T('Template Title')}</th><th>${T('Content')}</th><th>${T('Actions')}</th></tr></thead><tbody>${rows.map(([file,index])=>`<tr><td><b>${esc(file.name)}</b></td><td class="sample-file-preview">${esc(String(file.content||'').replace(/<[^>]*>/g,' ').replace(/\s+/g,' ').trim().slice(0,120))}</td><td><button class="btn s" data-a="samplefileedit:${index}" aria-label="${T('Edit')}">✎</button> <button class="btn s r" data-a="samplefiledel:${index}" aria-label="${T('Delete')}">▣</button></td></tr>`).join('')||`<tr><td colspan="3" class="emp">${T('Nothing here yet.')}</td></tr>`}</tbody></table></div>`;
+}
+function sampleFileForm(index=null){
+  const editing=index!=null,file=editing?D.sf[index]:{};
+  if(editing&&!file)return toast(T('Sample file template not found'));
+  sampleFileSelection=null;
+  const form=$('#mf');form.className='sample-file-form';
+  const commands=[['bold','B'],['italic','I'],['underline','U'],['strikeThrough','S'],['formatBlock','❞'],['insertUnorderedList','☷'],['insertOrderedList','1.'],['outdent','⇤'],['indent','⇥'],['justifyLeft','⇤'],['justifyCenter','≡'],['justifyRight','⇥'],['createLink','↗'],['removeFormat','Tx']];
+  form.innerHTML=`<div class="sample-file-heading"><h3>${T(editing?'Edit Template':'Create New Template')}</h3><button type="button" class="sample-file-close" data-a="close" aria-label="${T('Close')}">×</button></div><input class="in sample-file-title" name="name" value="${esc(file?.name||'')}" placeholder="${T('Template Title')}" required autofocus><div class="sample-file-editor"><div class="sample-file-toolbar"><select class="in" data-sample-command="fontName" aria-label="${T('Font')}"><option>Arial</option><option>Sans Serif</option><option>Serif</option><option>Monospace</option><option>Khmer OS</option></select><select class="in" data-sample-command="formatBlock" aria-label="${T('Text style')}"><option value="p">${T('Normal')}</option><option value="h1">${T('Heading 1')}</option><option value="h2">${T('Heading 2')}</option><option value="blockquote">${T('Quote')}</option></select>${commands.map(([command,label])=>`<button type="button" class="sample-file-tool ${['bold','italic','underline','strikeThrough'].includes(command)?'sample-file-tool-'+command:''}" data-a="${command=='createLink'?'samplefilelink':'sampleformat:'+command}" aria-label="${T(command)}" title="${T(command)}">${label}</button>`).join('')}<button type="button" class="sample-file-tool" data-a="samplefileinsertimage" aria-label="${T('Insert Image')}" title="${T('Insert Image')}">▧</button></div><input id="sample-file-image" type="file" accept="image/jpeg,image/png,image/webp" hidden><input id="sample-file-ocr-image" type="file" accept="image/jpeg,image/png,image/webp" hidden><div class="sample-file-editor-body" contenteditable="true" role="textbox" aria-label="${T('Template content')}" aria-multiline="true">${file?.content||''}</div></div><div class="sample-file-actions"><button type="button" class="btn" data-a="samplefileimage">▧ ${T('Upload Image (OCR)')}</button><button type="button" class="btn" data-a="close">${T('Cancel')}</button><button type="submit" class="btn p">▣ ${T('Save')}</button></div>`;
+  $('#md').classList.add('on');
+  form.onsubmit=async event=>{
+    event.preventDefault();
+    const name=String(new FormData(form).get('name')||'').trim(),content=form.querySelector('.sample-file-editor-body').innerHTML;
+    if(!name)return toast(T('Template title is required'));
+    try{await api(editing?'PUT':'POST',editing?'files/'+file.id:'files',{name,content});await load();$('#md').classList.remove('on');render();toast(T('Saved'))}catch(error){toast(error.message)}
+  };
+}
+function sampleFileFormat(command,value=null){
+  const editor=$('#mf .sample-file-editor-body');if(!editor)return;
+  editor.focus();
+  const selection=window.getSelection&&window.getSelection();
+  if(sampleFileSelection&&selection){selection.removeAllRanges();selection.addRange(sampleFileSelection)}
+  else if(selection&&selection.rangeCount&&!editor.contains(selection.anchorNode)){const range=document.createRange();range.selectNodeContents(editor);range.collapse(false);selection.removeAllRanges();selection.addRange(range)}
+  if(command=='createLink'){const href=prompt(T('Enter a URL'));if(href&&/^https?:\/\//i.test(href))document.execCommand(command,false,href);return}
+  if(command=='formatBlock'&&value=='blockquote')document.execCommand(command,false,value);
+  else document.execCommand(command,false,value);
+}
+async function sampleFileUploadImage(file){
+  if(!file)return;
+  try{
+    if(!/^image\/(jpeg|png|webp)$/i.test(file.type||''))throw new Error(T('Use a JPG, PNG or WebP picture'));
+    if(file.size>2e6)throw new Error(T('Picture is too large (max 2 MB)'));
+    const response=await fetch(API_BASE+'/api/ocr',{method:'POST',headers:{'Content-Type':file.type,...(tok?{Authorization:'Bearer '+tok}:{})},body:file}),result=await response.json().catch(()=>null);
+    if(!response.ok)throw new Error(result&&result.error||T('Image OCR failed'));
+    if(!result||!String(result.text||'').trim())throw new Error(T('No text was detected in the selected image'));
+    sampleFileFormat('insertText',result.text);
+    toast(T('Text extracted from image'));
+  }catch(error){toast(error.message)}
+}
+async function sampleFileInsertImage(file){
+  if(!file)return;
+  try{
+    if(!/^image\/(jpeg|png|webp)$/i.test(file.type||''))throw new Error(T('Use a JPG, PNG or WebP picture'));
+    if(file.size>2e6)throw new Error(T('Picture is too large (max 2 MB)'));
+    const response=await fetch(API_BASE+'/api/uploads',{method:'POST',headers:{'Content-Type':file.type,...(tok?{Authorization:'Bearer '+tok}:{})},body:file}),result=await response.json().catch(()=>null);
+    if(!response.ok||!result||!result.photo)throw new Error(result&&result.error||T('Image upload failed'));
+    sampleFileFormat('insertImage',API_BASE+'/uploads/'+encodeURIComponent(result.photo));
+  }catch(error){toast(error.message)}
 }
 function echoFormat(sectionId,command){
   const editor=$(`[data-echo-editor="${sectionId}"]`);if(!editor)return;
@@ -480,14 +817,26 @@ function payrollPrint(id){
   if(typeof printDoc=='function')printDoc('Payslip',`<table class="pk">${rows.filter(([,v])=>v).map(([k,v])=>`<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')}</table>`);
 }
 let tok=null,needSetup=false;try{tok=localStorage.getItem('kt')}catch(e){}
-const RS={pt:'patients',ap:'appointments',ipd:'ipd',dr:'doctors',payslips:'payslips',med:'medicines',sv:'services',lab:'labs',labcategories:'labcategories',echo:'echo',dx:'diagnoses',rx:'prescriptions',sy:'symptoms',ad:'addresses',sf:'files',ch:'chat'};
+const RS={pt:'patients',ap:'appointments',ipd:'ipd',dr:'doctors',payslips:'payslips',expenses:'expenses',med:'medicines',sv:'services',lab:'labs',labcategories:'labcategories',echo:'echo',dx:'diagnoses',rx:'prescriptions',sy:'symptoms',ad:'addresses',sf:'files',ch:'chat'};
 async function api(m,u,b){const r=await fetch(API_BASE+'/api/'+u,{method:m,headers:{'Content-Type':'application/json',...(tok?{Authorization:'Bearer '+tok}:{})},body:b?JSON.stringify(b):undefined});let j=null;try{j=await r.json()}catch(e){}if(r.status==401&&tok&&u!='auth/login')logout();if(!r.ok)throw new Error(j&&j.error||'Request failed');return j}
-async function load(){const k=Object.keys(RS),[rows,dash,bill,cl,schedules,payments,investigations]=await Promise.all([Promise.all(k.map(x=>api('GET',RS[x]+'?limit=5000'))),api('GET','dashboard'),api('GET','reports/daily?days=30'),api('GET','clinic'),api('GET','records?kind=schedule&limit=5000'),api('GET','records?kind=payment&limit=5000'),api('GET','records?kind=investigation&limit=5000')]);D.clinic=cl;k.forEach((x,i)=>D[x]=rows[i]);D.ch=D.ch.map(r=>r.msg);D.rev=dash.revenueToday;D.bill=bill;D.billing=[...schedules,...payments,...investigations];Object.keys(cart).forEach(i=>{if(!D.med.some(m=>m.id==i))delete cart[i]})}
+async function load(){const k=Object.keys(RS),[rows,dash,bill,cl,schedules,payments,investigations,sales,user,medicineSales]=await Promise.all([Promise.all(k.map(x=>api('GET',RS[x]+'?limit=5000'))),api('GET','dashboard'),api('GET','reports/daily?days=30'),api('GET','clinic'),api('GET','records?kind=schedule&limit=5000'),api('GET','records?kind=payment&limit=5000'),api('GET','records?kind=investigation&limit=5000'),api('GET','sales?limit=5000'),api('GET','auth/me'),api('GET','reports/medicine-sales?limit=5000')]);D.clinic=cl;D.user=user;k.forEach((x,i)=>D[x]=rows[i]);D.ch=D.ch.map(r=>r.msg);D.rev=dash.revenueToday;D.bill=bill;D.sales=sales;D.medicineSales=medicineSales;D.billing=[...schedules,...payments,...investigations];Object.keys(cart).forEach(i=>{if(!D.med.some(m=>m.id==i))delete cart[i]})}
 function logout(){tok=null;try{localStorage.removeItem('kt')}catch(e){}$('#lg').style.display='grid'}
 async function doLogin(){const email=$('#em').value.trim(),password=$('#pw').value;try{if(needSetup){await api('POST','auth/setup',{email,password});needSetup=false}const r=await api('POST','auth/login',{email,password});tok=r.token;try{localStorage.setItem('kt',tok)}catch(e){}await load();$('#lg').style.display='none';render()}catch(e){toast(e.message)}}
 const run=p=>p.then(()=>load()).then(render).catch(e=>toast(e.message));
 document.addEventListener('click',e=>{const el=e.target.closest('[data-a]');if(!el)return;e.preventDefault();const[a,x,y]=el.dataset.a.split(':');
 if(a=='login')doLogin();else if(a=='logout')logout();
+else if(a=='reportrange')reportSetRange(x);
+else if(a=='reportapply'){reportQuery=$('#report-q').value.trim();reportFrom=$('#report-from').value;reportTo=$('#report-to').value;reportRange='';if(reportFrom&&reportTo&&reportFrom>reportTo)return toast('From date must not be after To date');render()}
+else if(a=='medreportapply')medicineReportApply();
+else if(a=='medreportexport')medicineReportExport();
+else if(a=='medreportdelete'){if(confirm(T('Delete this medicine sale item?')))run(api('DELETE',`sales/${x}/items/${y}`))}
+else if(a=='reportexpense')reportExpenseForm();
+else if(a=='reportexport')run(exportReport());
+else if(a=='reportprint')reportPrint(x);
+else if(a=='reportdelete'){if(confirm('Delete this report entry?'))run(api('DELETE',(x=='expense'?'expenses/':'records/')+y))}
+else if(a=='analytics-period'){analyticsPeriod=x;render()}
+else if(a=='analytics-clear'){analyticsFrom='';analyticsTo='';analyticsPeriod='daily';render()}
+else if(a=='doctor-analytics-clear'){doctorAnalyticsFrom='';doctorAnalyticsTo='';doctorAnalyticsId='';render()}
 else if(a=='go'){setPage(x);q='';pg=1;doctorProfileId=null;$('#sd').classList.remove('on');render()}else if(a=='grp'){cl[x]=!cl[x];nav()}else if(a=='menu'){if((window.innerWidth||0)>820){const on=document.body.classList.toggle('sbc');try{localStorage.setItem('sbc',on?'1':'0')}catch(e){}}else $('#sd').classList.toggle('on')}
 else if(a=='rmpic'){$('#pk_'+x).value='';$('#pv_'+x).hidden=true;$('#pf_'+x).value='';if(x=='photo'&&$('#doctor-photo-placeholder'))$('#doctor-photo-placeholder').hidden=false;if(x=='photo'&&$('#medicine-photo-placeholder'))$('#medicine-photo-placeholder').hidden=false}else if(a=='settings'){setPage('set');q='';$('#sd').classList.remove('on');render()}else if(a=='lang')setLang(x);else if(a=='th'){document.documentElement.dataset.theme=x;render()}else if(a=='pwd')modal('Change password',[['Current password','current','pw'],['New password','password','pw']],{},o=>api('POST','auth/password',o).then(()=>toast('Password changed')))
 else if(a=='saveclinic'){const o={};document.querySelectorAll('#cf [name]').forEach(e=>{o[e.name]=e.type=='checkbox'?(e.checked?1:0):e.value});o.rate=+o.rate;const ct={};Object.keys(o).forEach(k=>{if(k.startsWith('cnf_')){ct[k.slice(4)]=o[k];delete o[k]}});if(Object.keys(ct).length)o.cnf_text=ct;api('PUT','clinic',o).then(c=>{D.clinic=c;toast('Saved');render()}).catch(er=>toast(er.message))}
@@ -503,8 +852,9 @@ else if(a=='payslipprint')payrollPrint(+x);
 else if(a=='payslipdel'){if(confirm('Delete this payslip?'))run(api('DELETE','payslips/'+x))}
 else if(a=='del'){if(confirm(T('Delete this record?'))){const r=D[x][+y];run(api('DELETE',RS[x]+'/'+r.id).then(()=>x=='ipd'&&!r.out?syncOpd(r):0))}}
 else if(a=='out'){const r=D.ipd[+x];run(api('PUT','ipd/'+r.id,{out:1}).then(()=>syncOpd(r)))}
-else if(a=='add'){const k=x;if(k=='dr')return doctorForm();if(k=='sv')return serviceForm();if(k=='echo')return echoForm();if(k=='med'&&rt=='pos'){medicineEditIndex=null;medicineViewId=null;medicineFormOpen=true;medicineFormReturnPage='pos';rt='med';render();return}const F=FM[k]||P[k].f,d={...(df[k]||P[k]?.d||{})};modal('Add',F,d,o=>api('POST',RS[k],{...d,...o}))}
-else if(a=='edit'){if(x=='dr')return doctorForm(+y);if(x=='sv')return serviceForm(+y);if(x=='echo')return echoForm(+y);const F=FM[x]||P[x].f,r=D[x][+y];modal('Edit',F,r,o=>api('PUT',RS[x]+'/'+r.id,o))}
+else if(a=='add'){const k=x;if(k=='dr')return doctorForm();if(k=='sv')return serviceForm();if(k=='echo')return echoForm();if(k=='rx')return rxTemplateForm();if(k=='med'&&rt=='pos'){medicineEditIndex=null;medicineViewId=null;medicineFormOpen=true;medicineFormReturnPage='pos';rt='med';render();return}const F=FM[k]||P[k].f,d={...(df[k]||P[k]?.d||{})};modal('Add',F,d,o=>api('POST',RS[k],{...d,...o}))}
+else if(a=='edit'){if(x=='dr')return doctorForm(+y);if(x=='sv')return serviceForm(+y);if(x=='echo')return echoForm(+y);if(x=='rx')return rxTemplateForm(+y);const F=FM[x]||P[x].f,r=D[x][+y];modal('Edit',F,r,o=>api('PUT',RS[x]+'/'+r.id,o))}
+else if(a=='rxmedicine')toggleRxMedicine(x);
 else if(a=='medadd'){medicineEditIndex=null;medicineFormOpen=true;render()}
 else if(a=='mededit'){medicineViewId=null;medicineEditIndex=+x;medicineFormOpen=true;render()}
 else if(a=='medview'){medicineViewId=x;medicineFormOpen=false;render()}
@@ -522,6 +872,8 @@ else if(a=='medphoto')$('#pf_photo').click();
 else if(a=='medunitadd')$('#medicine-units-list').insertAdjacentHTML('beforeend',medicineUnitRow());
 else if(a=='medunitdel'){const rows=$('#medicine-units-list').querySelectorAll('.medicine-unit-row');if(rows.length<=1)return toast('At least one sales unit is required');el.closest('.medicine-unit-row').remove()}
 else if(a=='svimport')$('#sv-import-file').click();
+else if(a=='dximport')$('#dx-import-file').click();
+else if(a=='dxexport')run(exportDiagnoses());
 else if(a=='labimport')$('#lab-import-file').click();
 else if(a=='labadd')labForm();
 else if(a=='labedit')labForm(+x);
@@ -530,6 +882,13 @@ else if(a=='labcategoryadd')labCategoryForm();
 else if(a=='labfieldadd')$('#lab-fields-list').insertAdjacentHTML('beforeend',labFieldRow());
 else if(a=='labfielddel')el.closest('.lab-field-row').remove();
 else if(a=='echoadd')echoForm();
+else if(a=='samplefileadd')sampleFileForm();
+else if(a=='samplefileedit')sampleFileForm(+x);
+else if(a=='samplefileimage')$('#sample-file-ocr-image').click();
+else if(a=='samplefileinsertimage')$('#sample-file-image').click();
+else if(a=='samplefilelink')sampleFileFormat('createLink');
+else if(a=='sampleformat')sampleFileFormat(x);
+else if(a=='samplefiledel'){const file=D.sf[+x];if(file&&confirm(T('Delete this record?')))run(api('DELETE','files/'+file.id))}
 else if(a=='echoedit')echoForm(+x);
 else if(a=='echodel'){const template=D.echo[+x];if(template&&confirm(T('Delete this echo template?')))run(api('DELETE','echo/'+template.id))}
 else if(a=='echoimport')$('#echo-import-file').click();
@@ -553,11 +912,14 @@ const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',.85)),r=await fetch(API_
 $('#pk_'+k).value=j.photo;$('#pv_'+k).src=API_BASE+'/uploads/'+j.photo;$('#pv_'+k).hidden=false;if(k=='photo'&&$('#doctor-photo-placeholder'))$('#doctor-photo-placeholder').hidden=true;if(k=='photo'&&$('#medicine-photo-placeholder'))$('#medicine-photo-placeholder').hidden=true;$('#ts').style.display='none'}catch(e){toast(e.message)}}
 document.addEventListener('submit',e=>{if(e.target.id=='medicine-form')medicineSave(e)});
 document.addEventListener('change',e=>{const match=/^echo-image-file-(\d+)$/.exec(e.target.id||'');if(match)echoUploadImage(match[1],e.target.files[0]).finally(()=>{e.target.value=''})});
-document.addEventListener('change',e=>{const i=e.target.id||'';if(i=='sv-import-file')return importServicesFile(e.target.files[0]).finally(()=>{e.target.value=''});if(i=='med-import-file')return importMedicinesFile(e.target.files[0]).finally(()=>{e.target.value=''});if(i=='lab-import-file')return importLabsFile(e.target.files[0]).finally(()=>{e.target.value=''});if(i=='echo-import-file')return importEchoFile(e.target.files[0]).finally(()=>{e.target.value=''});if(e.target.dataset&&e.target.dataset.echoColor)return echoApplyColor(e.target);if(i=='echo-table-header-color')$('#echo-table-header-hex').value=e.target.value;if(i=='echo-table-border-color')$('#echo-table-border-hex').value=e.target.value;if(e.target.dataset&&e.target.dataset.echoCommand){const editor=$(`[data-echo-editor="${e.target.dataset.echoSection}"]`);if(editor){editor.focus();echoRestoreSelection(editor);if(typeof document.execCommand=='function')document.execCommand(e.target.dataset.echoCommand,false,e.target.value)}}if(i.startsWith('pf_'))pick(e.target.files[0],i.slice(3))});
+document.addEventListener('change',e=>{const i=e.target.id||'';if(i=='sv-import-file')return importServicesFile(e.target.files[0]).finally(()=>{e.target.value=''});if(i=='dx-import-file')return importDiagnosesFile(e.target.files[0]).finally(()=>{e.target.value=''});if(i=='med-import-file')return importMedicinesFile(e.target.files[0]).finally(()=>{e.target.value=''});if(i=='lab-import-file')return importLabsFile(e.target.files[0]).finally(()=>{e.target.value=''});if(i=='echo-import-file')return importEchoFile(e.target.files[0]).finally(()=>{e.target.value=''});if(e.target.dataset&&e.target.dataset.echoColor)return echoApplyColor(e.target);if(i=='echo-table-header-color')$('#echo-table-header-hex').value=e.target.value;if(i=='echo-table-border-color')$('#echo-table-border-hex').value=e.target.value;if(e.target.dataset&&e.target.dataset.echoCommand){const editor=$(`[data-echo-editor="${e.target.dataset.echoSection}"]`);if(editor){editor.focus();echoRestoreSelection(editor);if(typeof document.execCommand=='function')document.execCommand(e.target.dataset.echoCommand,false,e.target.value)}}if(i.startsWith('pf_'))pick(e.target.files[0],i.slice(3))});
 document.addEventListener('input',e=>{if(e.target.dataset&&e.target.dataset.echoEditor!=null){const hidden=e.target.closest('[data-echo-section]').querySelector('[data-echo-content]');hidden.value=e.target.innerHTML}else if(e.target.id=='echo-table-header-hex'&&/^#[0-9a-f]{6}$/i.test(e.target.value))$('#echo-table-header-color').value=e.target.value;else if(e.target.id=='echo-table-border-hex'&&/^#[0-9a-f]{6}$/i.test(e.target.value))$('#echo-table-border-color').value=e.target.value});
 document.addEventListener('mousedown',e=>{const button=e.target.closest&&e.target.closest('[data-a^="echoformat:"]'),color=e.target.closest&&e.target.closest('[data-echo-color]');if(button||color){const sectionId=button?button.dataset.a.split(':')[1]:color.dataset.echoSection,editor=$(`[data-echo-editor="${sectionId}"]`),selection=window.getSelection&&window.getSelection();if(editor&&selection&&selection.rangeCount&&editor.contains(selection.anchorNode)){echoToolbarSelection=selection.getRangeAt(0).cloneRange();echoTableSelection=echoToolbarSelection.cloneRange()}if(button)e.preventDefault()}});
-document.addEventListener('input',e=>{if(e.target.id=='q'){q=e.target.value;pg=1;render()}else if(e.target.classList&&e.target.classList.contains('payroll-money'))payrollRecalculate()});
+document.addEventListener('mousedown',e=>{const button=e.target.closest&&e.target.closest('[data-a^="sampleformat:"]'),control=e.target.closest&&e.target.closest('[data-sample-command]'),editor=$('#mf .sample-file-editor-body'),selection=window.getSelection&&window.getSelection();if((button||control)&&editor&&selection&&selection.rangeCount&&editor.contains(selection.anchorNode))sampleFileSelection=selection.getRangeAt(0).cloneRange();if(button)e.preventDefault()});
+document.addEventListener('change',e=>{if(e.target.id=='sample-file-ocr-image')sampleFileUploadImage(e.target.files[0]).finally(()=>{e.target.value=''});else if(e.target.id=='sample-file-image')sampleFileInsertImage(e.target.files[0]).finally(()=>{e.target.value=''});else if(e.target.dataset&&e.target.dataset.sampleCommand)sampleFileFormat(e.target.dataset.sampleCommand,e.target.value)});
+document.addEventListener('input',e=>{if(e.target.id=='q'){q=e.target.value;pg=1;render()}else if(e.target.classList&&e.target.classList.contains('rx-dose-input')){const medicine=rxSelected.get(String(e.target.dataset.rxId));if(medicine)medicine[e.target.dataset.rxField]=e.target.value}else if(e.target.classList&&e.target.classList.contains('payroll-money'))payrollRecalculate()});
 document.addEventListener('change',e=>{if(e.target.name=='period_month'||e.target.name=='period_year'){const f=$('#mf'),month=Number(f.elements.period_month.value),year=Number(f.elements.period_year.value);if(month>=1&&month<=12&&year>=2000&&year<=2100){f.elements.date_start.value=`${year}-${String(month).padStart(2,'0')}-01`;f.elements.date_end.value=`${year}-${String(month).padStart(2,'0')}-${String(new Date(year,month,0).getDate()).padStart(2,'0')}`}}});
+document.addEventListener('change',e=>{if(e.target.id=='doctor-analytics-from'||e.target.id=='doctor-analytics-to'){const from=e.target.id=='doctor-analytics-from'?e.target.value:doctorAnalyticsFrom,to=e.target.id=='doctor-analytics-to'?e.target.value:doctorAnalyticsTo;if(from&&to&&from>to){toast('Start Date must not be after End Date');e.target.value=e.target.id=='doctor-analytics-from'?doctorAnalyticsFrom:doctorAnalyticsTo;return}doctorAnalyticsFrom=from;doctorAnalyticsTo=to;render()}else if(e.target.id=='doctor-analytics-doctor'){doctorAnalyticsId=e.target.value;render()}else if(e.target.id=='analytics-from'||e.target.id=='analytics-to'){const from=e.target.id=='analytics-from'?e.target.value:analyticsFrom,to=e.target.id=='analytics-to'?e.target.value:analyticsTo;if(from&&to&&from>to){toast('Start Date must not be after End Date');return}analyticsFrom=from;analyticsTo=to;render()}});
 /*I18N*/
 let lang='en';try{lang=localStorage.getItem('kl')==='km'?'km':'en'}catch(e){}
 const L={'Sign in':'ចូលគណនី','Please sign in to your account.':'សូមចូលគណនីរបស់អ្នក។','Email':'អ៊ីមែល','Password':'ពាក្យសម្ងាត់','Remember me':'ចងចាំខ្ញុំ','Sign in with your clinic account.':'ចូលដោយប្រើគណនីគ្លីនិករបស់អ្នក។','First run: choose the admin email and a password (8+ characters).':'ការប្រើលើកដំបូង៖ សូមជ្រើសរើសអ៊ីមែលអ្នកគ្រប់គ្រង និងពាក្យសម្ងាត់ (យ៉ាងតិច ៨ តួអក្សរ)។',
@@ -574,8 +936,13 @@ L['Import Excel']='នាំចូល Excel';L['Choose an Excel workbook or CSV 
 Object.assign(L,{'Upload Lab':'នាំចូល Lab','Add Type':'បន្ថែមប្រភេទ','Type':'ប្រភេទ','Type is required':'ត្រូវបញ្ចូលប្រភេទ','Type already exists':'ប្រភេទនេះមានរួចហើយ','Add Lab Template':'បន្ថែមទម្រង់ Lab','Manage lab test templates and prices.':'គ្រប់គ្រងទម្រង់ និងតម្លៃតេស្ត Lab។','Fields':'វាលទិន្នន័យ','Add Field':'បន្ថែមវាល','Field name':'ឈ្មោះវាល','Remove field':'លុបវាល','Lab template not found':'រកមិនឃើញទម្រង់ Lab','Delete this lab template?':'លុបទម្រង់ Lab នេះមែនទេ?','Choose an Excel workbook':'សូមជ្រើសរើសសៀវភៅការងារ Excel','Lab import failed':'ការនាំចូល Lab បរាជ័យ','Imported':'បាននាំចូល','lab templates':'ទម្រង់ Lab','rows must contain 1–1,000 lab templates':'ត្រូវមានទម្រង់ Lab ចន្លោះពី 1 ដល់ 1,000','Each lab template must be an object':'ទម្រង់ Lab នីមួយៗត្រូវជាវត្ថុ','Excel workbook must include a header and at least one lab template':'សៀវភៅការងារ Excel ត្រូវមានចំណងជើង និងទម្រង់ Lab យ៉ាងតិចមួយ','Excel workbook can contain up to 1,000 lab templates':'សៀវភៅការងារ Excel អាចមានទម្រង់ Lab បានរហូតដល់ 1,000','Excel workbook needs name and price columns':'សៀវភៅការងារ Excel ត្រូវមានជួរឈរឈ្មោះ និងតម្លៃ','fields must contain up to 50 entries':'វាលអាចមានធាតុបានរហូតដល់ 50'});
 Object.assign(L,{'Create Template':'បង្កើតទម្រង់','Create Echo Template':'បង្កើតទម្រង់អេកូ','Edit Echo Template':'កែប្រែទម្រង់អេកូ','Template Name':'ឈ្មោះទម្រង់','Default Font':'ពុម្ពអក្សរលំនាំដើម','Section title':'ចំណងជើងផ្នែក','Optional section title':'ចំណងជើងផ្នែក (មិនចាំបាច់)','Section Content (Title/Body)':'មាតិកាផ្នែក (ចំណងជើង/ខ្លឹមសារ)','Additional Fields (Optional)':'វាលបន្ថែម (មិនចាំបាច់)','Field Name':'ឈ្មោះវាល','Remove field':'លុបវាល','Remove section':'លុបផ្នែក','Add New Section':'បន្ថែមផ្នែកថ្មី','Save Template':'រក្សាទុកទម្រង់','Upload':'នាំចូល','Download':'ទាញយក','Search echo templates…':'ស្វែងរកទម្រង់អេកូ…','Insert Table':'បញ្ចូលតារាង','Normal':'ធម្មតា','Heading':'ចំណងជើង','Quote':'សម្រង់','Text style':'រចនាប័ទ្មអត្ថបទ','Echo template not found':'រកមិនឃើញទម្រង់អេកូ','Delete this echo template?':'លុបទម្រង់អេកូនេះមែនទេ?','Template name is required':'ត្រូវបញ្ចូលឈ្មោះទម្រង់','At least one section is required':'ត្រូវមានយ៉ាងតិចមួយផ្នែក','Echo import failed':'ការនាំចូលទម្រង់អេកូបរាជ័យ','Echo export failed':'ការនាំចេញទម្រង់អេកូបរាជ័យ','No echo templates to download':'គ្មានទម្រង់អេកូសម្រាប់ទាញយក','echo templates':'ទម្រង់អេកូ'});
 Object.assign(L,{'Insert Image From Device':'បញ្ចូលរូបភាពពីឧបករណ៍','Image picker is unavailable':'មិនអាចបើកឧបករណ៍ជ្រើសរើសរូបភាពបានទេ','Image upload failed':'ការផ្ទុករូបភាពបរាជ័យ','Echo editor not found':'រកមិនឃើញកម្មវិធីកែទម្រង់អេកូទេ','Use a JPG, PNG or WebP picture':'សូមប្រើរូបភាព JPG, PNG ឬ WebP','Picture is too large (max 2 MB)':'រូបភាពធំពេក (អតិបរមា 2 MB)'});
+Object.assign(L,{'Financial Report':'របាយការណ៍ហិរញ្ញវត្ថុ','Patient Payments':'ការទូទាត់របស់អ្នកជំងឺ','POS Sales':'ការលក់ POS','Total Income':'ចំណូលសរុប','Expenses':'ចំណាយ','From date':'ចាប់ពីថ្ងៃ','To date':'ដល់ថ្ងៃ','Search patient, details...':'ស្វែងរកអ្នកជំងឺ ឬព័ត៌មានលម្អិត...','Search':'ស្វែងរក','Export Excel':'នាំចេញ Excel','Add Expense':'បន្ថែមចំណាយ','Today':'ថ្ងៃនេះ','Yesterday':'ម្សិលមិញ','This month':'ខែនេះ','Bill Summary':'សង្ខេបវិក្កយបត្រ','CP':'CP','Payroll Report':'របាយការណ៍ប្រាក់ខែ','Income':'ចំណូល','Date':'កាលបរិច្ឆេទ','Patient / Source':'អ្នកជំងឺ / ប្រភព','Details':'ព័ត៌មានលម្អិត','Amount':'ចំនួនទឹកប្រាក់','Category':'ប្រភេទ','Expense':'ចំណាយ','Expense Name':'ឈ្មោះចំណាយ','e.g. Supplies, Utilities':'ឧ. សម្ភារៈប្រើប្រាស់ ថ្លៃទឹកភ្លើង','Amount (KHR)':'ចំនួនទឹកប្រាក់ (រៀល)','Cancel':'បោះបង់','Save Expense':'រក្សាទុកចំណាយ','No income found for this period':'មិនមានចំណូលក្នុងរយៈពេលនេះទេ','No expenses found for this period':'មិនមានចំណាយក្នុងរយៈពេលនេះទេ'});
+Object.assign(L,{'Item':'មុខទំនិញ','Unit Price (KHR)':'តម្លៃឯកតា (រៀល)','Quantity':'ចំនួន','Total (KHR)':'សរុប (រៀល)','Notes':'កំណត់ចំណាំ'});
+Object.assign(L,{'Medicine sales report':'របាយការណ៍លក់ឱសថ','Track medicine quantities and sales revenue by date.':'តាមដានចំនួនឱសថ និងចំណូលពីការលក់តាមកាលបរិច្ឆេទ។','Quantity sold':'ចំនួនលក់','Total revenue':'ចំណូលសរុប','Medicine name':'ឈ្មោះឱសថ','Date sold':'ថ្ងៃលក់','Total':'សរុប','Actions':'សកម្មភាព','No medicine sales found for this date range.':'មិនមានការលក់ឱសថក្នុងចន្លោះកាលបរិច្ឆេទនេះទេ។','No medicine sales to export':'គ្មានទិន្នន័យលក់ឱសថសម្រាប់នាំចេញ','Medicine report export failed':'ការនាំចេញរបាយការណ៍ឱសថបរាជ័យ','Delete this medicine sale item?':'លុបមុខទំនិញលក់ឱសថនេះមែនទេ?'});
+Object.assign(L,{'Add Template':'បន្ថែមទម្រង់','Create New Template':'បង្កើតទម្រង់ថ្មី','Edit Template':'កែប្រែទម្រង់','Template Title':'ចំណងជើងទម្រង់','Template content':'មាតិកាទម្រង់','Content':'មាតិកា','Font':'ពុម្ពអក្សរ','Text style':'រចនាប័ទ្មអត្ថបទ','Normal':'ធម្មតា','Heading 1':'ចំណងជើង ១','Heading 2':'ចំណងជើង ២','Quote':'សម្រង់','Insert Image':'បញ្ចូលរូបភាព','Upload Image (OCR)':'បញ្ចូលរូបភាព (OCR)','Template title is required':'ត្រូវបញ្ចូលចំណងជើងទម្រង់','Sample file template not found':'រកមិនឃើញទម្រង់ឯកសារគំរូ','Image OCR failed':'ការស្គាល់អក្សរពីរូបភាពបរាជ័យ','No text was detected in the selected image':'រកមិនឃើញអក្សរក្នុងរូបភាពដែលបានជ្រើសរើស','Text extracted from image':'បានស្គាល់អក្សរពីរូបភាព'});
 const RX=[[/^(\d+) services imported$/,'បាននាំចូលសេវាកម្ម $1'],[/^Row (\d+): service name is required$/,'ជួរទី $1៖ ត្រូវបញ្ចូលឈ្មោះសេវាកម្ម'],[/^Row (\d+): price must be a whole number$/,'ជួរទី $1៖ តម្លៃត្រូវជាចំនួនគត់'],[/^rows must contain 1–1000 services$/,'ត្រូវមានសេវាកម្មចន្លោះពី 1 ដល់ 1,000'],[/^Each service must include a name and price$/,'សេវាកម្មនីមួយៗត្រូវមានឈ្មោះ និងតម្លៃ'],[/^Showing (\S+) of (\d+)$/,'បង្ហាញ $1 នៃ $2'],[/^Stock: (.+)$/,'ស្តុក៖ $1'],[/^Not enough stock for (.+)$/,'ស្តុក $1 មិនគ្រប់គ្រាន់'],[/^Paid (.+) by (Cash|Bank)$/,(m,a,b)=>`បានបង់ ${a} តាម${L[b]}`]];
 function T(s){if(lang!='km'||typeof s!='string')return s;const k=s.trim();if(!k)return s;if(L[k])return s.replace(k,L[k]);for(const[r,v]of RX)if(r.test(k))return s.replace(k,k.replace(r,v));const m=/^([^A-Za-z]*)([\s\S]*)$/.exec(k);return m&&m[2]&&L[m[2]]?s.replace(k,m[1]+L[m[2]]):s}
+Object.assign(L,{'Analytics Dashboard':'ផ្ទាំងវិភាគ','Comprehensive overview of your clinic’s performance.':'ទិដ្ឋភាពទូទៅអំពីដំណើរការរបស់គ្លីនិក។','Data Filters':'តម្រងទិន្នន័យ','Start Date':'កាលបរិច្ឆេទចាប់ផ្តើម','End Date':'កាលបរិច្ឆេទបញ្ចប់','View By':'មើលតាម','Daily':'ប្រចាំថ្ងៃ','Monthly':'ប្រចាំខែ','Yearly':'ប្រចាំឆ្នាំ','Clear Filters':'សម្អាតតម្រង','Income vs. Expenses':'ចំណូលធៀបនឹងចំណាយ','Income':'ចំណូល','Expense':'ចំណាយ','Profit':'ប្រាក់ចំណេញ','Top Selling Medicines':'ឱសថលក់ដាច់ជាងគេ','Top Selling Services':'សេវាកម្មលក់ដាច់ជាងគេ','No financial activity found for this date range.':'មិនមានសកម្មភាពហិរញ្ញវត្ថុក្នុងចន្លោះកាលបរិច្ឆេទនេះទេ។','No medicine sales found for this date range.':'មិនមានការលក់ឱសថក្នុងចន្លោះកាលបរិច្ឆេទនេះទេ។','No non-cancelled services found for this date range.':'មិនមានសេវាកម្មក្នុងចន្លោះកាលបរិច្ឆេទនេះទេ។'});
 function tr(root){const w=document.createTreeWalker(root,NodeFilter.SHOW_TEXT,{acceptNode:n=>n.parentElement&&!n.parentElement.closest('[translate=no],script,style')?1:3}),ns=[];while(w.nextNode())ns.push(w.currentNode);
 for(const n of ns){if(n._e===undefined||n.nodeValue!==n._t)n._e=n.nodeValue;const v=T(n._e);n._t=v;if(n.nodeValue!==v)n.nodeValue=v}
 root.querySelectorAll('[placeholder],[title]').forEach(e=>{for(const a of['placeholder','title']){if(!e.hasAttribute(a))continue;if(e['_'+a]===undefined||e.getAttribute(a)!==e['_'+a+'t'])e['_'+a]=e.getAttribute(a);const v=T(e['_'+a]);e['_'+a+'t']=v;e.setAttribute(a,v)}})}

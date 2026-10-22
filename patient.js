@@ -21,7 +21,7 @@ const fld = (l, k, ty, v, o) => ty == 'sel' ? fSel(l, k, v, o) : ty == 'ta' ? fT
 function openForm(title, body, save, o = {}) {
   const f = $('#mf'); f.className = o.cls || 'wide';
   const heading = o.close ? `<div class="operation-form-heading"><h3>${title}</h3><button type="button" class="btn s" data-a="close" aria-label="Close">×</button></div>` : `<h3 style="margin:0 0 8px">${title}</h3>`;
-  f.innerHTML = `${heading}${body}<div class="tools fb" style="justify-content:flex-end">${o.extra || ''}<button type="button" class="btn" data-a="close">Cancel</button><button class="btn p">${o.ok || 'Save'}</button></div>`;
+  f.innerHTML = `${heading}${body}<div class="tools fb" style="justify-content:flex-end">${o.extra || ''}${o.hideCancel ? '' : '<button type="button" class="btn" data-a="close">Cancel</button>'}<button class="btn p">${o.ok || 'Save'}</button></div>`;
   $('#md').classList.add('on');
   f.onsubmit = async (e) => { e.preventDefault(); try { await save(f); $('#md').classList.remove('on'); } catch (er) { toast(er.message); } };
 }
@@ -137,6 +137,21 @@ function recCard(r) {
     const categoryLabel = d.category == 'child' ? 'Child vaccination' : d.category == 'adult' ? 'Adult vaccination' : d.category == 'other' ? 'Other' : d.category;
     return `<div class="rc vaccination-record">${act}<div class="mu">${when}</div><b>${esc(d.vaccine_group || d.vaccine_type || T('Vaccination'))}</b>${categoryLabel ? `<span class="bd">${esc(T(categoryLabel))}</span>` : ''}<div class="vaccination-record-doses">${doses.filter((dose) => dose.vaccine || dose.date || dose.notes).map((dose) => `<div><span>${esc(dose.vaccine || '')}</span><span>${esc(dose.date || '')}</span><span>${dose.given ? T('Given') : T('Not given')}</span>${dose.notes ? `<span>${esc(dose.notes)}</span>` : ''}</div>`).join('')}</div>${d.notes || r.notes ? `<div class="mu">${esc(d.notes || r.notes)}</div>` : ''}${d.administered_by ? `<div class="mu">${T('Administered by')}: ${esc(d.administered_by)}</div>` : ''}</div>`;
   }
+  if (r.kind == 'cnf') {
+    const concerns = Array.isArray(d.prob) ? d.prob.filter(Boolean).join(', ') : '';
+    const details = [
+      concerns && `<div><span class="mu">បញ្ហា / កង្វល់៖</span> ${esc(concerns)}</div>`,
+      d.as_ass && `<div><span class="mu">ការវាយតម្លៃរបស់វេជ្ជបណ្ឌិត៖</span> ${esc(d.as_ass)}</div>`,
+      d.as_plan && `<div><span class="mu">ផែនការព្យាបាល៖</span> ${esc(d.as_plan)}</div>`,
+      d.as_reason && `<div><span class="mu">មូលហេតុនៃការមកពិគ្រោះ៖</span> ${esc(d.as_reason)}</div>`
+    ].filter(Boolean).join('');
+    return `<div class="rc consultation-record">${act}<div class="mu">${when}</div><b>ទម្រង់ពិគ្រោះគ្លីនិក</b>${details ? `<div class="consultation-record-details">${details}</div>` : '<div class="mu">មិនទាន់មានព័ត៌មានវាយតម្លៃទេ។</div>'}</div>`;
+  }
+  if (r.kind == 'consultation' && d.consultation_mode) {
+    const md = d.consultation_mode == 'md';
+    const summary = [d.chief_complaint, d.diagnosis, d.assessment, d.treatment_plan].filter(Boolean);
+    return `<div class="rc consultation-record">${act}<div class="mu">${when}</div><b>${md ? 'ពិគ្រោះជំងឺដោយវេជ្ជបណ្ឌិត' : 'ទម្រង់ពិគ្រោះជំងឺ'}</b>${summary.length ? `<div class="consultation-record-details">${summary.map((item) => `<div>${esc(item)}</div>`).join('')}</div>` : '<div class="mu">មិនទាន់មានព័ត៌មានលម្អិត។</div>'}</div>`;
+  }
   const img = r.image ? `<a href="/uploads/${esc(r.image)}" target="_blank"><img class="rimg" src="/uploads/${esc(r.image)}" alt=""></a>` : '';
   if (CARE_MODULES[r.kind]) {
     const fields = CARE_MODULES[r.kind].fields.filter(([k]) => d[k]).map(([k, label]) => `<div><span class="mu">${esc(label)}:</span> ${esc(d[k])}</div>`).join('');
@@ -149,9 +164,92 @@ function recPanel() {
   if (ptab == 'schedule') return schPanel();
   if (ptab == 'billing') return billPanel();
   if (ptab == 'appts') { const L = D.ap.filter((a) => (a.name || '').toLowerCase() == (p.name || '').toLowerCase()); return `<h2 class="rh">${lbl(ptab)}</h2>${L.map((a) => `<div class="rc"><b>${esc(a.date)} ${esc(a.time || '')}</b> ${esc(a.svc || '')} <span class="mu">${esc(a.doc || '')}</span> <span class="bd">${esc(a.st)}</span></div>`).join('') || '<p class="emp">Nothing here yet.</p>'}`; }
+  if (ptab == 'consultation') {
+    const L = recs.filter((r) => ['cnf', 'consultation'].includes(r.kind) && (!pdDate || (r.date || '').startsWith(pdDate)));
+    const forms = L.filter((r) => r.kind == 'cnf' || jd(r).consultation_mode), notes = L.filter((r) => r.kind == 'consultation' && !jd(r).consultation_mode);
+    return `<div class="consultation-toolbar" role="toolbar" aria-label="${esc(T('Consultation actions'))}">
+      <button class="btn" data-a="consult-medical" title="ពិគ្រោះជំងឺ"><span aria-hidden="true">🩺</span><span>ពិគ្រោះជំងឺ</span></button>
+      <button class="btn consultation-icon-button" data-a="consult-documents" title="ឯកសារ" aria-label="ឯកសារ"><span aria-hidden="true">🔗</span></button>
+      <button class="btn" data-a="consult-cnf" title="ពិគ្រោះ MD"><span aria-hidden="true">🩺</span><span>ពិគ្រោះ MD</span></button>
+      <button class="btn consultation-icon-button" data-a="consult-history" title="ប្រវត្តិ" aria-label="ប្រវត្តិ"><span aria-hidden="true">◷</span></button>
+      <button class="btn" data-a="consult-billing" title="ការទូទាត់"><span aria-hidden="true">▦</span><span>ការទូទាត់</span></button>
+      <button class="btn p consultation-add-button" data-a="radd"><span aria-hidden="true">＋</span><span>បន្ថែម</span></button>
+    </div><section class="consultation-history"><h3>ប្រវត្តិពិគ្រោះ</h3>${forms.map(recCard).join('') || '<p class="emp">មិនទាន់មានទម្រង់ពិគ្រោះទេ។</p>'}</section>${notes.length ? `<section class="consultation-notes"><h3>កំណត់ចំណាំពិគ្រោះ</h3>${notes.map(recCard).join('')}</section>` : ''}`;
+  }
   const L = recs.filter((r) => r.kind == ptab && (!pdDate || (r.date || '').startsWith(pdDate)));
   if (ptab == 'investigation') return investigationPanel(L);
   return `<div class="hd"><h2 class="rh">${lbl(ptab)}</h2>${ptab == 'medical' ? '<div class="tools"><button class="btn" data-a="htc" title="HT Controls">⚙</button><button class="btn" data-a="mhist">History</button><button class="btn" data-a="mrd">MRD</button><button class="btn g" data-a="radd">+ Add</button></div>' : '<button class="btn g" data-a="radd">+ Add</button>'}</div>${ptab == 'beu' ? `<div class="gr">${L.map(recCard).join('')}</div>` : L.map(recCard).join('')}${L.length ? '' : '<p class="emp">Nothing here yet.</p>'}`;
+}
+const consultationSymptoms = [
+  ['fever', 'គ្រុនក្តៅ'], ['cough', 'ក្អក'], ['headache', 'ឈឺក្បាល'], ['abdominal_pain', 'ឈឺពោះ'],
+  ['vomiting', 'ក្អួត'], ['diarrhea', 'រាគ'], ['dizziness', 'វិលមុខ'], ['other_symptom', 'ផ្សេងៗ']
+];
+const consultationExams = [
+  ['general_exam', 'ពិនិត្យទូទៅ'], ['respiratory_exam', 'ប្រព័ន្ធដង្ហើម'], ['cardiac_exam', 'បេះដូង'],
+  ['abdominal_exam', 'ពោះ'], ['neurological_exam', 'ប្រព័ន្ធប្រសាទ'], ['other_exam', 'ផ្សេងៗ']
+];
+function consultationForm(mode = 'standard', record) {
+  const editing = !!record, d = record ? jd(record) : {}, patient = curPt();
+  const title = mode == 'md' ? 'ពិគ្រោះជំងឺដោយវេជ្ជបណ្ឌិត' : 'ទម្រង់ពិគ្រោះជំងឺ';
+  const checkGroup = (label, key, options) => `<fieldset class="consultation-fieldset"><legend>${label}</legend><div class="consultation-checkbox-grid">${options.map(([value, text]) => fCb(text, key, (d[key] || []).includes(value), value)).join('')}</div></fieldset>`;
+  const patientSex = patient.sex == 'M' ? 'ប្រុស' : patient.sex == 'F' ? 'ស្រី' : 'មិនមាន';
+  const profile = `<div class="consultation-patient-summary"><b>ឈ្មោះ៖ ${esc(patient.name)}</b><span>អាយុ៖ ${esc(fmtAge(patient))}</span><span>ភេទ៖ ${patientSex}</span><span>លេខសម្គាល់៖ ${esc(patient.id)}</span></div>`;
+  const intake = `<section class="consultation-form-section consultation-intake"><div class="consultation-intake-left">${profile}<b class="consultation-section-label">កំណត់ត្រាអ្នកជំងឺ</b><div class="consultation-intake-grid">${fIn('លេខសម្គាល់ / លេខកំណត់ត្រា', 'reference_note', d.reference_note || '')}${fIn('អាយុ', 'patient_age', d.patient_age || fmtAge(patient))}${fIn('ភេទ', 'patient_sex', d.patient_sex || patientSex)}${fIn('មុខរបរ', 'occupation', d.occupation || '')}${fIn('ទូរស័ព្ទ', 'patient_phone', d.patient_phone || patient.phone || '')}${fIn('អាសយដ្ឋាន', 'patient_address', d.patient_address || patient.addr || '')}${fIn('អ្នកពិនិត្យ', 'examined_by', d.examined_by || '')}</div></div><div class="consultation-intake-right">${checkGroup('ស្ថានភាពអ្នកជំងឺ', 'conditions', [['child', 'កុមារ'], ['adult', 'មនុស្សពេញវ័យ'], ['pregnant', 'មានផ្ទៃពោះ'], ['breastfeeding', 'បំបៅដោះកូន'], ['chronic_disease', 'ជំងឺរ៉ាំរ៉ៃ'], ['other', 'ផ្សេងៗ']])}<div class="consultation-time-grid">${fIn('ម៉ោងចូល', 'start_time', d.start_time || '', 'time')}${fIn('ម៉ោងចេញ', 'end_time', d.end_time || '', 'time')}</div></div></section>`;
+  const complaint = `<section class="consultation-form-section"><label class="consultation-section-label" for="consultation-summary">ការពិគ្រោះ និងរោគសញ្ញា</label><textarea class="in" id="consultation-summary" name="chief_complaint" rows="3">${esc(d.chief_complaint || '')}</textarea><div class="consultation-symptom-row">${consultationSymptoms.slice(0, 5).map(([value, text]) => fCb(text, 'symptoms', (d.symptoms || []).includes(value), value)).join('')}</div></section>`;
+  const examInputs = `<div class="consultation-exam-fields">${fIn('ក្បាល', 'exam_head', d.exam_head || '')}${fIn('ទ្រូង', 'exam_chest', d.exam_chest || '')}${fIn('បេះដូង', 'exam_heart', d.exam_heart || '')}${fIn('ពោះ', 'exam_abdomen', d.exam_abdomen || '')}${fIn('ដង្ហើម', 'exam_breathing', d.exam_breathing || '')}${fIn('ស្បែក', 'exam_skin', d.exam_skin || '')}${fIn('ផ្សេងៗ', 'exam_other', d.exam_other || '')}</div>`;
+  const examination = `<section class="consultation-form-section"><div class="consultation-assessment-columns"><div><label class="consultation-section-label" for="consultation-medical-history">ការកត់ត្រា</label><textarea class="in" id="consultation-medical-history" name="medical_history" rows="4">${esc(d.medical_history || '')}</textarea></div><div><b class="consultation-side-heading">ការពិនិត្យរាងកាយ</b>${examInputs}</div></div></section>`;
+  const classification = `<section class="consultation-form-section consultation-classification"><div class="consultation-classification-left">${checkGroup('លទ្ធផល IMCI', 'imci_status', [['yes', 'បាន'], ['no', 'មិនបាន']])}${checkGroup('កម្រិតស្ថានភាព', 'risk_flags', [['normal', 'ធម្មតា'], ['mild', 'ស្រាល'], ['moderate', 'មធ្យម']])}</div><div class="consultation-classification-right">${checkGroup('ការវាយតម្លៃហានិភ័យ', 'screening_flags', [['danger', 'សញ្ញាគ្រោះថ្នាក់'], ['refer', 'ត្រូវបញ្ជូន'], ['followup', 'ត្រូវតាមដាន'], ['none', 'គ្មាន']])}</div></section>`;
+  const status = `<section class="consultation-form-section consultation-status-section"><b class="consultation-section-label">ប្រវត្តិសុខភាព</b>${checkGroup('', 'history_flags', [['fever', 'គ្រុនក្តៅ'], ['cough', 'ក្អក'], ['diarrhea', 'រាគ'], ['vomiting', 'ក្អួត'], ['pain', 'ឈឺចាប់'], ['weakness', 'អស់កម្លាំង'], ['chronic', 'ជំងឺរ៉ាំរ៉ៃ'], ['other', 'ផ្សេងៗ']])}${fIn('បញ្ហាផ្សេងៗ សូមបញ្ជាក់', 'history_other', d.history_other || '')}</section>`;
+  const questions = `<section class="consultation-form-section consultation-questions"><div class="consultation-question-column"><b>តើអ្នកធ្លាប់មានជំងឺនេះពីមុនដែរឬទេ?</b>${checkGroup('', 'previous_condition', [['yes', 'បាទ/ចាស'], ['no', 'ទេ']])}<div class="consultation-question-inputs">${fIn('ជំងឺពីមុន', 'previous_condition_detail', d.previous_condition_detail || '')}${fIn('រយៈពេល', 'previous_condition_duration', d.previous_condition_duration || '')}</div></div><div class="consultation-question-column"><b>តើមានប្រវត្តិជំងឺក្នុងគ្រួសារដែរឬទេ?</b>${checkGroup('', 'family_condition', [['yes', 'បាទ/ចាស'], ['no', 'ទេ']])}<div class="consultation-question-inputs">${fIn('ប្រភេទឈាម RH វិជ្ជមាន', 'rh_positive', d.rh_positive || '')}${fIn('ប្រភេទឈាម RH អវិជ្ជមាន', 'rh_negative', d.rh_negative || '')}</div></div></section>`;
+  const vitals = `<section class="consultation-form-section"><h4>សញ្ញាជីវិត និងការតាមដាន</h4><div class="consultation-vitals-grid">${fIn('សម្ពាធឈាម (mmHg)', 'blood_pressure', d.blood_pressure)}${fIn('ជីពចរ (ដង/នាទី)', 'pulse', d.pulse, 'number')}${fIn('អត្រាដង្ហើម (ដង/នាទី)', 'respiratory_rate', d.respiratory_rate, 'number')}${fIn('សីតុណ្ហភាព (°C)', 'temperature', d.temperature, 'number')}${fIn('កម្ពស់ (សម.)', 'height', d.height, 'number')}${fIn('ទម្ងន់ (គក.)', 'weight', d.weight, 'number')}${fIn('អុកស៊ីសែនក្នុងឈាម (%)', 'oxygen_saturation', d.oxygen_saturation, 'number')}</div>${checkGroup('ការពិនិត្យបន្ថែម', 'examinations', consultationExams)}</section>`;
+  const plan = `<section class="consultation-form-section"><h4>រោគវិនិច្ឆ័យ និងផែនការព្យាបាល</h4><div class="consultation-form-grid">${fTa('រោគវិនិច្ឆ័យ', 'assessment', d.assessment, 3)}${fTa('ការពិនិត្យបន្ថែម', 'investigations', d.investigations, 3)}${fTa('ការព្យាបាល និងការណែនាំ', 'treatment_plan', d.treatment_plan, 3)}${fIn('ថ្ងៃណាត់ពិនិត្យបន្ទាប់', 'followup_date', d.followup_date || '', 'date')}${fTa('កំណត់ចំណាំ', 'notes', d.notes, 2)}</div></section>`;
+  const standard = `<section class="consultation-form-section consultation-final-note"><label class="consultation-section-label" for="consultation-plan">ការសន្និដ្ឋាន និងការណែនាំ</label><textarea class="in" id="consultation-plan" name="treatment_plan" rows="3">${esc(d.treatment_plan || '')}</textarea><div class="consultation-final-dates">${fIn('ថ្ងៃណាត់ពិនិត្យបន្ទាប់', 'followup_date', d.followup_date || '', 'date')}${fIn('ការវាយតម្លៃ / រោគវិនិច្ឆ័យ', 'assessment', d.assessment || '')}</div></section>`;
+  openForm(title, `<div class="consultation-form-scroll"><div class="consultation-form">${intake}${complaint}${examination}${classification}${status}${questions}${mode == 'md' ? vitals : ''}${mode == 'md' ? plan : standard}</div></div>`, async (form) => {
+    const values = new FormData(form), data = { consultation_mode: mode };
+    ['chief_complaint', 'medical_history', 'past_history', 'medication_allergy', 'assessment', 'treatment_plan', 'followup_date', 'notes', 'blood_pressure', 'pulse', 'respiratory_rate', 'temperature', 'height', 'weight', 'oxygen_saturation', 'investigations', 'patient_phone', 'patient_age', 'patient_sex', 'occupation', 'patient_address', 'examined_by', 'reference_note', 'start_time', 'end_time', 'exam_head', 'exam_chest', 'exam_heart', 'exam_abdomen', 'exam_breathing', 'exam_skin', 'exam_other', 'history_other', 'previous_condition_detail', 'previous_condition_duration', 'rh_positive', 'rh_negative'].forEach((key) => {
+      const value = values.get(key);
+      if (value != null) data[key] = String(value);
+    });
+    data.symptoms = values.getAll('symptoms');
+    data.conditions = values.getAll('conditions');
+    data.examinations = values.getAll('examinations');
+    data.imci_status = values.getAll('imci_status');
+    data.history_flags = values.getAll('history_flags');
+    data.risk_flags = values.getAll('risk_flags');
+    data.screening_flags = values.getAll('screening_flags');
+    data.previous_condition = values.getAll('previous_condition');
+    data.family_condition = values.getAll('family_condition');
+    const body = { patient_id: pdId, kind: 'consultation', title, date: values.get('date'), notes: data.notes, data };
+    editing ? await api('PUT', 'records/' + record.id, body) : await api('POST', 'records', body);
+    await loadRecs(); render(); toast('Saved');
+  }, { cls: 'xl consultation-form-dialog', close: true, hideCancel: true, ok: editing ? 'រក្សាទុកការកែប្រែ' : 'រក្សាទុក', extra: '<button type="button" class="btn" data-a="consultation-print">បោះពុម្ព</button>' });
+}
+function consultationFormPicker() {
+  const options = [
+    ['consult-select:standard', 'ទម្រង់ពិគ្រោះជំងឺ', 'បើកទម្រង់ពិគ្រោះទូទៅ'],
+    ['consult-select:md', 'ពិគ្រោះជំងឺដោយវេជ្ជបណ្ឌិត', 'កំណត់រោគសញ្ញា សញ្ញាជីវិត និងផែនការព្យាបាល'],
+    ['consult-select:clinic', 'ទម្រង់ពិគ្រោះគ្លីនិក', 'បើកទម្រង់គ្លីនិក និងប្រវត្តិអ្នកជំងឺ']
+  ];
+  openForm('ជ្រើសរើសទម្រង់ពិគ្រោះ', `<div class="consultation-form-picker">${options.map(([action, label, help]) => `<button type="button" class="consultation-form-option" data-a="${action}"><b>${label}</b><span>${help}</span></button>`).join('')}</div>`, async () => {}, { ok: 'បិទ' });
+}
+function consultationPrint() {
+  const form = $('#mf'), values = new FormData(form), rows = [];
+  for (const [label, key] of [['កាលបរិច្ឆេទ', 'date'], ['មូលហេតុនៃការមកពិគ្រោះ / រោគសញ្ញា', 'chief_complaint'], ['ប្រវត្តិជំងឺបច្ចុប្បន្ន', 'medical_history'], ['ប្រវត្តិជំងឺពីមុន', 'past_history'], ['ការវាយតម្លៃ / រោគវិនិច្ឆ័យ', 'assessment'], ['ការពិនិត្យបន្ថែម', 'investigations'], ['ការព្យាបាល និងការណែនាំ', 'treatment_plan'], ['ថ្ងៃណាត់ពិនិត្យបន្ទាប់', 'followup_date'], ['កំណត់ចំណាំ', 'notes']]) {
+    const value = values.get(key);
+    if (value) rows.push([label, value]);
+  }
+  printDoc('ទម្រង់ពិគ្រោះជំងឺ', ptBlock(curPt()) + kv(rows));
+}
+function patientSexLabel(patient) {
+  return patient && patient.sex == 'M' ? 'ប្រុស' : patient && patient.sex == 'F' ? 'ស្រី' : 'មិនមាន';
+}
+function consultationHistoryPrint() {
+  const patient = curPt(), history = recs.filter((r) => ['cnf', 'consultation', 'medical'].includes(r.kind)).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const rows = history.map((r, i) => {
+    const data = jd(r);
+    return `<tr><td>${i + 1}</td><td>${esc((r.date || '').replace('T', ' '))}</td><td>${esc(patient && patient.name || '')}</td><td>${esc(data.chief_complaint || (data.prob || []).join(', ') || data.cc || r.notes || '')}</td><td>${esc(data.blood_pressure || '')}</td><td>${esc(data.assessment || data.as_ass || data.dx || '')}</td><td>${esc(data.treatment_plan || data.as_plan || '')}</td></tr>`;
+  }).join('');
+  printDoc('ប្រវត្តិពិគ្រោះជំងឺ', ptBlock(patient) + `<table class="pk full"><thead><tr><th>ល.រ</th><th>កាលបរិច្ឆេទ</th><th>ឈ្មោះអ្នកជំងឺ</th><th>រោគសញ្ញា</th><th>សម្ពាធឈាម</th><th>រោគវិនិច្ឆ័យ</th><th>ការព្យាបាល</th></tr></thead><tbody>${rows}</tbody></table>`);
 }
 function investigationServiceList() {
   const query = investigationQuery.trim().toLowerCase();
@@ -763,12 +861,13 @@ function cnPrintHtml(d) {
 }
 function cnfForm(r) {
   const e = !!r, d = r ? jd(r) : {}, hist = recs.filter((x) => x.kind == 'cnf');
-  openForm('Consultation Form (CNF)', `<div class="cnfw"><div class="cnfl"><div class="tabs cnft"><button type="button" class="on" data-a="cnftab:gen">General Form</button><button type="button" data-a="cnftab:plan">Assessment & Plan</button></div>
+  const khmer = lang == 'km';
+  openForm(khmer ? 'ទម្រង់ពិគ្រោះគ្លីនិក (Clinic Form - CNF)' : 'Consultation Form (CNF)', `<div class="consultation-form-scroll"><div class="cnfw"><div class="cnfl"><div class="tabs cnft"><button type="button" class="on" data-a="cnftab:gen">${khmer ? 'ទម្រង់ទូទៅ (General Form)' : 'General Form'}</button><button type="button" data-a="cnftab:plan">${khmer ? 'ការវាយតម្លៃ និងផែនការ (Assessment & Plan)' : 'Assessment & Plan'}</button></div>
 <div id="cn-gen">${cnHtml(CN, d)}</div><div id="cn-plan" hidden>${cnHtml(CNP, d)}</div></div>
-<div class="cnfh"><div class="tools" style="justify-content:space-between"><b>Form History</b><button type="button" class="btn s" data-a="cnfnew" title="New form">+</button></div>${hist.map((x) => `<div class="rc ${e && x.id == r.id ? 'sel' : ''}" data-a="cnfload:${x.id}" style="cursor:pointer"><b>${esc((x.date || '').replace('T', ' '))}</b><div class="mu">${esc(jd(x).as_ass || jd(x).as_dx || (jd(x).prob || []).slice(0, 3).join(', '))}</div></div>`).join('') || '<p class="mu" style="font-size:12px">No history records yet.</p>'}</div></div>`, async (f) => {
+<div class="cnfh"><div class="tools" style="justify-content:space-between"><b>${khmer ? 'ប្រវត្តិទម្រង់ (Form History)' : 'Form History'}</b><button type="button" class="btn s" data-a="cnfnew" title="${khmer ? 'ទម្រង់ថ្មី' : 'New form'}">+</button></div>${hist.map((x) => `<div class="rc ${e && x.id == r.id ? 'sel' : ''}" data-a="cnfload:${x.id}" style="cursor:pointer"><b>${esc((x.date || '').replace('T', ' '))}</b><div class="mu">${esc(jd(x).as_ass || jd(x).as_dx || (jd(x).prob || []).slice(0, 3).join(', '))}</div></div>`).join('') || `<p class="mu" style="font-size:12px">${khmer ? 'មិនទាន់មានប្រវត្តិទម្រង់ទេ។' : 'No history records yet.'}</p>`}</div></div></div>`, async (f) => {
     const b = { patient_id: pdId, kind: 'cnf', date: e ? r.date : nowLocal(), data: { ...d, ...cnCollect(f, CN), ...cnCollect(f, CNP) } };
     e ? await api('PUT', 'records/' + r.id, b) : await api('POST', 'records', b); await loadRecs(); render(); toast('Saved');
-  }, { cls: 'xl cnf', ok: 'Save Only', extra: '<button type="button" class="btn" data-a="cnfprint">Print Current</button>' });
+  }, { cls: 'xl cnf', close: true, hideCancel: true, ok: khmer ? 'រក្សាទុក' : 'Save Only', extra: `<button type="button" class="btn" data-a="cnfprint">${khmer ? 'បោះពុម្ពទម្រង់' : 'Print Current'}</button>` });
 }
 
 // ---------- appointments: calendar (month / week / day) with list toggle ----------
@@ -850,10 +949,27 @@ function pAct(a, x, y, el) {
   else if (a == 'vsbtn') { $('#vsbox').hidden = !$('#vsbox').hidden; } else if (a == 'regprint') regPrint();
   else if (a == 'opaddphysician') $('#operation-participants').insertAdjacentHTML('beforeend', operationParticipantRow());
   else if (a == 'opremovephysician') el.closest('.operation-participant-row').remove();
-  else if (a == 'rtab') { ptab = x; render(); } else if (a == 'radd') { ptab == 'vitals' ? vsForm() : ptab == 'medical' ? mrForm() : ptab == 'schedule' ? schForm() : genForm(); }
+  else if (a == 'rtab') { ptab = x; render(); } else if (a == 'radd') { ptab == 'vitals' ? vsForm() : ptab == 'medical' ? mrForm() : ptab == 'schedule' ? schForm() : ptab == 'consultation' ? consultationFormPicker() : genForm(); }
+  else if (a == 'consult-medical') consultationForm('standard');
+  else if (a == 'consult-documents') { ptab = 'documents'; render(); }
+  else if (a == 'consult-cnf') consultationForm('md');
+  else if (a == 'consult-select') { $('#md').classList.remove('on'); x == 'clinic' ? cnfForm() : consultationForm(x); }
+  else if (a == 'consultation-print') consultationPrint();
+  else if (a == 'consult-history') {
+    const history = recs.filter((r) => ['cnf', 'consultation', 'medical'].includes(r.kind)).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+    const table = `<div class="consultation-history-table-wrap"><table class="consultation-history-table"><thead><tr>${['ល.រ', 'កាលបរិច្ឆេទ', 'ប្រភេទទម្រង់', 'ឈ្មោះអ្នកជំងឺ', 'អាយុ', 'ភេទ', 'រោគសញ្ញា / មូលហេតុ', 'សម្ពាធឈាម', 'ជីពចរ', 'សីតុណ្ហភាព', 'រោគវិនិច្ឆ័យ', 'ការព្យាបាល', 'ថ្ងៃណាត់', 'សកម្មភាព'].map((label) => `<th>${label}</th>`).join('')}</tr></thead><tbody>${history.map((r, i) => {
+      const data = jd(r), complaint = data.chief_complaint || (data.prob || []).join(', ') || data.cc || r.notes || '';
+      const kind = r.kind == 'cnf' ? 'ទម្រង់គ្លីនិក' : r.kind == 'medical' ? 'Medical Record' : data.consultation_mode == 'md' ? 'ពិគ្រោះ MD' : data.consultation_mode ? 'ពិគ្រោះជំងឺ' : 'កំណត់ចំណាំ';
+      return `<tr><td>${i + 1}</td><td>${esc((r.date || '').replace('T', ' '))}</td><td>${kind}</td><td>${esc((curPt() || {}).name || '')}</td><td>${esc(fmtAge(curPt()))}</td><td>${patientSexLabel(curPt())}</td><td>${esc(complaint)}</td><td>${esc(data.blood_pressure || '')}</td><td>${esc(data.pulse || '')}</td><td>${esc(data.temperature || '')}</td><td>${esc(data.assessment || data.as_ass || data.dx || '')}</td><td>${esc(data.treatment_plan || data.as_plan || '')}</td><td>${esc(data.followup_date || '')}</td><td><button type="button" class="btn s" data-a="redit:${r.id}">កែប្រែ</button> <button type="button" class="btn s r" data-a="rdel:${r.id}" aria-label="លុប">✕</button></td></tr>`;
+    }).join('') || '<tr><td class="emp" colspan="14">មិនទាន់មានប្រវត្តិពិគ្រោះទេ។</td></tr>'}</tbody></table></div><button type="button" class="btn p consultation-history-add" data-a="consult-history-add">＋ បន្ថែមទម្រង់ពិគ្រោះ</button>`;
+    openForm('ប្រវត្តិពិគ្រោះជំងឺ', table, async () => {}, { cls: 'xl consultation-history-dialog', ok: 'បិទ', extra: '<button type="button" class="btn" data-a="consult-history-print">បោះពុម្ព</button>' });
+  }
+  else if (a == 'consult-history-add') consultationFormPicker();
+  else if (a == 'consult-history-print') consultationHistoryPrint();
+  else if (a == 'consult-billing') { ptab = 'billing'; render(); }
   else if (a == 'investigation-request') requestInvestigationServices().catch((e) => toast(e.message));
   else if (a == 'svcplus' || a == 'svcminus') changeInvestigationQuantity(x, Number(y), a == 'svcplus' ? 1 : -1).catch((e) => toast(e.message));
-  else if (a == 'redit') { const r = rec(); r.kind == 'vitals' ? vsForm(r) : r.kind == 'medical' ? mrForm(r) : r.kind == 'schedule' ? schForm(r) : r.kind == 'mrd' ? mrdForm(r) : r.kind == 'cnf' ? cnfForm(r) : genForm(r); }
+  else if (a == 'redit') { const r = rec(); r.kind == 'vitals' ? vsForm(r) : r.kind == 'medical' ? mrForm(r) : r.kind == 'schedule' ? schForm(r) : r.kind == 'mrd' ? mrdForm(r) : r.kind == 'cnf' ? cnfForm(r) : r.kind == 'consultation' && jd(r).consultation_mode ? consultationForm(jd(r).consultation_mode, r) : genForm(r); }
   else if (a == 'rdel') { if (confirm(T('Delete this record?'))) api('DELETE', 'records/' + x).then(loadRecs).then(render).catch((e) => toast(e.message)); }
   else if (a == 'rprint') { const r = rec(); printDoc('Medical Record', ptBlock(curPt()) + `<p>${esc((r.date || '').replace('T', ' '))}</p>` + mrPrintHtml(jd(r))); }
   else if (a == 'mrprint') { const f = $('#mf'); printDoc('Medical Record', ptBlock(curPt()) + `<p>${esc((new FormData(f).get('date') || '').replace('T', ' '))}</p>` + mrPrintHtml(mrCollect(f))); }
