@@ -686,6 +686,112 @@ hr {
   max-height: 94vh;
   overflow: auto;
 }
+#mf.operation-form-dialog {
+  width: min(760px, 96vw);
+  max-height: 94vh;
+  overflow: auto;
+  padding: 20px 24px;
+}
+.operation-form-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.operation-form-heading h3 {
+  margin: 0;
+  font-size: 16px;
+}
+.operation-form .operation-request-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.operation-form .operation-request-grid .fl,
+.operation-form .operation-type {
+  margin: 8px 0;
+}
+.operation-form .operation-participants {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 10px 0;
+  font-size: 13px;
+}
+.operation-form #operation-participants {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.operation-participant-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.operation-participant-row select {
+  min-width: 180px;
+}
+.operation-form .operation-type {
+  display: block;
+  width: min(220px, 100%);
+}
+.operation-form h4 {
+  margin: 14px 0 8px;
+  font-size: 16px;
+}
+.operation-form .operation-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.operation-form .operation-grid textarea.in {
+  min-width: 0;
+  min-height: 68px;
+  margin: 0;
+}
+.operation-form .operation-grid .operation-full {
+  grid-column: 1 / -1;
+  min-height: 84px;
+}
+.operation-anesthesia {
+  min-width: 0;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--bd);
+  border-radius: 6px;
+}
+.operation-anesthesia legend {
+  padding: 0 4px;
+  font-size: 13px;
+}
+.operation-anesthesia > div {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 8px;
+}
+.operation-anesthesia .cb {
+  margin: 0;
+}
+.operation-anesthesia input {
+  width: auto;
+  margin: 0;
+}
+@media (max-width: 560px) {
+  #mf.operation-form-dialog {
+    padding: 16px;
+  }
+  .operation-form .operation-request-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .operation-form .operation-grid {
+    grid-template-columns: 1fr;
+  }
+  .operation-form .operation-grid .operation-full {
+    grid-column: auto;
+  }
+}
 .vaccination-form {
   display: grid;
   gap: 12px;

@@ -20,7 +20,8 @@ const fSel = (l, k, v, opts) => `<label class="fl">${l}<select class="in" name="
 const fld = (l, k, ty, v, o) => ty == 'sel' ? fSel(l, k, v, o) : ty == 'ta' ? fTa(l, k, v) : fIn(l, k, v ?? '', ty);
 function openForm(title, body, save, o = {}) {
   const f = $('#mf'); f.className = o.cls || 'wide';
-  f.innerHTML = `<h3 style="margin:0 0 8px">${title}</h3>${body}<div class="tools fb" style="justify-content:flex-end">${o.extra || ''}<button type="button" class="btn" data-a="close">Cancel</button><button class="btn p">${o.ok || 'Save'}</button></div>`;
+  const heading = o.close ? `<div class="operation-form-heading"><h3>${title}</h3><button type="button" class="btn s" data-a="close" aria-label="Close">×</button></div>` : `<h3 style="margin:0 0 8px">${title}</h3>`;
+  f.innerHTML = `${heading}${body}<div class="tools fb" style="justify-content:flex-end">${o.extra || ''}<button type="button" class="btn" data-a="close">Cancel</button><button class="btn p">${o.ok || 'Save'}</button></div>`;
   $('#md').classList.add('on');
   f.onsubmit = async (e) => { e.preventDefault(); try { await save(f); $('#md').classList.remove('on'); } catch (er) { toast(er.message); } };
 }
@@ -160,6 +161,68 @@ function investigationServiceList() {
 function investigationPanel(records) {
   return `<section class="investigation-request card"><div class="investigation-request-head"><h2 class="rh">${T('Request service')}</h2><div class="tools"><input id="investigation-service-search" class="in" type="search" placeholder="${esc(T('Search services…'))}" value="${esc(investigationQuery)}"><button class="btn p" data-a="investigation-request" ${investigationSelection.size ? '' : 'disabled'}>${T('Add selected')}${investigationSelection.size ? ` (${investigationSelection.size})` : ''}</button></div></div><div class="investigation-service-grid" id="investigation-service-list">${investigationServiceList()}</div></section><section class="investigation-history"><h3>${T('Service requests')}</h3>${records.map(recCard).join('') || `<p class="emp">${T('No services requested yet.')}</p>`}</section>`;
 }
+function operationParticipantRow(selected = '') {
+  const doctors = D.dr.map((doctor) => `<option value="${esc(doctor.id)}" ${String(doctor.id) == String(selected) ? 'selected' : ''}>${esc(doctor.name)}${doctor.specialist ? ` · ${esc(doctor.specialist)}` : ''}</option>`).join('');
+  return `<div class="operation-participant-row"><select class="in" name="participants" aria-label="Physician"><option value="">Select physician</option>${doctors || '<option value="" disabled>No physicians available</option>'}</select><button type="button" class="btn s" data-a="opremovephysician" title="Remove physician">×</button></div>`;
+}
+function operationForm(r) {
+  const editing = !!r, d = r ? jd(r) : {}, date = nowLocal();
+  const participants = Array.isArray(d.participants) ? d.participants : [];
+  const requestedDate = (d.requested_date || r && r.date || date).slice(0, 16), operationDate = (d.operation_date || r && r.date || date).slice(0, 16);
+  const serviceOptions = D.sv.map((service) => `<option value="${esc(service.id)}" ${String(service.id) == String(d.service_id || '') ? 'selected' : ''}>${esc(service.name)}</option>`).join('');
+  const area = (label, key, rows = 3, full = false) => `<textarea class="in${full ? ' operation-full' : ''}" name="${key}" rows="${rows}" placeholder="${esc(label)}" aria-label="${esc(label)}">${esc(d[key] || '')}</textarea>`;
+  const group = (fields) => `<div class="operation-grid">${fields.map(([label, key]) => area(label, key, 3, label == 'Description')).join('')}</div>`;
+  const fields = [
+    ['Preoperative Medications', 'preoperative_medications'], ['Preparation of the Patient', 'preparation_of_patient'],
+    ['Position of the Patient', 'position_of_patient'], ['Incision Site', 'incision_site']
+  ];
+  const closingFields = [
+    ['Assessment before Closure', 'assessment_before_closure'], ['Instruments & Sponges Count', 'instruments_sponges_count'],
+    ['Materials Input', 'materials_input'], ['Closure Description', 'closure_description'],
+    ['Estimation blood loss', 'estimation_blood_loss'], ['Blood Transfusion', 'blood_transfusion'],
+    ['Further Investigation', 'further_investigation'], ['Complications prediction', 'complications_prediction'],
+    ['Post-OP Plan', 'post_op_plan']
+  ];
+  const body = `<div class="operation-form">
+    <div class="operation-request-grid">
+      ${fIn('Requested by *', 'requested_by', d.requested_by || '', 'text', 'required')}
+      ${fIn('Requested date *', 'requested_date', requestedDate, 'datetime-local', 'required')}
+      <label class="fl">Service *<select class="in" name="service_id" required><option value="">Select Service</option>${serviceOptions}</select></label>
+      ${fIn('Operation date *', 'operation_date', operationDate, 'datetime-local', 'required')}
+    </div>
+    <div class="operation-participants"><span>List Participants</span><div id="operation-participants">${participants.map((id) => operationParticipantRow(id)).join('')}</div><button type="button" class="btn" data-a="opaddphysician">＋ Add physician</button></div>
+    <label class="fl operation-type">Form Type<select class="in" name="form_type"><option value="English" ${d.form_type != 'Khmer' ? 'selected' : ''}>English</option><option value="Khmer" ${d.form_type == 'Khmer' ? 'selected' : ''}>Khmer</option></select></label>
+    <hr><h4>Surgical Procedure</h4>
+    <div class="operation-grid">
+      ${area('Patient Profile/Condition', 'patient_profile_condition')}
+      ${area('Pre-OP Diagnosis', 'pre_op_diagnosis')}
+      ${area('Procedure/Indication', 'procedure_indication')}
+      ${area('Post-OP Diagnosis', 'post_op_diagnosis')}
+      <fieldset class="operation-anesthesia"><legend>Anesthesia Type</legend><div>${['General', 'Epidural', 'Regional Block', 'Sedation', 'General Endotracheal', 'Spinal', 'Local'].map((type) => fCb(type, 'anesthesia_types', (d.anesthesia_types || []).includes(type), type)).join('')}</div></fieldset>
+      ${area('Anesthesia Desc', 'anesthesia_description')}
+    </div>
+    <hr><h4>Description of Procedure</h4>${group(fields)}
+    <hr><h4>Technique / Procedure</h4><div class="operation-grid">${area('Description', 'description', 4, true)}</div>
+    <hr>${group(closingFields)}
+  </div>`;
+  openForm(editing ? 'Edit Operation Request Form' : 'New Operation Request Form', body, async (f) => {
+    const m = new FormData(f), requestedBy = String(m.get('requested_by') || '').trim(), service = D.sv.find((item) => String(item.id) == String(m.get('service_id') || ''));
+    if (!requestedBy) throw new Error('Enter who requested the operation');
+    if (!service) throw new Error('Select an operation service');
+    if (!m.get('requested_date') || !m.get('operation_date')) throw new Error('Enter both operation dates');
+    const data = {
+      requested_by: requestedBy, requested_date: m.get('requested_date') || '', service_id: service.id, service_name: service.name,
+      operation_date: m.get('operation_date') || '', participants: m.getAll('participants').filter(Boolean), form_type: m.get('form_type') || 'English',
+      patient_profile_condition: m.get('patient_profile_condition') || '', pre_op_diagnosis: m.get('pre_op_diagnosis') || '',
+      procedure_indication: m.get('procedure_indication') || '', post_op_diagnosis: m.get('post_op_diagnosis') || '',
+      anesthesia_types: m.getAll('anesthesia_types'), anesthesia_description: m.get('anesthesia_description') || ''
+    };
+    [...fields, ['Description', 'description'], ...closingFields].forEach(([, key]) => { data[key] = m.get(key) || ''; });
+    const record = { patient_id: pdId, kind: 'operation', title: service.name, date: data.operation_date, notes: data.description, data };
+    editing ? await api('PUT', 'records/' + r.id, record) : await api('POST', 'records', record);
+    await loadRecs(); render(); toast('Saved');
+  }, { cls: 'operation-form-dialog', close: true });
+}
 const VACCINE_DOSE_COUNT = 6;
 const vaccineRows = (d) => Array.from({ length: VACCINE_DOSE_COUNT }, (_, i) => {
   const row = (Array.isArray(d.doses) && d.doses[i]) || {};
@@ -210,6 +273,7 @@ async function requestInvestigationServices() {
 function genForm(r) {
   const k = ptab, e = !!r; r = r || { date: ymd(new Date()) };
   if (k == 'vaccination') { vaccinationForm(e ? r : null); return; }
+  if (k == 'operation') { operationForm(e ? r : null); return; }
   const module = CARE_MODULES[k];
   if (module) {
     const d = r ? jd(r) : {}, fields = module.fields.map(([key, label, type, opts]) => type == 'sel'
@@ -784,6 +848,8 @@ function pAct(a, x, y, el) {
   if (a == 'reg') regForm(); else if (a == 'regedit') regForm(D.pt[+x]); else if (a == 'open') openPatient(+x).catch((e) => toast(e.message));
   else if (a == 'agem') { $('#agebox').dataset.mode = x; document.querySelectorAll('#agem button').forEach((b) => b.classList.toggle('on', b.dataset.a == 'agem:' + x)); }
   else if (a == 'vsbtn') { $('#vsbox').hidden = !$('#vsbox').hidden; } else if (a == 'regprint') regPrint();
+  else if (a == 'opaddphysician') $('#operation-participants').insertAdjacentHTML('beforeend', operationParticipantRow());
+  else if (a == 'opremovephysician') el.closest('.operation-participant-row').remove();
   else if (a == 'rtab') { ptab = x; render(); } else if (a == 'radd') { ptab == 'vitals' ? vsForm() : ptab == 'medical' ? mrForm() : ptab == 'schedule' ? schForm() : genForm(); }
   else if (a == 'investigation-request') requestInvestigationServices().catch((e) => toast(e.message));
   else if (a == 'svcplus' || a == 'svcminus') changeInvestigationQuantity(x, Number(y), a == 'svcplus' ? 1 : -1).catch((e) => toast(e.message));
