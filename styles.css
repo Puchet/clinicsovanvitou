@@ -467,11 +467,37 @@ tr:hover td {
   margin-top: 14px;
 }
 .br {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
   margin: 7px 0;
   font-size: 12px;
+}
+.br:hover,
+.br:focus-visible {
+  z-index: 2;
+}
+.br::after {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 5;
+  display: none;
+  width: max-content;
+  max-width: min(360px, calc(100vw - 48px));
+  padding: 8px 10px;
+  border: 1px solid var(--bd);
+  border-radius: 6px;
+  background: var(--cd);
+  box-shadow: 0 4px 12px #0000001f;
+  color: var(--tx);
+  content: attr(data-tooltip);
+  white-space: normal;
+}
+.br:hover::after,
+.br:focus-visible::after {
+  display: block;
 }
 .br u {
   flex: none;
