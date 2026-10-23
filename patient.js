@@ -101,6 +101,11 @@ const CARE_MODULES = {
 const VSF = [['t', 'Temperature (°C)'], ['hr', 'Heart rate (bpm)'], ['rr', 'Respiratory rate (bpm)'], ['bp', 'Blood pressure (mmHg)'], ['spo2', 'SpO2 (%)'], ['p', 'Pulse (P)'], ['w', 'Weight (kg)'], ['h', 'Height (cm)']];
 const COLORS = ['#e5e7eb', '#ef4444', '#f97316', '#f59e0b', '#22c55e', '#3b82f6', '#6366f1', '#a855f7', '#ec4899'];
 let pdId = null, ptab = 'vitals', recs = [], pdDate = '', investigationQuery = '', investigationSelection = new Set(), paidHistoryView = 'table';
+try {
+  const savedPatientId = Number(sessionStorage.getItem('currentPatientId'));
+  if (Number.isInteger(savedPatientId) && savedPatientId > 0) pdId = savedPatientId;
+  ptab = sessionStorage.getItem('currentPatientTab') || ptab;
+} catch (e) { /* use defaults */ }
 const curPt = () => D.pt.find((x) => x.id == pdId);
 const jd = (r) => { try { return JSON.parse(r.data || '{}'); } catch { return {}; } };
 async function loadRecs() {
@@ -108,7 +113,17 @@ async function loadRecs() {
   D.billing = D.billing.filter((r) => String(r.patient_id) != String(pdId) || !['schedule', 'payment', 'investigation'].includes(r.kind))
     .concat(recs.filter((r) => ['schedule', 'payment', 'investigation'].includes(r.kind)));
 }
-async function openPatient(id) { pdId = id; ptab = 'vitals'; pdDate = ''; investigationQuery = ''; investigationSelection.clear(); rt = 'pd'; await loadRecs(); render(); }
+async function openPatient(id) { pdId = id; ptab = 'vitals'; pdDate = ''; investigationQuery = ''; investigationSelection.clear(); rt = 'pd'; try { sessionStorage.setItem('currentPatientId', String(id)); sessionStorage.setItem('currentPatientTab', ptab); } catch (e) { /* retain the current view */ } await loadRecs(); render(); }
+async function restorePatientPage() {
+  if (!pdId || !curPt()) {
+    pdId = null; ptab = 'vitals';
+    try { sessionStorage.removeItem('currentPatientId'); sessionStorage.removeItem('currentPatientTab'); } catch (e) { /* ignore unavailable storage */ }
+    setPage('pt'); render(); return;
+  }
+  if (!PT.some(([key]) => key == ptab)) ptab = 'vitals';
+  await loadRecs();
+  render();
+}
 const lbl = (k) => (PT.find((x) => x[0] == k) || [0, k])[1];
 // ---- patient file layout & "hide" controls (saved in this browser) ----
 const PTI = { vitals: '🩺', medical: '📝', mdhistory: '📋', beu: '🖼️', schedule: '📅', consultation: '💬', operation: '✂️', investigation: '🔬', lab: '🧪', echo: '💓', xray: '🩻', homecare: '🏠', prescription: '💊', medlist: '📑', documents: '📁', billing: '💰', appts: '🗓️', allergy: '♡', vaccination: '💉', referral: '↗', diagnosis_history: '📖', laborder: '🧫', imagingorder: '🩻' };
@@ -1209,7 +1224,7 @@ function pAct(a, x, y, el) {
   else if (a == 'vsbtn') { $('#vsbox').hidden = !$('#vsbox').hidden; } else if (a == 'regprint') regPrint();
   else if (a == 'opaddphysician') $('#operation-participants').insertAdjacentHTML('beforeend', operationParticipantRow());
   else if (a == 'opremovephysician') el.closest('.operation-participant-row').remove();
-  else if (a == 'rtab') { ptab = x; render(); } else if (a == 'radd') { ptab == 'vitals' ? vsForm() : ptab == 'medical' ? mrForm() : ptab == 'schedule' ? schForm() : ptab == 'consultation' ? consultationFormPicker() : genForm(); }
+  else if (a == 'rtab') { ptab = x; try { sessionStorage.setItem('currentPatientTab', ptab); } catch (e) { /* retain the current view */ } render(); } else if (a == 'radd') { ptab == 'vitals' ? vsForm() : ptab == 'medical' ? mrForm() : ptab == 'schedule' ? schForm() : ptab == 'consultation' ? consultationFormPicker() : genForm(); }
   else if (a == 'consult-medical') consultationForm('standard');
   else if (a == 'consult-documents') { ptab = 'documents'; render(); }
   else if (a == 'consult-cnf') consultationForm('md');
@@ -1259,7 +1274,7 @@ function pAct(a, x, y, el) {
   else if (a == 'ptbed') bedForm(+x); else if (a == 'ptadmit') ptAdmit(+x); else if (a == 'ptprint') ptCard(+x);
   else if (a == 'pttreat') treatmentFollowup(+x).catch((e) => toast(e.message));
   else if (a == 'ptdx') { const q0 = ptById(+x), opts = ['', ...new Set([q0.diagnosis, ...D.dx.map((d) => d.name)].filter(Boolean))]; modal('Diagnosis', [['Diagnosis', 'diagnosis', 'sel', opts]], q0, (o) => api('PUT', 'patients/' + q0.id, o)); }
-  else if (a == 'ptpay') payForm(+x); else if (a == 'ptinv') invoicePrint(+x).catch((e) => toast(e.message));
+  else if (a == 'ptpay') payForm(+x, true); else if (a == 'ptinv') invoicePrint(+x).catch((e) => toast(e.message));
   else if (a == 'payall') return payForm(pdId, true);
   else if (a == 'payreceipt') paymentReceipt(+x);
   else if (a == 'recpay') payForm(pdId);
@@ -1275,6 +1290,7 @@ function pAct(a, x, y, el) {
     if (panel) panel.innerHTML = paidHistoryPanelInner(recs.filter((r) => r.kind == 'payment').sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id), recs);
   }
   else if (a == 'ipdbill') openIpdBilling(+x).catch((e) => toast(e.message));
+  else if (a == 'ipdinvoice') invoicePrint(+x).catch((e) => toast(e.message));
   else if (a == 'tfadd') { tfRows = tfDraftRows(); tfRows.push({ date: nowLocal(), vitals: '', diagnosis: '', notes: '' }); tfRender(); }
   else if (a == 'tfremove') { tfRows = tfDraftRows(); tfRows.splice(+x, 1); tfRender(); }
   else if (a == 'tfhistory') { tfRows = tfDraftRows(); tfShowHistory = !tfShowHistory; tfRender(); }
@@ -1385,7 +1401,7 @@ function ptView() {
   const L = ptRows(), n = Math.max(1, Math.ceil(L.length / 10)); pg = Math.min(pg, n); const S = (pg - 1) * 10, page = L.slice(S, S + 10), det = tab == 'Details', cols = ptShown();
   const sm = !det && !ptHide.full.has('latin');
   return { count: L.length,
-    body: page.map(([r, i]) => { const c = det ? cellsDet(r, i) : cellsFull(r, i, sm); return `<tr>${cols.map(([k]) => c[k]).join('')}</tr>`; }).join('') || `<tr><td colspan="${cols.length}" class="emp">No patients.</td></tr>`,
+    body: page.map(([r, i]) => { const c = det ? cellsDet(r, i) : cellsFull(r, i, sm); return `<tr>${cols.map(([k]) => c[k].replace('<td', `<td class="pt-col-${k}"`)).join('')}</tr>`; }).join('') || `<tr><td colspan="${cols.length}" class="emp">No patients.</td></tr>`,
     pager: `<span>Showing ${L.length ? S + 1 : 0} to ${Math.min(L.length, S + 10)} of ${L.length} records</span><div><button class="btn s" data-a="pg:${pg - 1}" ${pg <= 1 ? 'disabled' : ''}>‹ Previous</button>${pgNums(pg, n).map((x) => x == '…' ? '<span class="mu">…</span>' : `<button class="btn s ${x == pg ? 'p' : ''}" data-a="pg:${x}">${x}</button>`).join('')}<button class="btn s" data-a="pg:${pg + 1}" ${pg >= n ? 'disabled' : ''}>Next ›</button></div>` };
 }
 // typing in a filter only refreshes the rows, so the cursor stays in the box
@@ -1394,7 +1410,7 @@ R.pt = function () {
   const det = tab == 'Details', v = ptView(), cols = ptShown(), defs = ptDefs();
   const panel = ptColsOpen ? `<div class="card pdc"><div class="tools" style="justify-content:space-between"><b>Show or hide columns</b><button class="btn s" data-a="ptcolsall">Show all</button></div><div class="pdcg" style="border:0;margin:8px 0 0;padding:0">${defs.map(([k, l]) => `<label class="cb"><input type="checkbox" data-a="ptcol:${k}" ${ptHide[ptMode()].has(k) ? '' : 'checked'}> ${l}</label>`).join('')}</div></div>` : '';
   return `<div class="tools" style="margin-bottom:12px">${sr('Search Name, Phone, NSSF, National ID…')}<button class="btn p" data-a="reg">+ Add Patient</button><div class="tabs">${PTAB.map(([k, l]) => `<button class="${tab == k ? 'on' : ''}" data-a="tab:${k}">${l}</button>`).join('')}</div><button class="btn ${ptColsOpen ? 'on2' : ''}" data-a="ptcols">☰ Columns</button><button class="btn ${ptFilt ? 'on2' : ''}" data-a="ptfilt">Filters</button><button class="btn" id="pfclr" data-a="pfclear" ${pfActive().length ? '' : 'hidden'}>✕ Clear filters</button><button class="btn" data-a="csv">Export Excel</button></div>${panel}
-<div class="card"><table class="ptb"><thead><tr>${cols.map(([k, l]) => `<th class="${k == 'latin' && !det ? 'c-latin' : ''}">${l}</th>`).join('')}</tr>${ptFilt ? `<tr class="frow">${cols.map(([k]) => fCell(k == 'act' ? null : k)).join('')}</tr>` : ''}</thead><tbody id="ptbody">${v.body}</tbody></table></div>
+<div class="card patient-table-wrap"><table class="ptb"><thead><tr>${cols.map(([k, l]) => `<th class="pt-col-${k} ${k == 'latin' && !det ? 'c-latin' : ''}">${l}</th>`).join('')}</tr>${ptFilt ? `<tr class="frow">${cols.map(([k]) => fCell(k == 'act' ? null : k)).join('')}</tr>` : ''}</thead><tbody id="ptbody">${v.body}</tbody></table></div>
 <div class="pg" id="ptpg">${v.pager}</div>`;
 };
 document.addEventListener('input', (e) => { const k = e.target.dataset && e.target.dataset.pf; if (!k) return; pf[k] = e.target.value; pg = 1; ptRefresh(); });
@@ -1760,20 +1776,18 @@ async function openIpdBilling(pid) {
   const p = ptById(pid); if (!p) return toast('Patient not found.');
   pdId = pid;
   await loadRecs();
-  const charges = recs.filter((r) => (r.kind == 'schedule' && schBillable(r)) || (r.kind == 'investigation' && Array.isArray(jd(r).items) && jd(r).items.length)).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   const pays = recs.filter((r) => r.kind == 'payment').sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
-  const t = billTotals(recs), unpaid = t.bal > 0;
-  const paidHistory = paidHistoryTable(pays, recs);
-  const chargeRows = charges.map((r) => {
-    const d = jd(r);
-    if (r.kind == 'investigation') return `<div class="bill-item"><div><b>${T('Service Charges')}</b><div class="mu">${esc(r.date || '')}</div>${d.items.map((item) => { const qty = Math.max(1, +item.quantity || 1), unit = +item.unit_price || +item.price || 0; return `<div class="bill-charge-item"><span>${esc(item.name)}${qty > 1 ? ` × ${qty}` : ''}</span><b>${K(unit * qty)}</b></div>`; }).join('')}</div><b>${K(d.items.reduce((sum, item) => sum + (+item.unit_price || +item.price || 0) * Math.max(1, +item.quantity || 1), 0))}</b></div>`;
-    return `<div class="bill-item"><div><b>${esc([d.selection, d.treatment_type, d.diagnosis || d.dx, r.notes].filter(Boolean).join(' — ') || r.title || 'Charge')}</b><div class="mu">${esc(r.date || '')}</div></div><b>${K(d.amount || 0)}</b></div>`;
+  const t = billTotals(recs), unpaid = t.bal > 0, outstanding = billingOutstandingItems(recs);
+  const categories = [...new Set(outstanding.map((item) => item.category))];
+  const unpaidItems = categories.map((category) => {
+    const group = outstanding.filter((item) => item.category == category), total = group.reduce((sum, item) => sum + item.price, 0);
+    return `<div class="bill-charge-group"><div class="bill-charge-heading"><b>◇ ${T(category)}</b><b>${K(total)}</b></div>${group.map((item) => `<div class="bill-charge-item"><div>${esc(item.name)}${item.quantity > 1 ? `<small>${K(item.unitPrice)} × ${item.quantity}</small>` : ''}</div><b>${K(item.price)}</b></div>`).join('')}</div>`;
   }).join('');
   const f = $('#mf');
   f.className = 'xl billing-dialog';
   f.innerHTML = `<div class="billing-title"><b>${esc(p.name)}</b><button type="button" class="btn s" data-a="close" aria-label="${T('Close')}">×</button></div>
-<div class="billing-toolbar"><h3>${T('Billing history')}</h3><button type="button" class="btn g" data-a="payall" ${unpaid ? '' : 'disabled'}>${T('Pay All')}: ${K(t.bal)}</button></div>
-<div class="billing-columns"><section class="billing-panel"><h4>${T('Unpaid')}</h4>${unpaid ? `${chargeRows || `<div class="bill-item"><b>${T('Outstanding balance')}</b><b>${K(t.bal)}</b></div>`}<div class="bill-total"><span>${T('Total')}:</span><b>${K(t.bal)}</b></div>` : '<p class="emp">No unpaid bills found.</p>'}</section>
+<div class="billing-toolbar"><h3>${T('Billing history')}</h3><div class="tools"><button type="button" class="btn" data-a="ipdinvoice:${pid}">${T('Invoice')}</button><button type="button" class="btn" data-a="recpay" ${unpaid ? '' : 'disabled'}>+ ${T('Record payment')}</button><button type="button" class="btn g billing-payall" data-a="payall" ${unpaid ? '' : 'disabled'}>${T('Pay All')}: ${K(t.bal)}</button></div></div>
+<div class="billing-columns"><section class="billing-panel"><h4><span>◇ ${T('Unpaid')}</span><span class="billing-total-badge">${T('Total')}: ${K(t.bal)}</span></h4>${unpaid ? `${unpaidItems || `<div class="bill-item"><b>${T('Outstanding balance')}</b><b>${K(t.bal)}</b></div>`}<div class="bill-total"><b>${T('Total Unpaid Amount')}:</b><b>${K(t.bal)}</b></div>` : '<p class="emp">No unpaid bills found.</p>'}</section>
 <section class="billing-panel paid-history-panel">${paidHistoryPanelInner(pays, recs)}</section></div>`;
   $('#md').classList.add('on');
 }
@@ -1827,7 +1841,7 @@ function ipdRow(r) {
 <td>${esc((p && p.latin_name) || 'N/A')}</td>
 <td><a href="#" class="ed" data-a="ipdbed:${r.id}" title="Edit room and bed">✎</a> ${r.room ? `<span title="Room">🚪 ${esc(r.room)}</span>` : ''} ${r.bed ? `<span title="Bed">🛏 ${esc(r.bed)}</span>` : ''}</td>
 <td title="${esc(r.treatment || (p && p.treatment) || '')}">${esc(trunc(r.treatment || (p && p.treatment), 16) || '')} <a href="#" class="ed" data-a="ipdtreat:${r.id}" title="Edit treatment">✎</a></td>
-<td>${due > 0 ? `<div class="due" data-a="ptpay:${p.id}" title="Record payment"><b>KHR ${due.toLocaleString('en-US')}</b></div>` : p ? `<a href="#" class="paidb" data-a="ipdbill:${p.id}" title="Open billing history">✔ Paid</a>` : `<span class="paidb">✔ Paid</span>`}</td>
+<td>${p ? `<a href="#" class="${due > 0 ? 'due' : 'paidb'}" data-a="ipdbill:${p.id}" title="Open billing history">${due > 0 ? `<b>KHR ${due.toLocaleString('en-US')}</b>` : '✔ Paid'}</a>` : `<span class="paidb">✔ Paid</span>`}</td>
 <td>${st ? fmtD(st) : 'N/A'}</td>
 <td>${r.out ? (r.dis ? fmtD(r.dis) : 'N/A') : `<button class="dcb" data-a="ipdout:${r.id}">Discharge</button>`}</td>
 <td>${d == null ? 'N/A' : d + (d == 1 ? ' day' : ' days')}</td>

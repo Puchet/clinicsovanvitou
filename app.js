@@ -480,14 +480,44 @@ R.med=function(){
     `<div class="card medicine-table-wrap"><table class="medicine-table"><thead><tr><th>Medicine</th><th>Sales units / Price</th><th>In stock</th><th>Expiration / Notification</th><th>Actions</th></tr></thead><tbody>${rows.map(([m])=>{const units=medicineUnits(m),today=new Date().toISOString().slice(0,10),alert=(m.expiration_date&&m.expiration_date<=today)||(m.notification_date&&m.notification_date<=today);return`<tr><td><div class="medicine-name">${m.photo?`<img class="medicine-thumb" src="${API_BASE}/uploads/${esc(m.photo)}" alt="">`:'<span class="medicine-thumb medicine-thumb-empty">💊</span>'}<div><b>${esc(m.name)}</b>${m.composition?`<small>${esc(m.composition)}</small>`:''}</div></div></td><td><div class="medicine-unit-list">${units.map(u=>`<span>${esc(u.name)}: <b>${K(u.price)}</b> <small>× ${u.qty}</small></span>`).join('')||'<span>—</span>'}</div></td><td><span class="bd ${m.stock>0?'':'x'}">${Number(m.stock)||0}</span></td><td><span class="${alert?'medicine-expired':''}">${m.expiration_date?`Expiry: ${esc(m.expiration_date)}`:'—'}</span>${m.notification_date?`<small class="medicine-notify ${m.notification_date<=today?'medicine-expired':''}">Notify: ${esc(m.notification_date)}</small>`:''}</td><td>${medicineActions(m)}</td></tr>`}).join('')||'<tr><td colspan="5" class="emp">Nothing here yet.</td></tr>'}</tbody></table></div>`;
 };
 const M={dash:'dash',pt:'pt',ap:'ap',ipd:'ipd',cur:'cur',dr:'dr',ch:'ch',med:'med',sv:'sv',lab:'lab',echo:'echo',dx:'dx',rx:'rx',sy:'sy',pos:'pos',st:'st',ns:'ns',bill:'bill',mr:'mr',ad:'ad',sf:'sf',an:'an',da:'da'};
-const validPage=page=>Object.hasOwn(M,page)||page=='set';
-function restorePage(){try{const hash=decodeURIComponent(window.location.hash.slice(1));if(validPage(hash)){rt=hash;return}const saved=sessionStorage.getItem('currentPage');if(validPage(saved))rt=saved}catch(e){}}
-function setPage(page){rt=page;try{sessionStorage.setItem('currentPage',page)}catch(e){}if(validPage(page)&&window.location.hash!='#'+page)window.location.hash='#'+page}
+const validPage=page=>Object.hasOwn(M,page)||page=='set'||page=='patient';
+function pageFromRoute(page){return page=='patient'?'pd':page}
+function restorePageState(){
+  try{
+    const state=JSON.parse(sessionStorage.getItem('pageState')||'{}');
+    if(typeof state.q=='string')q=state.q;
+    if(Number.isInteger(state.pg)&&state.pg>0)pg=state.pg;
+    if(['OPD','IPD','Unpaid','NSSF','Details'].includes(state.tab))tab=state.tab;
+    if(state.doctorProfileId!=null&&Number.isInteger(Number(state.doctorProfileId)))doctorProfileId=Number(state.doctorProfileId);
+    if(['payroll','timeline'].includes(state.doctorTab))doctorTab=state.doctorTab;
+    if(state.medicineViewId!=null)medicineViewId=String(state.medicineViewId);
+    if(['table','cards'].includes(state.medicineLayout))medicineLayout=state.medicineLayout;
+    if(typeof state.reportFrom=='string')reportFrom=state.reportFrom;
+    if(typeof state.reportTo=='string')reportTo=state.reportTo;
+    if(typeof state.reportQuery=='string')reportQuery=state.reportQuery;
+    if(typeof state.analyticsFrom=='string')analyticsFrom=state.analyticsFrom;
+    if(typeof state.analyticsTo=='string')analyticsTo=state.analyticsTo;
+    if(['daily','monthly','yearly'].includes(state.analyticsPeriod))analyticsPeriod=state.analyticsPeriod;
+    if(typeof cal!='undefined'&&state.cal&&['month','week','day'].includes(state.cal.mode)&&state.cal.date){
+      const d=new Date(state.cal.date);
+      if(!Number.isNaN(d.getTime()))cal={mode:state.cal.mode,d,list:!!state.cal.list};
+    }
+  }catch(e){ /* use defaults when no saved page state is available */ }
+}
+function savePageState(){
+  try{
+    const state={page:rt=='pd'?'patient':rt,q,pg,tab,doctorProfileId,doctorTab,medicineViewId,medicineLayout,reportFrom,reportTo,reportQuery,analyticsFrom,analyticsTo,analyticsPeriod};
+    if(typeof cal!='undefined')state.cal={mode:cal.mode,date:cal.d.toISOString(),list:cal.list};
+    sessionStorage.setItem('pageState',JSON.stringify(state));
+  }catch(e){ /* keep the current page usable when storage is unavailable */ }
+}
+function restorePage(){try{const hash=decodeURIComponent(window.location.hash.slice(1));if(validPage(hash)){rt=pageFromRoute(hash);return}const saved=sessionStorage.getItem('currentPage');if(validPage(saved))rt=pageFromRoute(saved)}catch(e){}}
+function setPage(page){rt=page;const route=page=='pd'?'patient':page;try{sessionStorage.setItem('currentPage',route)}catch(e){}if(validPage(route)&&window.location.hash!='#'+route)window.location.hash='#'+route}
 restorePage();
-window.addEventListener('hashchange',()=>{try{const page=decodeURIComponent(window.location.hash.slice(1));if(validPage(page)){rt=page;sessionStorage.setItem('currentPage',page);render()}}catch(e){}});
+window.addEventListener('hashchange',()=>{try{const page=decodeURIComponent(window.location.hash.slice(1));if(validPage(page)){rt=pageFromRoute(page);sessionStorage.setItem('currentPage',page);if(rt=='pd'&&typeof restorePatientPage=='function')restorePatientPage().catch(e=>toast(e.message));else render()}}catch(e){}});
 const NV=[['Patient Care',[['dash','Dashboard','▦'],['pt','Patients','👥'],['ap','Appointments','📅'],['ipd','IPD','🛏'],['cur','Current IPD','⏱'],['dr','Doctors','🩺'],['ch','Chat','💬']]],['Clinical',[['med','Medicines','💊'],['sv','Services','🩺'],['lab','Lab Templates','🧪'],['echo','Echo Templates','♡'],['dx','Diagnosis','📋'],['rx','Prescription Template','📄'],['sy','Symptoms','〰']]],['Finance & POS',[['pos','POS','🛒'],['st','Store','🏪'],['ns','NSSF','🛡'],['bill','Report','📊'],['mr','Medicine Report','📄']]],['Administration',[['ad','Address','📍'],['sf','Sample file','📎'],['an','Analytics','〰'],['da','Doctor Analytics','📊']]]],cl={};
 function nav(){$('#nv').innerHTML=NV.map(([g,it])=>`<div class="gh" data-a="grp:${g}">${g}<span>${cl[g]?'›':'⌄'}</span></div>${cl[g]?'':it.map(([id,l,ic])=>`<div class="it ${id==(rt=='pd'?'pt':rt)?'on':''}" data-a="go:${id}"><i>${ic}</i>${l}</div>`).join('')}`).join('')}
-function render(){if(validPage(rt))setPage(rt);const f=document.activeElement&&document.activeElement.id=='q';const cl=D.clinic||{};$('#tt').textContent=cl.name||'Sovanvitou';$('#lgo').innerHTML=cl.logo?`<img src="${API_BASE}/uploads/${esc(cl.logo)}" alt="" style="max-height:34px;max-width:100%">`:'CLINIC SOVANVITOU';$('#v').classList.toggle('tight',rt=='pt');$('#v').innerHTML=`<div class="w">${(R[rt]||(()=>tp(rt)))()}</div>`;nav();if(f){const e=$('#q');e.focus();e.setSelectionRange(99,99)}}
+function render(){if(validPage(rt)||rt=='pd')setPage(rt);const f=document.activeElement&&document.activeElement.id=='q';const cl=D.clinic||{};$('#tt').textContent=cl.name||'Sovanvitou';$('#lgo').innerHTML=cl.logo?`<img src="${API_BASE}/uploads/${esc(cl.logo)}" alt="" style="max-height:34px;max-width:100%">`:'CLINIC SOVANVITOU';$('#v').classList.toggle('tight',rt=='pt');$('#v').innerHTML=`<div class="w">${(R[rt]||(()=>tp(rt)))()}</div>`;nav();savePageState();if(f){const e=$('#q');e.focus();e.setSelectionRange(99,99)}}
 function toast(m){const t=$('#ts');t.textContent=T(m);t.style.display='block';clearTimeout(nt);nt=setTimeout(()=>t.style.display='none',2200)}
 function modal(t,F,V,cb,opts={}){$('#mf').className=opts.className||'';$('#mf').innerHTML=`<h3 style="margin:0">${t} New Symptom</h3>${F.map(([l,k,ty,o4,placeholder])=>ty=='img'?imgField(l,k,V[k]):ty=='ta'?`<label class="fl">${l}<textarea class="in" name="${k}" placeholder="${esc(placeholder||'')}">${esc(V[k]??'')}</textarea></label>`:ty=='number'?`<label class="fl">${l}<input class="in" type="number" name="${k}" min="0" step="1" value="${esc(V[k]??'')}" placeholder="${esc(placeholder||'')}"></label>`:ty&&ty!='pw'?fld(l,k,ty,V[k],o4):ty=='pw'?`<label>${l}<input class="in" type="password" name="${k}" required></label>`:`<label>${l}<input class="in" name="${k}" value="${esc(V[k]??'')}" placeholder="${esc(placeholder||'')}" ${k=='name'?'required':''}></label>`).join('')}<div class="tools" style="justify-content:flex-end"><button type="button" class="btn" data-a="close">Cancel</button><button class="btn p">${opts.submit||'Save'}</button></div>`;$('#md').classList.add('on');$('#mf').onsubmit=async e=>{e.preventDefault();const o=Object.fromEntries(new FormData(e.target));F.forEach(([l,k])=>{if(!isNaN(V[k])&&V[k]!=='')o[k]=+o[k]});try{await cb(o);await load();$('#md').classList.remove('on');render()}catch(er){toast(er.message)}}}
 function updateMedicineStock(index){const m=D.med[index];if(!m)return toast('Medicine not found');modal('Update Stock',[['In Stock','stock','number']],{stock:Number(m.stock)||0},async o=>{const stock=Number(o.stock);if(!Number.isInteger(stock)||stock<0)throw new Error('Stock must be a non-negative whole number');await api('PUT','medicines/'+m.id,{stock})},{submit:'Update Stock'});$('#mf [name="stock"]').required=true}
@@ -870,7 +900,7 @@ else if(a=='reportdelete'){if(confirm('Delete this report entry?'))run(api('DELE
 else if(a=='analytics-period'){analyticsPeriod=x;render()}
 else if(a=='analytics-clear'){analyticsFrom='';analyticsTo='';analyticsPeriod='daily';render()}
 else if(a=='doctor-analytics-clear'){doctorAnalyticsFrom='';doctorAnalyticsTo='';doctorAnalyticsId='';render()}
-else if(a=='go'){setPage(x);q='';pg=1;doctorProfileId=null;$('#sd').classList.remove('on');render()}else if(a=='grp'){cl[x]=!cl[x];nav()}else if(a=='menu'){if((window.innerWidth||0)>820){const on=document.body.classList.toggle('sbc');try{localStorage.setItem('sbc',on?'1':'0')}catch(e){}}else $('#sd').classList.toggle('on')}
+else if(a=='go'){setPage(x);q='';pg=1;doctorProfileId=null;medicineViewId=null;$('#sd').classList.remove('on');render()}else if(a=='grp'){cl[x]=!cl[x];nav()}else if(a=='menu'){if((window.innerWidth||0)>820){const on=document.body.classList.toggle('sbc');try{localStorage.setItem('sbc',on?'1':'0')}catch(e){}}else $('#sd').classList.toggle('on')}
 else if(a=='rmpic'){$('#pk_'+x).value='';$('#pv_'+x).hidden=true;$('#pf_'+x).value='';if(x=='photo'&&$('#doctor-photo-placeholder'))$('#doctor-photo-placeholder').hidden=false;if(x=='photo'&&$('#medicine-photo-placeholder'))$('#medicine-photo-placeholder').hidden=false}else if(a=='settings'){setPage('set');q='';$('#sd').classList.remove('on');render()}else if(a=='lang')setLang(x);else if(a=='th'){document.documentElement.dataset.theme=x;render()}else if(a=='pwd')modal('Change password',[['Current password','current','pw'],['New password','password','pw']],{},o=>api('POST','auth/password',o).then(()=>toast('Password changed')))
 else if(a=='saveclinic'){const o={};document.querySelectorAll('#cf [name]').forEach(e=>{o[e.name]=e.type=='checkbox'?(e.checked?1:0):e.value});o.rate=+o.rate;const ct={};Object.keys(o).forEach(k=>{if(k.startsWith('cnf_')){ct[k.slice(4)]=o[k];delete o[k]}});if(Object.keys(ct).length)o.cnf_text=ct;api('PUT','clinic',o).then(c=>{D.clinic=c;toast('Saved');render()}).catch(er=>toast(er.message))}
 else if(a=='theme'){const r=document.documentElement;r.dataset.theme=(r.dataset.theme||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'))=='dark'?'light':'dark'}
@@ -983,4 +1013,12 @@ function setLang(l){lang=l;try{localStorage.setItem('kl',l)}catch(e){}document.d
 let _q=0;new MutationObserver(()=>{if(lang=='km'&&!_q){_q=1;requestAnimationFrame(()=>{_q=0;tr(document.body)})}}).observe(document.body,{childList:true,subtree:true});
 /*END*/
 document.documentElement.lang=lang;tr(document.body);
-(async()=>{try{const st=await fetch(API_BASE+'/api/auth/status').then(r=>r.json());needSetup=st.needsSetup;if(needSetup)$('#ln').textContent='First run: choose the admin email and a password (8+ characters).';if(tok&&!needSetup){await load();$('#lg').style.display='none';render()}}catch(e){}})();
+(async()=>{try{const st=await fetch(API_BASE+'/api/auth/status').then(r=>r.json());needSetup=st.needsSetup;if(needSetup)$('#ln').textContent='First run: choose the admin email and a password (8+ characters).';if(tok&&!needSetup){
+  await load();
+  restorePageState();
+  if(doctorProfileId!=null&&!D.dr.some(doctor=>doctor.id==doctorProfileId))doctorProfileId=null;
+  if(medicineViewId!=null&&!D.med.some(medicine=>String(medicine.id)==medicineViewId))medicineViewId=null;
+  $('#lg').style.display='none';
+  if(rt=='pd'&&typeof restorePatientPage=='function')await restorePatientPage();
+  else render();
+}}catch(e){}})();
