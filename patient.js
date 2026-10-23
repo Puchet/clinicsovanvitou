@@ -20,7 +20,7 @@ const fSel = (l, k, v, opts) => `<label class="fl">${l}<select class="in" name="
 const fld = (l, k, ty, v, o) => ty == 'sel' ? fSel(l, k, v, o) : ty == 'ta' ? fTa(l, k, v) : fIn(l, k, v ?? '', ty);
 function openForm(title, body, save, o = {}) {
   const f = $('#mf'); f.className = o.cls || 'wide';
-  const heading = o.close ? `<div class="operation-form-heading"><h3>${title}</h3><button type="button" class="btn s" data-a="close" aria-label="Close">×</button></div>` : `<h3 style="margin:0 0 8px">${title}</h3>`;
+  const heading = o.close ? `<div class="operation-form-heading"><h3>${title}</h3><button type="button" class="btn s" data-a="close" aria-label="${esc(o.closeLabel || 'Close')}">×</button></div>` : `<h3 style="margin:0 0 8px">${title}</h3>`;
   f.innerHTML = `${heading}${body}<div class="tools fb" style="justify-content:flex-end">${o.extra || ''}${o.hideCancel ? '' : '<button type="button" class="btn" data-a="close">Cancel</button>'}<button class="btn p">${o.ok || 'Save'}</button></div>`;
   $('#md').classList.add('on');
   f.onsubmit = async (e) => { e.preventDefault(); try { await save(f); $('#md').classList.remove('on'); } catch (er) { toast(er.message); } };
@@ -1263,6 +1263,12 @@ function pAct(a, x, y, el) {
   else if (a == 'payall') return payForm(pdId, true);
   else if (a == 'payreceipt') paymentReceipt(+x);
   else if (a == 'recpay') payForm(pdId);
+  else if (a == 'payall-shortcut') payAllShortcut(x);
+  else if (a == 'payall-print') payAllPrint(x == 'compact');
+  else if (a == 'payall-qr') payAllQr();
+  else if (a == 'payall-discount-open') payAllDiscountOpen();
+  else if (a == 'payall-discount-close') { const overlay = document.querySelector('#payall-discount-overlay'); if (overlay) overlay.remove(); }
+  else if (a == 'payall-discount-apply') payAllDiscountApply();
   else if (a == 'ipdbill') openIpdBilling(+x).catch((e) => toast(e.message));
   else if (a == 'tfadd') { tfRows = tfDraftRows(); tfRows.push({ date: nowLocal(), vitals: '', diagnosis: '', notes: '' }); tfRender(); }
   else if (a == 'tfremove') { tfRows = tfDraftRows(); tfRows.splice(+x, 1); tfRender(); }
@@ -1276,7 +1282,10 @@ function pAct(a, x, y, el) {
 }
 document.addEventListener('change', async (e) => {
   const t = e.target;
-  if (t.id == 'pfp') { try { toast('Uploading…'); const ph = await upl(t.files[0]); await api('PUT', 'patients/' + pdId, { photo: ph }); await load(); render(); } catch (er) { toast(er.message); } }
+  if (t.dataset && t.dataset.payallDiscountItem != null) payAllDiscountRefresh();
+  else if (t.name == 'payall_discount_currency') payAllDiscountRefresh();
+  else if (t.name == 'all_discount_currency' && $('#mf').classList.contains('payall-dialog')) payAllRefresh();
+  else if (t.id == 'pfp') { try { toast('Uploading…'); const ph = await upl(t.files[0]); await api('PUT', 'patients/' + pdId, { photo: ph }); await load(); render(); } catch (er) { toast(er.message); } }
   else if (t.id == 'sch-selection') schItemChanged(t.value);
   else if (t.dataset && t.dataset.investigationService) {
     const id = String(t.dataset.investigationService);
@@ -1289,7 +1298,9 @@ document.addEventListener('change', async (e) => {
   else if (t.dataset && t.dataset.fill && t.value) { const ta = t.parentElement.querySelector('textarea'); ta.value = (ta.value ? ta.value.replace(/[,\s]+$/, '') + ', ' : '') + t.value; t.value = ''; }
 });
 document.addEventListener('input', (e) => {
-  if (e.target.id == 'pdd') { pdDate = e.target.value; $('#rp').innerHTML = recPanel(); }
+  if (['payall_discount_input', 'payall_discount_currency'].includes(e.target.name)) payAllDiscountRefresh();
+  else if (['received', 'all_discount'].includes(e.target.name) && $('#mf').classList.contains('payall-dialog')) payAllRefresh();
+  else if (e.target.id == 'pdd') { pdDate = e.target.value; $('#rp').innerHTML = recPanel(); }
   else if (e.target.id == 'investigation-service-search') {
     investigationQuery = e.target.value;
     const list = $('#investigation-service-list');
@@ -1456,16 +1467,183 @@ function tfPrintAll() {
   printDoc('Treatment Follow-up', ptBlock(p) + (body || `<p>${T('No history records yet.')}</p>`));
 }
 // ---------- billing ----------
+let payAllContext = null;
+const payAllLabel = (khmer, english) => `${khmer} / ${english}`;
 async function payForm(pid, payAll = false) {
   const p = ptById(pid); if (!p) return;
   const list = await api('GET', 'records?patient_id=' + pid + '&limit=5000'), due = billTotals(list).bal;
   if (!(due > 0)) return toast('Paid');
-  openForm('Record payment', `<p>${esc(p.name)} — Amount due: <b>${K(due)}</b> <span class="mu">(${usd(due)})</span></p>${fIn('Amount paid (KHR)', 'amount', due, 'number', `min="1" max="${due}" ${payAll ? 'readonly' : ''} required`)}${fSel('Method', 'method', 'Cash', ['Cash', 'Bank'])}`, async (f) => {
-    const m = new FormData(f), amt = Math.round(+m.get('amount') || 0); if (amt < 1) throw new Error('Enter an amount'); if (amt > due) throw new Error('Amount is more than the balance'); if (payAll && amt !== due) throw new Error('Payment must match the full balance');
-    const outstandingItems = billingOutstandingItems(list);
-    await api('POST', 'records', { patient_id: pid, kind: 'payment', date: ymd(new Date()), data: { amount: amt, method: m.get('method'), item_count: outstandingItems.length } });
+  if (!payAll) {
+    openForm('Record payment', `<p>${esc(p.name)} — Amount due: <b>${K(due)}</b> <span class="mu">(${usd(due)})</span></p>${fIn('Amount paid (KHR)', 'amount', due, 'number', `min="1" max="${due}" required`)}${fSel('Method', 'method', 'Cash', ['Cash', 'Bank'])}`, async (f) => {
+      const m = new FormData(f), amt = Math.round(+m.get('amount') || 0); if (amt < 1) throw new Error('Enter an amount'); if (amt > due) throw new Error('Amount is more than the balance');
+      const outstandingItems = billingOutstandingItems(list);
+      await api('POST', 'records', { patient_id: pid, kind: 'payment', date: ymd(new Date()), data: { amount: amt, applied_amount: amt, method: m.get('method'), item_count: outstandingItems.length } });
+      await load(); if (rt == 'pd' && pdId == pid) await loadRecs(); render(); toast('Saved');
+    }, { cls: 'wide', ok: 'Save' });
+    return;
+  }
+  const outstandingItems = billingOutstandingItems(list);
+  const itemRows = outstandingItems.map((item, index) => `<tr><td>${index + 1}</td><td>${esc(item.name)}</td><td>${item.quantity || 1}</td><td>${K(item.price)}</td></tr>`).join('');
+  const methodOptions = [['Cash', payAllLabel('សាច់ប្រាក់', 'Cash')], ['Bank', payAllLabel('ធនាគារ', 'Bank')]];
+  payAllContext = { pid, list, due, items: outstandingItems, selectedIndexes: [], discountInput: 0, discountCurrency: 'KHR', allDiscountInput: 0, allDiscountCurrency: 'KHR' };
+  const body = `<section class="payall-patient"><div><small>${payAllLabel('អ្នកជំងឺ', 'Patient')}</small><b>${esc(p.name)}</b></div><div><small>${payAllLabel('សេវាមិនទាន់បង់', 'Unpaid services')}</small><b>${outstandingItems.length}</b></div></section>
+    <div class="payall-items-wrap"><table class="payall-items"><thead><tr><th>${payAllLabel('ល.រ', 'No.')}</th><th>${payAllLabel('សេវាកម្ម / បរិយាយ', 'Service / Description')}</th><th>${payAllLabel('ចំនួន', 'Qty')}</th><th>${payAllLabel('ទឹកប្រាក់', 'Amount')}</th></tr></thead><tbody>${itemRows || `<tr><td colspan="4">${payAllLabel('មិនមានសេវាមិនទាន់បង់', 'No unpaid services')}</td></tr>`}</tbody></table></div>
+    <section class="payall-summary"><div><span>${payAllLabel('តម្លៃសរុប', 'Total price')}</span><b>${K(due)}</b></div>
+      <div class="payall-discount-row payall-all-discount"><label for="payall-all-discount">${payAllLabel('បញ្ចុះតម្លៃគ្រប់សេវា', 'Discount all services')}</label><input class="in" id="payall-all-discount" name="all_discount" type="number" min="0" step="1" value="0" aria-label="${payAllLabel('ចំនួនបញ្ចុះតម្លៃគ្រប់សេវា', 'Discount amount for all services')}"><select class="in" name="all_discount_currency" aria-label="${payAllLabel('រូបិយប័ណ្ណបញ្ចុះតម្លៃគ្រប់សេវា', 'Currency for all-services discount')}"><option value="KHR">៛ KHR</option><option value="USD">$ USD</option></select></div>
+      <div class="payall-discount-row"><span>${payAllLabel('បញ្ចុះតម្លៃតាមសេវាដែលបានជ្រើសរើស', 'Discount selected services')}</span><b id="payall-discount-total">${K(0)}</b><button type="button" class="btn payall-tag" data-a="payall-discount-open" title="${payAllLabel('ជ្រើសរើសសេវាសម្រាប់បញ្ចុះតម្លៃ', 'Select services for discount')}" aria-label="${payAllLabel('ជ្រើសរើសសេវាសម្រាប់បញ្ចុះតម្លៃ', 'Select services for discount')}">🏷 ${payAllLabel('ជ្រើសរើស', 'Select items')}</button></div>
+      <div class="payall-final"><span>${payAllLabel('តម្លៃត្រូវបង់', 'Final total')}</span><b id="payall-final-total">${K(due)}</b></div>
+    </section>
+    <section class="payall-fields">${fSel(payAllLabel('វិធីទូទាត់', 'Payment method'), 'method', 'Cash', methodOptions)}${fIn(payAllLabel('កាលបរិច្ឆេទទូទាត់', 'Payment date'), 'payment_date', ymd(new Date()), 'date', 'required')}${fIn(payAllLabel('ប្រាក់ទទួល (KHR)', 'Money received (KHR)'), 'received', due, 'number', 'min="0" step="1" required')}${fIn(payAllLabel('ឈ្មោះអ្នកទទួលប្រាក់', 'Received by'), 'receiver_name', D.user && D.user.name || '', 'text', 'required')}</section>
+    <div class="payall-shortcuts" aria-label="${payAllLabel('ប៊ូតុងទូទាត់រហ័ស', 'Payment shortcuts')}"><button type="button" class="btn" data-a="payall-print" aria-label="${payAllLabel('បោះពុម្ពវិក្កយបត្រ', 'Print payment invoice')}" title="${payAllLabel('បោះពុម្ពវិក្កយបត្រ', 'Print payment invoice')}">▣</button><button type="button" class="btn" data-a="payall-shortcut:exact" title="${payAllLabel('ទទួលប្រាក់ត្រឹមត្រូវតាមតម្លៃត្រូវបង់', 'Receive the exact final total')}">S-B</button><button type="button" class="btn" data-a="payall-shortcut:1000" title="${payAllLabel('បន្ថែម 1,000 KHR ទៅប្រាក់ទទួល', 'Add 1,000 KHR to money received')}">S</button><button type="button" class="btn" data-a="payall-shortcut:10000" title="${payAllLabel('បន្ថែម 10,000 KHR ទៅប្រាក់ទទួល', 'Add 10,000 KHR to money received')}">D</button><button type="button" class="btn" data-a="payall-shortcut:100000" title="${payAllLabel('បន្ថែម 100,000 KHR ទៅប្រាក់ទទួល', 'Add 100,000 KHR to money received')}">A</button></div>
+    <div class="payall-shortcuts payall-more-actions"><button type="button" class="btn" data-a="payall-print:compact" aria-label="${payAllLabel('បោះពុម្ពបង្កាន់ដៃសង្ខេប', 'Print compact payment slip')}" title="${payAllLabel('បោះពុម្ពបង្កាន់ដៃសង្ខេប', 'Print compact payment slip')}">▣</button><button type="button" class="btn" data-a="payall-shortcut:exact" title="${payAllLabel('កំណត់ប្រាក់ទទួលឱ្យស្មើនឹងតម្លៃត្រូវបង់', 'Set money received to the exact final total')}">SV</button><button type="button" class="btn" data-a="payall-qr" title="${payAllLabel('បង្ហាញ QR ធនាគារ', 'Show configured bank QR')}">QR</button></div>`;
+  openForm(`${payAllLabel('ទូទាត់ប្រាក់', 'Pay All')} — ${esc(p.name)}`, body, async (f) => {
+    const m = new FormData(f), enteredDiscount = payAllContext.discountInput, currency = payAllContext.discountCurrency;
+    const allDiscount = Number(m.get('all_discount')), allCurrency = String(m.get('all_discount_currency') || 'KHR');
+    const calculation = payAllDiscountCalculation(outstandingItems, payAllContext.selectedIndexes, enteredDiscount, currency, allDiscount, allCurrency);
+    if (!Number.isFinite(enteredDiscount) || enteredDiscount < 0 || !Number.isFinite(allDiscount) || allDiscount < 0) throw new Error(payAllLabel('សូមបញ្ចូលចំនួនបញ្ចុះតម្លៃឱ្យបានត្រឹមត្រូវ', 'Enter a valid discount'));
+    if (!['KHR', 'USD'].includes(allCurrency)) throw new Error(payAllLabel('សូមជ្រើសរើសរូបិយប័ណ្ណបញ្ចុះតម្លៃ', 'Choose a valid discount currency'));
+    if (calculation.itemDiscount > calculation.selectedTotal) throw new Error(payAllLabel('ការបញ្ចុះតម្លៃលើសពីតម្លៃសេវាដែលបានជ្រើសរើស', 'Selected-services discount exceeds selected services total'));
+    if (calculation.discount > due) throw new Error(payAllLabel('ការបញ្ចុះតម្លៃសរុបលើសពីតម្លៃត្រូវបង់', 'Total discount is more than the balance'));
+    const received = Number(m.get('received'));
+    if (!Number.isFinite(received) || received < calculation.finalTotal) throw new Error(`${payAllLabel('ប្រាក់ទទួលត្រូវគ្រប់ចំនួនត្រូវបង់', 'Money received must cover the final total')}: ${K(calculation.finalTotal)}`);
+    const method = String(m.get('method') || '');
+    if (!['Cash', 'Bank'].includes(method)) throw new Error(payAllLabel('សូមជ្រើសរើសវិធីទូទាត់', 'Choose a payment method'));
+    const receiverName = String(m.get('receiver_name') || '').trim();
+    if (!receiverName) throw new Error(payAllLabel('សូមបញ្ចូលឈ្មោះអ្នកទទួលប្រាក់', 'Enter the name of the person receiving payment'));
+    const paymentDate = String(m.get('payment_date') || '');
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate)) throw new Error(payAllLabel('សូមបញ្ចូលកាលបរិច្ឆេទទូទាត់ឱ្យបានត្រឹមត្រូវ', 'Enter a valid payment date'));
+    const itemDiscounts = payAllDiscountAllocation(outstandingItems, payAllContext.selectedIndexes, calculation.itemDiscount);
+    const allItemDiscounts = payAllGeneralDiscountAllocation(outstandingItems, itemDiscounts, calculation.allDiscount);
+    await api('POST', 'records', { patient_id: pid, kind: 'payment', date: paymentDate, data: {
+      amount: Math.round(received), applied_amount: due, final_total: calculation.finalTotal, received: Math.round(received),
+      discount: calculation.discount, discount_all: calculation.allDiscount, discount_all_input: allDiscount, discount_all_currency: allCurrency,
+      discount_item: calculation.itemDiscount, discount_input: enteredDiscount, discount_currency: currency,
+      discount_items: payAllContext.selectedIndexes.map((index) => ({ name: outstandingItems[index].name, price: outstandingItems[index].price, discount: itemDiscounts[index] })),
+      change: Math.round(received - calculation.finalTotal), method, receiver_name: receiverName, item_count: outstandingItems.length,
+      items: itemDiscounts.map((discountAmount, index) => {
+        const item = outstandingItems[index];
+        return { category: item.category, name: item.name, price: item.price, discount: discountAmount + allItemDiscounts[index], discount_item: discountAmount, discount_all: allItemDiscounts[index], quantity: item.quantity || 1, unitPrice: item.unitPrice ?? item.price };
+      })
+    } });
     await load(); if (rt == 'pd' && pdId == pid) await loadRecs(); render(); toast('Saved');
-  }, { cls: 'wide', ok: 'Save' });
+  }, { cls: 'wide payall-dialog', ok: payAllLabel('បញ្ជាក់ការទូទាត់', 'Confirm payment'), close: true, closeLabel: payAllLabel('បិទ', 'Close') });
+  $('#mf').dataset.payallDue = String(due);
+}
+function payAllCalculation(due, discount, currency) {
+  const rate = Number(D.clinic.rate) || 4000;
+  const value = Number(discount);
+  const appliedDiscount = Math.round(value * (currency == 'USD' ? rate : 1));
+  return { discount: appliedDiscount, finalTotal: Math.max(0, Math.round(due - appliedDiscount)) };
+}
+function payAllDiscountCalculation(items, selectedIndexes, discount, currency, allDiscountInput = 0, allCurrency = 'KHR') {
+  const selectedTotal = selectedIndexes.reduce((sum, index) => sum + (items[index] ? items[index].price : 0), 0);
+  const itemDiscount = payAllCalculation(selectedTotal, discount, currency).discount;
+  const allDiscount = payAllCalculation(items.reduce((sum, item) => sum + item.price, 0), allDiscountInput, allCurrency).discount;
+  const total = items.reduce((sum, item) => sum + item.price, 0);
+  return { selectedTotal, itemDiscount, allDiscount, discount: itemDiscount + allDiscount, finalTotal: Math.max(0, Math.round(total - itemDiscount - allDiscount)) };
+}
+function payAllDiscountAllocation(items, selectedIndexes, discount) {
+  const amounts = items.map(() => 0), selectedTotal = selectedIndexes.reduce((sum, index) => sum + (items[index] ? items[index].price : 0), 0);
+  let remaining = discount;
+  selectedIndexes.forEach((index, position) => {
+    if (!items[index] || selectedTotal <= 0) return;
+    const amount = position == selectedIndexes.length - 1 ? remaining : Math.min(remaining, Math.floor(discount * items[index].price / selectedTotal));
+    amounts[index] = amount;
+    remaining -= amount;
+  });
+  return amounts;
+}
+function payAllGeneralDiscountAllocation(items, itemDiscounts, discount) {
+  const remainingPrices = items.map((item, index) => Math.max(0, item.price - (itemDiscounts[index] || 0)));
+  const total = remainingPrices.reduce((sum, price) => sum + price, 0);
+  let lastEligible = -1;
+  remainingPrices.forEach((price, index) => { if (price > 0) lastEligible = index; });
+  let allocated = 0;
+  return remainingPrices.map((price, index) => {
+    if (!price || !total) return 0;
+    const amount = index == lastEligible ? discount - allocated : Math.floor(discount * price / total);
+    allocated += amount;
+    return amount;
+  });
+}
+function payAllDiscountModalHtml() {
+  const context = payAllContext;
+  if (!context) return '';
+  const rows = context.items.map((item, index) => `<label class="payall-discount-item"><input type="checkbox" data-payall-discount-item="${index}" ${context.draftSelectedIndexes.includes(index) ? 'checked' : ''}><span>${esc(item.name)}</span><b>${K(item.price)}</b></label>`).join('');
+  return `<div id="payall-discount-overlay" class="payall-discount-overlay"><section class="payall-discount-dialog" role="dialog" aria-modal="true" aria-labelledby="payall-discount-title"><header><h3 id="payall-discount-title">${payAllLabel('ជ្រើសរើសសេវាសម្រាប់បញ្ចុះតម្លៃ', 'Select services for discount')}</h3><button type="button" class="btn s" data-a="payall-discount-close" aria-label="${payAllLabel('បិទ', 'Close')}">×</button></header><div class="payall-discount-list">${rows || `<p class="emp">${payAllLabel('មិនមានសេវាមិនទាន់បង់', 'No unpaid services')}</p>`}</div><div class="payall-discount-selected"><span>${payAllLabel('តម្លៃសេវាដែលបានជ្រើសរើស', 'Selected services total')}</span><b id="payall-selected-total">${K(0)}</b></div><div class="payall-discount-entry"><input class="in" name="payall_discount_input" type="number" min="0" step="1" value="${esc(context.draftDiscountInput)}" aria-label="${payAllLabel('ចំនួនបញ្ចុះតម្លៃ', 'Discount amount')}"><select class="in" name="payall_discount_currency" aria-label="${payAllLabel('រូបិយប័ណ្ណបញ្ចុះតម្លៃ', 'Discount currency')}"><option value="KHR" ${context.draftDiscountCurrency == 'KHR' ? 'selected' : ''}>៛</option><option value="USD" ${context.draftDiscountCurrency == 'USD' ? 'selected' : ''}>$</option></select></div><p class="payall-discount-error" id="payall-discount-error" aria-live="polite"></p><div class="payall-discount-actions"><button type="button" class="btn p" data-a="payall-discount-apply">${payAllLabel('អនុវត្ត', 'Apply')}</button></div></section></div>`;
+}
+function payAllDiscountOpen() {
+  if (!payAllContext) return toast(payAllLabel('មិនមានព័ត៌មានទូទាត់ទេ', 'Payment details are unavailable'));
+  const old = document.querySelector('#payall-discount-overlay');
+  if (old) old.remove();
+  payAllContext.draftSelectedIndexes = payAllContext.selectedIndexes.slice();
+  payAllContext.draftDiscountInput = payAllContext.discountInput;
+  payAllContext.draftDiscountCurrency = payAllContext.discountCurrency;
+  $('#md').insertAdjacentHTML('beforeend', payAllDiscountModalHtml());
+  payAllDiscountRefresh();
+}
+function payAllDiscountRefresh() {
+  const overlay = document.querySelector('#payall-discount-overlay');
+  if (!overlay || !payAllContext) return;
+  const checked = Array.from(overlay.querySelectorAll('[data-payall-discount-item]:checked')).map((input) => Number(input.dataset.payallDiscountItem));
+  const selectedTotal = checked.reduce((sum, index) => sum + (payAllContext.items[index] ? payAllContext.items[index].price : 0), 0);
+  const amountInput = overlay.querySelector('[name="payall_discount_input"]'), currencyInput = overlay.querySelector('[name="payall_discount_currency"]');
+  const entered = Number(amountInput.value), currency = currencyInput.value, discount = payAllCalculation(0, entered, currency).discount;
+  const selectedTotalElement = overlay.querySelector('#payall-selected-total'), errorElement = overlay.querySelector('#payall-discount-error');
+  if (selectedTotalElement) selectedTotalElement.textContent = K(selectedTotal);
+  if (errorElement) errorElement.textContent = entered > 0 && checked.length == 0
+    ? payAllLabel('សូមជ្រើសរើសសេវាកម្មយ៉ាងតិចមួយ', 'Select at least one service')
+    : discount > selectedTotal ? payAllLabel('ការបញ្ចុះតម្លៃលើសពីតម្លៃសេវាដែលបានជ្រើសរើស', 'Discount exceeds selected services total') : '';
+}
+function payAllDiscountApply() {
+  const overlay = document.querySelector('#payall-discount-overlay');
+  if (!overlay || !payAllContext) return;
+  payAllDiscountRefresh();
+  const checked = Array.from(overlay.querySelectorAll('[data-payall-discount-item]:checked')).map((input) => Number(input.dataset.payallDiscountItem));
+  const amountInput = overlay.querySelector('[name="payall_discount_input"]'), currencyInput = overlay.querySelector('[name="payall_discount_currency"]');
+  const entered = Number(amountInput.value), currency = currencyInput.value;
+  const calculation = payAllDiscountCalculation(payAllContext.items, checked, entered, currency);
+  if (!Number.isFinite(entered) || entered < 0) return toast(payAllLabel('សូមបញ្ចូលចំនួនបញ្ចុះតម្លៃឱ្យបានត្រឹមត្រូវ', 'Enter a valid discount'));
+  if (entered > 0 && !checked.length) return toast(payAllLabel('សូមជ្រើសរើសសេវាកម្មយ៉ាងតិចមួយ', 'Select at least one service'));
+  if (!['KHR', 'USD'].includes(currency)) return toast(payAllLabel('សូមជ្រើសរើសរូបិយប័ណ្ណបញ្ចុះតម្លៃ', 'Choose a valid discount currency'));
+  if (calculation.discount > calculation.selectedTotal) return toast(payAllLabel('ការបញ្ចុះតម្លៃលើសពីតម្លៃសេវាដែលបានជ្រើសរើស', 'Discount is more than the selected services total'));
+  payAllContext.selectedIndexes = checked;
+  payAllContext.discountInput = entered;
+  payAllContext.discountCurrency = currency;
+  overlay.remove();
+  payAllRefresh();
+}
+function payAllRefresh() {
+  const form = $('#mf'), context = payAllContext;
+  if (!context) return;
+  context.allDiscountInput = Number(form.querySelector('[name="all_discount"]').value) || 0;
+  context.allDiscountCurrency = form.querySelector('[name="all_discount_currency"]').value;
+  const calculation = payAllDiscountCalculation(context.items, context.selectedIndexes, context.discountInput, context.discountCurrency, context.allDiscountInput, context.allDiscountCurrency);
+  $('#payall-final-total').textContent = K(calculation.finalTotal);
+  $('#payall-discount-total').textContent = K(calculation.discount);
+}
+function payAllShortcut(kind) {
+  const form = $('#mf'), received = form.querySelector('[name="received"]'), context = payAllContext;
+  payAllRefresh();
+  const finalTotal = payAllDiscountCalculation(context.items, context.selectedIndexes, context.discountInput, context.discountCurrency, context.allDiscountInput, context.allDiscountCurrency).finalTotal;
+  received.value = kind == 'exact' ? finalTotal : finalTotal + Number(kind);
+  payAllRefresh();
+}
+function payAllPrint(compact = false) {
+  if (!payAllContext) return toast('Payment details are unavailable');
+  const patient = ptById(payAllContext.pid), rows = payAllContext.items;
+  if (!patient) return toast('Patient not found');
+  const due = payAllContext.due, calculation = payAllDiscountCalculation(rows, payAllContext.selectedIndexes, payAllContext.discountInput, payAllContext.discountCurrency);
+  const html = `<h2>${payAllLabel('វិក្កយបត្រទូទាត់', 'Payment invoice')}</h2><p>${payAllLabel('អ្នកជំងឺ', 'Patient')}: ${esc(patient.name)} · ${payAllLabel('កាលបរិច្ឆេទ', 'Date')}: ${esc(ymd(new Date()))}</p><table><thead><tr><th>${payAllLabel('ល.រ', 'No.')}</th><th>${payAllLabel('សេវាកម្ម', 'Service')}</th><th>${payAllLabel('ចំនួន', 'Qty')}</th><th>${payAllLabel('ទឹកប្រាក់', 'Amount')}</th></tr></thead><tbody>${rows.map((item, index) => `<tr><td>${index + 1}</td><td>${esc(item.name)}</td><td>${item.quantity || 1}</td><td>${K(item.price)}</td></tr>`).join('')}</tbody><tfoot><tr><th colspan="3">${payAllLabel('តម្លៃសរុប', 'Total')}</th><th>${K(due)}</th></tr><tr><th colspan="3">${payAllLabel('បញ្ចុះតម្លៃ', 'Discount')}</th><th>${K(calculation.discount)}</th></tr><tr><th colspan="3">${payAllLabel('តម្លៃត្រូវបង់', 'Final total')}</th><th>${K(calculation.finalTotal)}</th></tr></tfoot></table>`;
+  printDoc(compact ? payAllLabel('បង្កាន់ដៃទូទាត់', 'Payment slip') : payAllLabel('វិក្កយបត្រទូទាត់', 'Payment invoice'), html);
+}
+function payAllQr() {
+  const qr = D.clinic && D.clinic.qr;
+  if (!qr) return toast('No bank QR code has been configured in Settings');
+  if (!payAllContext) return toast('Payment details are unavailable');
+  const due = payAllContext.due, calculation = payAllDiscountCalculation(payAllContext.items, payAllContext.selectedIndexes, payAllContext.discountInput, payAllContext.discountCurrency);
+  const patient = ptById(payAllContext.pid);
+  printDoc(payAllLabel('ទូទាត់តាម QR ធនាគារ', 'Bank QR payment'), `<div style="text-align:center"><h2>${payAllLabel('ទូទាត់តាម QR ធនាគារ', 'Bank QR payment')}</h2><p>${payAllLabel('អ្នកជំងឺ', 'Patient')}: ${esc(patient && patient.name || '')} · ${payAllLabel('តម្លៃត្រូវបង់', 'Final total')}: ${K(calculation.finalTotal)}</p><img src="${API_BASE}/uploads/${esc(qr)}" alt="${payAllLabel('QR ទូទាត់តាមធនាគារ', 'Bank payment QR')}" style="width:70mm;max-height:70mm;object-fit:contain"></div>`);
 }
 function billingLineItems(list) {
   return list.slice().sort((a, b) => (a.date || '').localeCompare(b.date || '') || (+a.id || 0) - (+b.id || 0)).flatMap((r) => {
@@ -1479,14 +1657,14 @@ function billingLineItems(list) {
   });
 }
 function billingOutstandingItems(list) {
-  let paid = list.filter((r) => r.kind == 'payment').reduce((sum, r) => sum + (+jd(r).amount || 0), 0);
+  let paid = list.filter((r) => r.kind == 'payment').reduce((sum, r) => sum + (Number(jd(r).applied_amount ?? jd(r).amount) || 0), 0);
   return billingLineItems(list).map((item) => {
     const applied = Math.min(paid, item.price);
     paid -= applied;
     return { ...item, price: item.price - applied };
   }).filter((item) => item.price > 0);
 }
-const billTotals = (list) => { const ch = billingLineItems(list).reduce((t, item) => t + item.price, 0), pd = list.filter((r) => r.kind == 'payment').reduce((t, r) => t + (+jd(r).amount || 0), 0); return { ch, pd, bal: Math.max(0, ch - pd) }; };
+const billTotals = (list) => { const ch = billingLineItems(list).reduce((t, item) => t + item.price, 0), pd = list.filter((r) => r.kind == 'payment').reduce((t, r) => t + (Number(jd(r).applied_amount ?? jd(r).amount) || 0), 0); return { ch, pd, bal: Math.max(0, ch - pd) }; };
 function billPanel() {
   const t = billTotals(recs), items = billingOutstandingItems(recs), pays = recs.filter((r) => r.kind == 'payment').sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
   const categories = [...new Set(items.map((item) => item.category))];
@@ -1523,12 +1701,13 @@ function paymentReceipt(id) {
   const r = recs.find((x) => x.id == id && x.kind == 'payment');
   if (!r) return toast('Payment not found');
   const d = jd(r), p = curPt(), clinic = D.clinic || {};
-  const items = billingLineItems(recs);
+  const items = Array.isArray(d.items) ? d.items : billingLineItems(recs);
   const itemRows = items.map((item, index) => {
     const quantity = item.quantity || 1, unitPrice = item.unitPrice ?? item.price;
-    return `<tr><td>${index + 1}</td><td>${esc(item.name)}</td><td>${quantity}</td><td>${K(unitPrice)}</td><td>${K(item.price)}</td></tr>`;
+    return `<tr><td>${index + 1}</td><td>${esc(item.name)}${Number(item.discount) > 0 ? `<small class="payment-receipt-item-discount">${payAllLabel('បញ្ចុះតម្លៃ', 'Discount')}: ${K(item.discount)}</small>` : ''}</td><td>${quantity}</td><td>${K(unitPrice)}</td><td>${K(Math.max(0, item.price - (Number(item.discount) || 0)))}</td></tr>`;
   }).join('');
   const subtotal = items.reduce((sum, item) => sum + item.price, 0);
+  const discount = Number(d.discount) || 0, grandTotal = Number(d.final_total ?? d.applied_amount ?? d.amount) || 0, received = Number(d.received ?? d.amount) || 0;
   const banner = clinic.banner ? `<img class="payment-receipt-banner" src="${API_BASE}/uploads/${esc(clinic.banner)}" alt="">` : `<div class="payment-receipt-clinic">${esc(clinic.name || '')}${clinic.specialty ? `<small>${esc(clinic.specialty)}</small>` : ''}${clinic.address ? `<small>${esc(clinic.address)}</small>` : ''}${clinic.phone ? `<small>${esc(clinic.phone)}</small>` : ''}</div>`;
   const html = `<div class="payment-receipt">
     <header class="payment-receipt-header">${banner}</header>
@@ -1538,8 +1717,8 @@ function paymentReceipt(id) {
       <div><b>លេខវិក្កយបត្រ៖</b> PAY-${esc(r.id)}<br><b>កាលបរិច្ឆេទ៖</b> ${esc((r.date || '').replace('T', ' '))}<br><b>វិធីបង់ប្រាក់៖</b> ${esc(d.method || '')}</div>
     </section>
     <table class="payment-receipt-table"><thead><tr><th>ល.រ</th><th>បរិយាយ/Description</th><th>ចំនួន/Qty</th><th>តម្លៃ/Price</th><th>សរុប/Amount</th></tr></thead><tbody>${itemRows || '<tr><td colspan="5">&nbsp;</td></tr>'}</tbody></table>
-    <section class="payment-receipt-totals"><div><span>សរុប/Subtotal:</span><b>${K(subtotal)}</b></div><div class="payment-receipt-grand-total"><span>សរុបរួម/Grand Total:</span><b>${K(subtotal)}</b></div><div><span>បានបង់/Amount Paid:</span><b>${K(d.amount || 0)}</b></div></section>
-    <footer class="payment-receipt-signatures"><div><span>អ្នកទទួលប្រាក់</span><i></i><small>(${esc(D.user && D.user.name || '')})</small></div><div><span>អតិថិជន</span><i></i><small>(${esc(p && p.name || '')})</small></div></footer>
+    <section class="payment-receipt-totals"><div><span>សរុប/Subtotal:</span><b>${K(subtotal)}</b></div>${discount ? `<div><span>បញ្ចុះតម្លៃ/Discount:</span><b>${K(discount)}</b></div>` : ''}<div class="payment-receipt-grand-total"><span>សរុបរួម/Grand Total:</span><b>${K(grandTotal)}</b></div><div><span>បានទទួល/Amount Received:</span><b>${K(received)}</b></div>${Number(d.change) > 0 ? `<div><span>ប្រាក់អាប់/Change:</span><b>${K(d.change)}</b></div>` : ''}</section>
+    <footer class="payment-receipt-signatures"><div><span>អ្នកទទួលប្រាក់ / Received by</span><i></i><small>(${esc(d.receiver_name || D.user && D.user.name || '')})</small></div><div><span>អតិថិជន / Customer</span><i></i><small>(${esc(p && p.name || '')})</small></div></footer>
   </div>`;
   printDoc('', html, { headerHtml: '<div class="payment-receipt-no-default-header"></div>' });
 }

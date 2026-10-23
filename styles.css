@@ -1083,6 +1083,260 @@ hr {
 #mf.wide {
   width: min(640px, 96vw);
 }
+#mf.payall-dialog {
+  width: min(780px, 96vw);
+  max-height: 94vh;
+  overflow: auto;
+}
+.payall-dialog .operation-form-heading {
+  position: sticky;
+  top: -1px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -1px -1px 12px;
+  padding: 8px 0;
+  background: var(--cd);
+}
+.payall-dialog .operation-form-heading h3 {
+  margin: 0;
+  font-size: 18px;
+}
+.payall-patient {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 12px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--hv);
+}
+.payall-patient > div {
+  display: grid;
+  gap: 2px;
+}
+.payall-patient small {
+  color: var(--mu);
+}
+.payall-items-wrap {
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid var(--bd);
+  border-radius: 8px;
+}
+.payall-items {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+.payall-items th,
+.payall-items td {
+  padding: 8px;
+  border-bottom: 1px solid var(--bd);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.payall-items th {
+  position: sticky;
+  top: 0;
+  background: var(--hv);
+  color: #2563eb;
+}
+.payall-items th:first-child,
+.payall-items td:first-child {
+  width: 44px;
+  text-align: center;
+}
+.payall-items th:nth-child(3),
+.payall-items td:nth-child(3) {
+  width: 56px;
+  text-align: center;
+}
+.payall-items th:last-child,
+.payall-items td:last-child {
+  width: 140px;
+  text-align: right;
+}
+.payall-summary {
+  display: grid;
+  gap: 8px;
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--bd);
+  border-radius: 8px;
+}
+.payall-summary > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.payall-discount-row {
+  flex-wrap: wrap;
+}
+.payall-discount-row > span {
+  flex: 1 1 100px;
+}
+.payall-all-discount > label {
+  flex: 1 1 180px;
+  margin: 0;
+}
+#mf.payall-dialog .payall-all-discount > .in {
+  width: 120px;
+  min-width: 88px;
+  margin: 0;
+}
+#mf.payall-dialog .payall-all-discount > select.in {
+  width: 105px;
+}
+.payall-tag {
+  min-width: 42px;
+}
+.payall-discount-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: #0009;
+}
+.payall-discount-dialog {
+  width: min(565px, calc(100vw - 32px));
+  min-width: 0;
+  max-height: min(80vh, 560px);
+  overflow: auto;
+  padding: 20px 24px;
+  border: 1px solid var(--bd);
+  border-radius: 10px;
+  background: var(--cd);
+  box-shadow: 0 16px 48px #0005;
+}
+.payall-discount-dialog > header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.payall-discount-dialog h3 {
+  min-width: 0;
+  margin: 0;
+  font-size: 17px;
+  overflow-wrap: anywhere;
+}
+.payall-discount-list {
+  display: grid;
+  gap: 2px;
+  max-height: 180px;
+  overflow: auto;
+  margin-bottom: 18px;
+}
+#md .payall-discount-item {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) minmax(100px, auto);
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--bd);
+  font-size: 14px;
+}
+#md .payall-discount-item input {
+  width: 18px;
+  margin: 0;
+}
+.payall-discount-item span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.payall-discount-item b {
+  text-align: right;
+  white-space: nowrap;
+}
+.payall-discount-selected {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.payall-discount-entry {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 92px;
+  gap: 10px;
+}
+#md .payall-discount-entry .in {
+  width: 100%;
+  min-width: 0;
+  margin: 0;
+}
+#md .payall-discount-entry select.in {
+  min-width: 0;
+}
+.payall-discount-error {
+  min-height: 22px;
+  color: #dc2626;
+}
+.payall-discount-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+.payment-receipt-item-discount {
+  display: block;
+  margin-top: 1mm;
+  color: #475569;
+  font-size: 8pt;
+}
+.payall-final {
+  margin: 0 -12px -12px;
+  padding: 12px;
+  border-radius: 0 0 8px 8px;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 17px;
+  font-weight: 700;
+}
+.payall-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+#mf.payall-dialog .payall-fields .fl {
+  min-width: 0;
+  margin: 0;
+}
+.payall-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.payall-shortcuts .btn {
+  min-width: 54px;
+}
+.payall-more-actions {
+  margin-top: 8px;
+}
+#mf.payall-dialog > .fb {
+  position: sticky;
+  bottom: -1px;
+  z-index: 2;
+  margin: 12px -1px -1px;
+  padding: 10px 0 0;
+  background: var(--cd);
+}
+@media (max-width: 560px) {
+  .payall-fields {
+    grid-template-columns: 1fr;
+  }
+  .payall-items th:last-child,
+  .payall-items td:last-child {
+    width: 100px;
+  }
+}
 #mf.vaccination-form-dialog {
   width: min(860px, 96vw);
   max-height: 94vh;
