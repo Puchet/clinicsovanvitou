@@ -1270,7 +1270,7 @@ function pAct(a, x, y, el) {
   else if (a == 'ptcolsall') { ptHide[ptMode()].clear(); savePt(); render(); }
   else if (a == 'ptcol') { const S = ptHide[ptMode()]; if (S.has(x)) S.delete(x); else if (ptShown().length > 1) S.add(x); else toast('At least one column must stay visible'); savePt(); render(); }
   else if (a == 'ptmr') openPatient(+x).then(() => { ptab = 'medical'; render(); mrForm(); }).catch((e) => toast(e.message));
-  else if (a == 'ipdout') ipdOut(+x); else if (a == 'ipdbed') ipdBed(+x); else if (a == 'ipdtreat') ipdTreat(+x); else if (a == 'ipdedit') ipdEdit(+x); else if (a == 'ipdprint') ipdPrint(+x); else if (a == 'ipdshare') ipdShare(+x); else if (a == 'ipdadd') ipdAdd();
+  else if (a == 'ipdout') ipdOut(+x); else if (a == 'ipdreturn') returnIpdPatientToOpd(+x).catch((e) => toast(e.message)); else if (a == 'ipdbed') ipdBed(+x); else if (a == 'ipdtreat') ipdTreat(+x); else if (a == 'ipdedit') ipdEdit(+x); else if (a == 'ipdprint') ipdPrint(+x); else if (a == 'ipdshare') ipdShare(+x); else if (a == 'ipdadd') ipdAdd();
   else if (a == 'ptbed') bedForm(+x); else if (a == 'ptadmit') ptAdmit(+x); else if (a == 'ptprint') ptCard(+x);
   else if (a == 'pttreat') treatmentFollowup(+x).catch((e) => toast(e.message));
   else if (a == 'ptdx') { const q0 = ptById(+x), opts = ['', ...new Set([q0.diagnosis, ...D.dx.map((d) => d.name)].filter(Boolean))]; modal('Diagnosis', [['Diagnosis', 'diagnosis', 'sel', opts]], q0, (o) => api('PUT', 'patients/' + q0.id, o)); }
@@ -1386,7 +1386,7 @@ const act = (r, i) => `<button class="sq b" data-a="regedit:${i}" title="Edit">�
 const ptNm = (r, sm = true) => `<div class="pn"><div><a href="#" data-a="open:${r.id}">${esc(r.name)}</a>${sm && r.latin_name ? `<small class="pl">${esc(r.latin_name)}</small>` : ''}</div><span class="ic"><a href="#" data-a="open:${r.id}" title="Open patient file">👁</a><a href="#" data-a="ptadmit:${r.id}" title="${r.type == 'IPD' ? 'Discharge' : 'Admit to IPD'}">${r.type == 'IPD' ? '🚪' : '🛏'}</a><a href="#" data-a="ptprint:${r.id}" title="Print patient card">🖨</a></span></div>`;
 const cellsFull = (r, i, sm) => ({
   id: `<td>${r.id}</td>`, date: `<td>${fmtD(r.reg_date || r.created_at)}</td>`, name: `<td>${ptNm(r, sm)}</td>`, latin: `<td class="c-latin">${esc(r.latin_name || '')}</td>`,
-  nssf: `<td>${esc(r.nssf_id || 'N/A')}</td>`, nat: `<td>${esc(r.national_id || 'N/A')}</td>`, type: `<td><span class="pill ${r.type == 'IPD' ? 'ipd' : 'opd'} clk" data-a="ptbed:${r.id}" title="Update bed information">${r.type == 'IPD' ? 'IPD' : 'OPD'}</span></td>`,
+  nssf: `<td>${esc(r.nssf_id || 'N/A')}</td>`, nat: `<td>${esc(r.national_id || 'N/A')}</td>`, type: `<td><span class="pill ${r.type == 'IPD' ? 'ipd' : 'opd'} clk" data-a="ptadmit:${r.id}" title="${r.type == 'IPD' ? 'Discharge to OPD' : 'Admit to IPD'}">${r.type == 'IPD' ? 'IPD' : 'OPD'}</span></td>`,
   treat: `<td title="${esc(r.treatment || '')}">${esc(trunc(r.treatment, 14))} <a href="#" class="ed" data-a="pttreat:${r.id}" title="Edit treatment">✎</a></td>`,
   dx: `<td title="${esc(r.diagnosis || r.last_dx || '')}">${esc(trunc(r.diagnosis || r.last_dx || 'N/A', 14))} <a href="#" class="ed" data-a="ptdx:${r.id}" title="Edit diagnosis">✎</a></td>`,
   mr: `<td><button class="mrb" data-a="ptmr:${r.id}" title="New medical record">✎</button></td>`, age: `<td>${fmtAge(r)}</td>`,
@@ -1418,10 +1418,19 @@ document.addEventListener('change', (e) => { const k = e.target.dataset && e.tar
 async function ptAdmit(id) {
   try {
     const p = ptById(id);
-    if (p.type == 'IPD') { for (const r of D.ipd.filter((x) => x.code == String(id) && !x.out)) await api('PUT', 'ipd/' + r.id, { out: 1, dis: ymd(new Date()) }); await api('PUT', 'patients/' + id, { type: 'OPD' }); toast('Discharged'); }
+    if (p.type == 'IPD') return await returnIpdPatientToOpd(id);
     else return bedForm(id);
-    await load(); render();
   } catch (e) { toast(e.message); }
+}
+async function returnIpdPatientToOpd(id) {
+  const p = ptById(id);
+  if (!p) throw new Error('Patient not found');
+  if (p.type != 'IPD') return;
+  for (const r of D.ipd.filter((x) => String(x.code) == String(id) && !x.out)) await api('PUT', 'ipd/' + r.id, { out: 1, dis: ymd(new Date()) });
+  await api('PUT', 'patients/' + id, { type: 'OPD' });
+  await load();
+  rt = 'pt'; tab = 'OPD'; q = ''; pg = 1;
+  render(); toast('Discharged');
 }
 function ptCard(id) {
   const p = ptById(id); printDoc('Patient card', ptBlock(p) + kv([['Treatment', p.treatment], ['Diagnosis', p.diagnosis || p.last_dx], ['Complaints', p.complaints], ['Past medical history', p.history], ['Registered', fmtD(p.reg_date || p.created_at)]]));
@@ -1834,11 +1843,12 @@ function ipdDays(r) {
   const e = r.out ? (r.dis || String(r.updated_at || '').slice(0, 10)) : ymd(new Date());
   const n = Math.round((Date.parse(e) - Date.parse(s)) / 864e5); return isNaN(n) ? null : Math.max(0, n);
 }
-const ipdHead = ['Name', 'Latin name', 'Room / Bed', 'Treatment', 'Billing history', 'Admission date', 'Discharge date', 'Days', 'Actions'];
+const ipdHead = ['Name', 'Latin name', 'IPD/OPD', 'Room / Bed', 'Treatment', 'Billing history', 'Admission date', 'Discharge date', 'Days', 'Actions'];
 function ipdRow(r) {
   const p = ipdPt(r), i = D.ipd.indexOf(r), d = ipdDays(r), st = ipdStart(r), due = p ? patientDue(p.id) : 0;
   return `<tr><td><div class="pn"><div><a href="#" data-a="${p ? 'open:' + p.id : 'ipdedit:' + r.id}">${esc(r.name)}</a> <span class="mu">(${esc(r.code)})</span></div></div></td>
 <td>${esc((p && p.latin_name) || 'N/A')}</td>
+<td>${p && p.type == 'IPD' && !r.out ? `<button type="button" class="pill ipd clk" data-a="ipdreturn:${p.id}" title="Return to Patients (OPD)">IPD</button>` : `<span class="pill ${(p ? p.type : r.out ? 'OPD' : 'IPD') == 'IPD' ? 'ipd' : 'opd'}">${esc(p ? p.type || 'OPD' : r.out ? 'OPD' : 'IPD')}</span>`}</td>
 <td><a href="#" class="ed" data-a="ipdbed:${r.id}" title="Edit room and bed">✎</a> ${r.room ? `<span title="Room">🚪 ${esc(r.room)}</span>` : ''} ${r.bed ? `<span title="Bed">🛏 ${esc(r.bed)}</span>` : ''}</td>
 <td title="${esc(r.treatment || (p && p.treatment) || '')}">${esc(trunc(r.treatment || (p && p.treatment), 16) || '')} <a href="#" class="ed" data-a="ipdtreat:${r.id}" title="Edit treatment">✎</a></td>
 <td>${p ? `<a href="#" class="${due > 0 ? 'due' : 'paidb'}" data-a="ipdbill:${p.id}" title="Open billing history">${due > 0 ? `<b>KHR ${due.toLocaleString('en-US')}</b>` : '✔ Paid'}</a>` : `<span class="paidb">✔ Paid</span>`}</td>
@@ -1850,7 +1860,7 @@ function ipdRow(r) {
 function ipdPage(current) {
   const rows = D.ipd.filter((r) => (!current || !r.out) && (!q || lc([r.name, r.code, r.room, r.bed, (ipdPt(r) || {}).latin_name].join(' ')).includes(lc(q.trim()))));
   return `<div class="hd"><div class="tools" style="align-items:center"><div class="ibox">🛏</div><div><h1>${current ? 'Current IPD patients' : 'Inpatients (IPD)'}</h1><p class="mu">${current ? 'Patients not yet discharged' : 'Manage all admitted patients.'}</p></div></div><div class="tools">${sr('Search patient by name or ID…')}<button class="btn g" data-a="ipdadd">+ Add</button><button class="btn" data-a="csv">Export Excel</button></div></div>
-<div class="card"><table class="ipdt"><thead><tr>${ipdHead.map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(ipdRow).join('') || `<tr><td colspan="9" class="emp">Nothing here yet.</td></tr>`}</tbody></table></div>`;
+<div class="card"><table class="ipdt"><thead><tr>${ipdHead.map((h) => `<th>${h}</th>`).join('')}</tr></thead><tbody>${rows.map(ipdRow).join('') || `<tr><td colspan="10" class="emp">Nothing here yet.</td></tr>`}</tbody></table></div>`;
 }
 R.ipd = () => ipdPage(false); R.cur = () => ipdPage(true);
 async function ipdOut(id) {
