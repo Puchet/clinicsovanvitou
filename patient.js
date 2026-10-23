@@ -39,7 +39,7 @@ async function upl(file, max = 480) {
 function printDoc(title, html, options = {}) {
   const c = D.clinic || {};
   const hasCustomHeader = Object.prototype.hasOwnProperty.call(options, 'headerHtml');
-  const head = hasCustomHeader ? options.headerHtml : `<div class="ph-head">${c.banner ? `<img class="ph-banner" src="/uploads/${esc(c.banner)}" alt="">` : c.logo ? `<img class="ph-logo" src="/uploads/${esc(c.logo)}" alt="">` : ''}${c.show_name && c.name ? `<h2>${esc(c.name)}</h2>` : ''}${c.specialty ? `<div>${esc(c.specialty)}</div>` : ''}${c.show_address && c.address ? `<div>${esc(c.address)}</div>` : ''}${c.show_phone && c.phone ? `<div>${esc(c.phone)}</div>` : ''}</div>`;
+  const head = hasCustomHeader ? options.headerHtml : `<div class="ph-head">${c.banner ? `<img class="ph-banner" src="${API_BASE}/uploads/${esc(c.banner)}" alt="">` : c.logo ? `<img class="ph-logo" src="${API_BASE}/uploads/${esc(c.logo)}" alt="">` : ''}${c.show_name && c.name ? `<h2>${esc(c.name)}</h2>` : ''}${c.specialty ? `<div>${esc(c.specialty)}</div>` : ''}${c.show_address && c.address ? `<div>${esc(c.address)}</div>` : ''}${c.show_phone && c.phone ? `<div>${esc(c.phone)}</div>` : ''}</div>`;
   const customHeader = c.print_header ? `<div class="print-config-header">${esc(c.print_header)}</div>` : '';
   const footer = c.print_footer ? `<footer class="print-config-footer">${esc(c.print_footer)}</footer>` : '';
   let pa = $('#pa'); if (!pa) { pa = document.createElement('div'); pa.id = 'pa'; document.body.appendChild(pa); }
@@ -368,7 +368,7 @@ function consultationPrint() {
     };
     const optionalFields = (fields) => fields.filter(([, key]) => values.get(key)).map(([label, key, unit]) => printField(label, key, unit || '')).join('');
     const printText = (key) => esc(values.get(key) || '');
-    const logo = clinic.logo ? `<img src="/uploads/${esc(clinic.logo)}" alt="">` : '';
+    const logo = clinic.logo ? `<img src="${API_BASE}/uploads/${esc(clinic.logo)}" alt="">` : '';
     const header = `<header class="consultation-print-header"><div class="consultation-print-clinic">${esc(clinic.name || '')}${clinic.specialty ? `<small>${esc(clinic.specialty)}</small>` : ''}</div><div class="consultation-print-logo">${logo}</div><h1>ទម្រង់ពិគ្រោះជំងឺ</h1><div class="consultation-print-date">${esc((values.get('date') || '').replace('T', ' '))}</div></header>`;
     const patient = `<section class="consultation-print-patient">
       <div class="consultation-print-patient-main">${printField('ឈ្មោះ៖', 'patient_name')}${printField('អាយុ៖', 'patient_age')}${printField('ភេទ៖', 'patient_sex')}</div>
@@ -1529,7 +1529,7 @@ function paymentReceipt(id) {
     return `<tr><td>${index + 1}</td><td>${esc(item.name)}</td><td>${quantity}</td><td>${K(unitPrice)}</td><td>${K(item.price)}</td></tr>`;
   }).join('');
   const subtotal = items.reduce((sum, item) => sum + item.price, 0);
-  const banner = clinic.banner ? `<img class="payment-receipt-banner" src="/uploads/${esc(clinic.banner)}" alt="">` : `<div class="payment-receipt-clinic">${esc(clinic.name || '')}${clinic.specialty ? `<small>${esc(clinic.specialty)}</small>` : ''}${clinic.address ? `<small>${esc(clinic.address)}</small>` : ''}${clinic.phone ? `<small>${esc(clinic.phone)}</small>` : ''}</div>`;
+  const banner = clinic.banner ? `<img class="payment-receipt-banner" src="${API_BASE}/uploads/${esc(clinic.banner)}" alt="">` : `<div class="payment-receipt-clinic">${esc(clinic.name || '')}${clinic.specialty ? `<small>${esc(clinic.specialty)}</small>` : ''}${clinic.address ? `<small>${esc(clinic.address)}</small>` : ''}${clinic.phone ? `<small>${esc(clinic.phone)}</small>` : ''}</div>`;
   const html = `<div class="payment-receipt">
     <header class="payment-receipt-header">${banner}</header>
     <h1>វិក្កយបត្រលម្អិត<small>DETAILED INVOICE</small></h1>
