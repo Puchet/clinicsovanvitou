@@ -1299,6 +1299,24 @@ hr {
   font-size: 17px;
   font-weight: 700;
 }
+.payall-balance {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px 12px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  background: #f0fdf4;
+  color: #166534;
+}
+.payall-balance b {
+  text-align: right;
+}
+.payall-balance small {
+  grid-column: 1 / -1;
+  color: var(--mu);
+}
 .payall-fields {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4353,6 +4371,104 @@ table.ipdt td {
   font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
+}
+.paid-total-badge {
+  border-color: #bbf7d0;
+  color: #16803c;
+}
+.paid-history-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.paid-view-toggle {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0;
+  color: #16803c;
+  font-size: 16px;
+}
+.bill-payment-table-wrap {
+  overflow-x: auto;
+}
+.bill-payment-table {
+  width: 100%;
+  min-width: 600px;
+  border-collapse: collapse;
+  color: var(--tx);
+  font-size: 13px;
+}
+.bill-payment-table th,
+.bill-payment-table td {
+  padding: 11px 10px;
+  border-bottom: 1px solid #edf0f5;
+  text-align: left;
+  white-space: nowrap;
+}
+.bill-payment-table thead th {
+  background: #f0fdf4;
+  color: #16803c;
+  font-weight: 600;
+}
+.bill-payment-table th:nth-child(5),
+.bill-payment-table td:nth-child(5) {
+  text-align: right;
+}
+.bill-payment-table td:last-child {
+  text-align: right;
+}
+.bill-payment-date {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.bill-payment-date small {
+  color: var(--mu);
+  font-size: 11px;
+}
+.bill-payment-table tfoot th {
+  border-top: 2px solid #bbf7d0;
+  border-bottom: 0;
+  background: #f0fdf4;
+  color: #16803c;
+  font-size: 14px;
+}
+.bill-payment-table tfoot th:nth-child(2) {
+  text-align: right;
+}
+.bill-payment-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+.bill-payment-card {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #bbf7d0;
+  border-radius: 8px;
+  background: #fff;
+}
+.bill-payment-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.bill-payment-card-details {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px 12px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #dcfce7;
+  font-size: 13px;
+}
+.bill-payment-card-details b {
+  text-align: right;
+}
+.bill-payment-card-details b:last-child {
+  color: #16803c;
 }
 .bill-charge-group {
   margin: 8px 0 26px;

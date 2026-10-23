@@ -100,7 +100,7 @@ const CARE_MODULES = {
 };
 const VSF = [['t', 'Temperature (°C)'], ['hr', 'Heart rate (bpm)'], ['rr', 'Respiratory rate (bpm)'], ['bp', 'Blood pressure (mmHg)'], ['spo2', 'SpO2 (%)'], ['p', 'Pulse (P)'], ['w', 'Weight (kg)'], ['h', 'Height (cm)']];
 const COLORS = ['#e5e7eb', '#ef4444', '#f97316', '#f59e0b', '#22c55e', '#3b82f6', '#6366f1', '#a855f7', '#ec4899'];
-let pdId = null, ptab = 'vitals', recs = [], pdDate = '', investigationQuery = '', investigationSelection = new Set();
+let pdId = null, ptab = 'vitals', recs = [], pdDate = '', investigationQuery = '', investigationSelection = new Set(), paidHistoryView = 'table';
 const curPt = () => D.pt.find((x) => x.id == pdId);
 const jd = (r) => { try { return JSON.parse(r.data || '{}'); } catch { return {}; } };
 async function loadRecs() {
@@ -1269,6 +1269,11 @@ function pAct(a, x, y, el) {
   else if (a == 'payall-discount-open') payAllDiscountOpen();
   else if (a == 'payall-discount-close') { const overlay = document.querySelector('#payall-discount-overlay'); if (overlay) overlay.remove(); }
   else if (a == 'payall-discount-apply') payAllDiscountApply();
+  else if (a == 'paidview') {
+    paidHistoryView = paidHistoryView == 'table' ? 'cards' : 'table';
+    const panel = el && el.closest('.paid-history-panel');
+    if (panel) panel.innerHTML = paidHistoryPanelInner(recs.filter((r) => r.kind == 'payment').sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id), recs);
+  }
   else if (a == 'ipdbill') openIpdBilling(+x).catch((e) => toast(e.message));
   else if (a == 'tfadd') { tfRows = tfDraftRows(); tfRows.push({ date: nowLocal(), vitals: '', diagnosis: '', notes: '' }); tfRender(); }
   else if (a == 'tfremove') { tfRows = tfDraftRows(); tfRows.splice(+x, 1); tfRender(); }
@@ -1477,7 +1482,7 @@ async function payForm(pid, payAll = false) {
     openForm('Record payment', `<p>${esc(p.name)} — Amount due: <b>${K(due)}</b> <span class="mu">(${usd(due)})</span></p>${fIn('Amount paid (KHR)', 'amount', due, 'number', `min="1" max="${due}" required`)}${fSel('Method', 'method', 'Cash', ['Cash', 'Bank'])}`, async (f) => {
       const m = new FormData(f), amt = Math.round(+m.get('amount') || 0); if (amt < 1) throw new Error('Enter an amount'); if (amt > due) throw new Error('Amount is more than the balance');
       const outstandingItems = billingOutstandingItems(list);
-      await api('POST', 'records', { patient_id: pid, kind: 'payment', date: ymd(new Date()), data: { amount: amt, applied_amount: amt, method: m.get('method'), item_count: outstandingItems.length } });
+      await api('POST', 'records', { patient_id: pid, kind: 'payment', date: ymd(new Date()), data: { amount: amt, applied_amount: amt, method: m.get('method'), item_count: outstandingItems.length, paid_at: nowLocal() } });
       await load(); if (rt == 'pd' && pdId == pid) await loadRecs(); render(); toast('Saved');
     }, { cls: 'wide', ok: 'Save' });
     return;
@@ -1494,6 +1499,7 @@ async function payForm(pid, payAll = false) {
       <div class="payall-final"><span>${payAllLabel('តម្លៃត្រូវបង់', 'Final total')}</span><b id="payall-final-total">${K(due)}</b></div>
     </section>
     <section class="payall-fields">${fSel(payAllLabel('វិធីទូទាត់', 'Payment method'), 'method', 'Cash', methodOptions)}${fIn(payAllLabel('កាលបរិច្ឆេទទូទាត់', 'Payment date'), 'payment_date', ymd(new Date()), 'date', 'required')}${fIn(payAllLabel('ប្រាក់ទទួល (KHR)', 'Money received (KHR)'), 'received', due, 'number', 'min="0" step="1" required')}${fIn(payAllLabel('ឈ្មោះអ្នកទទួលប្រាក់', 'Received by'), 'receiver_name', D.user && D.user.name || '', 'text', 'required')}</section>
+    <div class="payall-balance" id="payall-remaining-balance-row"><span>${payAllLabel('សមតុល្យនៅសល់ក្នុងសេវាមិនទាន់បង់', 'Remaining balance in Unpaid')}</span><b id="payall-remaining-balance">${K(0)}</b><small>${payAllLabel('ការបញ្ចុះតម្លៃអនុវត្តនៅពេលបង់គ្រប់ចំនួនត្រូវបង់ប៉ុណ្ណោះ', 'Discounts apply only when the full final total is paid.')}</small></div>
     <div class="payall-shortcuts" aria-label="${payAllLabel('ប៊ូតុងទូទាត់រហ័ស', 'Payment shortcuts')}"><button type="button" class="btn" data-a="payall-print" aria-label="${payAllLabel('បោះពុម្ពវិក្កយបត្រ', 'Print payment invoice')}" title="${payAllLabel('បោះពុម្ពវិក្កយបត្រ', 'Print payment invoice')}">▣</button><button type="button" class="btn" data-a="payall-shortcut:exact" title="${payAllLabel('ទទួលប្រាក់ត្រឹមត្រូវតាមតម្លៃត្រូវបង់', 'Receive the exact final total')}">S-B</button><button type="button" class="btn" data-a="payall-shortcut:1000" title="${payAllLabel('បន្ថែម 1,000 KHR ទៅប្រាក់ទទួល', 'Add 1,000 KHR to money received')}">S</button><button type="button" class="btn" data-a="payall-shortcut:10000" title="${payAllLabel('បន្ថែម 10,000 KHR ទៅប្រាក់ទទួល', 'Add 10,000 KHR to money received')}">D</button><button type="button" class="btn" data-a="payall-shortcut:100000" title="${payAllLabel('បន្ថែម 100,000 KHR ទៅប្រាក់ទទួល', 'Add 100,000 KHR to money received')}">A</button></div>
     <div class="payall-shortcuts payall-more-actions"><button type="button" class="btn" data-a="payall-print:compact" aria-label="${payAllLabel('បោះពុម្ពបង្កាន់ដៃសង្ខេប', 'Print compact payment slip')}" title="${payAllLabel('បោះពុម្ពបង្កាន់ដៃសង្ខេប', 'Print compact payment slip')}">▣</button><button type="button" class="btn" data-a="payall-shortcut:exact" title="${payAllLabel('កំណត់ប្រាក់ទទួលឱ្យស្មើនឹងតម្លៃត្រូវបង់', 'Set money received to the exact final total')}">SV</button><button type="button" class="btn" data-a="payall-qr" title="${payAllLabel('បង្ហាញ QR ធនាគារ', 'Show configured bank QR')}">QR</button></div>`;
   openForm(`${payAllLabel('ទូទាត់ប្រាក់', 'Pay All')} — ${esc(p.name)}`, body, async (f) => {
@@ -1505,21 +1511,26 @@ async function payForm(pid, payAll = false) {
     if (calculation.itemDiscount > calculation.selectedTotal) throw new Error(payAllLabel('ការបញ្ចុះតម្លៃលើសពីតម្លៃសេវាដែលបានជ្រើសរើស', 'Selected-services discount exceeds selected services total'));
     if (calculation.discount > due) throw new Error(payAllLabel('ការបញ្ចុះតម្លៃសរុបលើសពីតម្លៃត្រូវបង់', 'Total discount is more than the balance'));
     const received = Number(m.get('received'));
-    if (!Number.isFinite(received) || received < calculation.finalTotal) throw new Error(`${payAllLabel('ប្រាក់ទទួលត្រូវគ្រប់ចំនួនត្រូវបង់', 'Money received must cover the final total')}: ${K(calculation.finalTotal)}`);
+    if (!Number.isFinite(received) || received <= 0) throw new Error(payAllLabel('សូមបញ្ចូលចំនួនទឹកប្រាក់ដែលបានទទួល', 'Enter the amount received'));
     const method = String(m.get('method') || '');
     if (!['Cash', 'Bank'].includes(method)) throw new Error(payAllLabel('សូមជ្រើសរើសវិធីទូទាត់', 'Choose a payment method'));
     const receiverName = String(m.get('receiver_name') || '').trim();
     if (!receiverName) throw new Error(payAllLabel('សូមបញ្ចូលឈ្មោះអ្នកទទួលប្រាក់', 'Enter the name of the person receiving payment'));
     const paymentDate = String(m.get('payment_date') || '');
     if (!/^\d{4}-\d{2}-\d{2}$/.test(paymentDate)) throw new Error(payAllLabel('សូមបញ្ចូលកាលបរិច្ឆេទទូទាត់ឱ្យបានត្រឹមត្រូវ', 'Enter a valid payment date'));
-    const itemDiscounts = payAllDiscountAllocation(outstandingItems, payAllContext.selectedIndexes, calculation.itemDiscount);
-    const allItemDiscounts = payAllGeneralDiscountAllocation(outstandingItems, itemDiscounts, calculation.allDiscount);
+    const isFullPayment = received >= calculation.finalTotal;
+    const appliedAmount = isFullPayment ? due : Math.min(due, received);
+    const appliedDiscount = isFullPayment ? calculation.discount : 0;
+    const itemDiscounts = isFullPayment ? payAllDiscountAllocation(outstandingItems, payAllContext.selectedIndexes, calculation.itemDiscount) : outstandingItems.map(() => 0);
+    const allItemDiscounts = isFullPayment ? payAllGeneralDiscountAllocation(outstandingItems, itemDiscounts, calculation.allDiscount) : outstandingItems.map(() => 0);
     await api('POST', 'records', { patient_id: pid, kind: 'payment', date: paymentDate, data: {
-      amount: Math.round(received), applied_amount: due, final_total: calculation.finalTotal, received: Math.round(received),
-      discount: calculation.discount, discount_all: calculation.allDiscount, discount_all_input: allDiscount, discount_all_currency: allCurrency,
-      discount_item: calculation.itemDiscount, discount_input: enteredDiscount, discount_currency: currency,
-      discount_items: payAllContext.selectedIndexes.map((index) => ({ name: outstandingItems[index].name, price: outstandingItems[index].price, discount: itemDiscounts[index] })),
-      change: Math.round(received - calculation.finalTotal), method, receiver_name: receiverName, item_count: outstandingItems.length,
+      amount: Math.round(received), applied_amount: appliedAmount, final_total: isFullPayment ? calculation.finalTotal : appliedAmount, received: Math.round(received),
+      paid_at: nowLocal(),
+      discount: appliedDiscount, discount_all: isFullPayment ? calculation.allDiscount : 0, discount_all_input: isFullPayment ? allDiscount : 0, discount_all_currency: allCurrency,
+      discount_item: isFullPayment ? calculation.itemDiscount : 0, discount_input: isFullPayment ? enteredDiscount : 0, discount_currency: currency,
+      discount_items: isFullPayment ? payAllContext.selectedIndexes.map((index) => ({ name: outstandingItems[index].name, price: outstandingItems[index].price, discount: itemDiscounts[index] })) : [],
+      remaining_balance: Math.max(0, due - appliedAmount),
+      change: isFullPayment ? Math.max(0, Math.round(received - calculation.finalTotal)) : 0, method, receiver_name: receiverName, item_count: outstandingItems.length,
       items: itemDiscounts.map((discountAmount, index) => {
         const item = outstandingItems[index];
         return { category: item.category, name: item.name, price: item.price, discount: discountAmount + allItemDiscounts[index], discount_item: discountAmount, discount_all: allItemDiscounts[index], quantity: item.quantity || 1, unitPrice: item.unitPrice ?? item.price };
@@ -1619,8 +1630,11 @@ function payAllRefresh() {
   context.allDiscountInput = Number(form.querySelector('[name="all_discount"]').value) || 0;
   context.allDiscountCurrency = form.querySelector('[name="all_discount_currency"]').value;
   const calculation = payAllDiscountCalculation(context.items, context.selectedIndexes, context.discountInput, context.discountCurrency, context.allDiscountInput, context.allDiscountCurrency);
+  const received = Number(form.querySelector('[name="received"]').value);
+  const remaining = Number.isFinite(received) && received >= calculation.finalTotal ? 0 : Math.max(0, context.due - (Number.isFinite(received) ? received : 0));
   $('#payall-final-total').textContent = K(calculation.finalTotal);
   $('#payall-discount-total').textContent = K(calculation.discount);
+  $('#payall-remaining-balance').textContent = K(remaining);
 }
 function payAllShortcut(kind) {
   const form = $('#mf'), received = form.querySelector('[name="received"]'), context = payAllContext;
@@ -1665,6 +1679,30 @@ function billingOutstandingItems(list) {
   }).filter((item) => item.price > 0);
 }
 const billTotals = (list) => { const ch = billingLineItems(list).reduce((t, item) => t + item.price, 0), pd = list.filter((r) => r.kind == 'payment').reduce((t, r) => t + (Number(jd(r).applied_amount ?? jd(r).amount) || 0), 0); return { ch, pd, bal: Math.max(0, ch - pd) }; };
+function paidHistoryDate(record, data) {
+  const paidAt = String(data.paid_at || ''), time = paidAt.includes('T') ? paidAt.slice(11, 16) : '';
+  return `<span class="bill-payment-date"><span>${esc(record.date || paidAt.slice(0, 10) || '')}</span><small>${esc(time || '—')}</small></span>`;
+}
+function paidHistoryTable(payments, records) {
+  const total = payments.reduce((sum, r) => sum + (Number(jd(r).amount) || 0), 0);
+  const rows = payments.map((r) => {
+    const d = jd(r), count = Number.isFinite(+d.item_count) ? +d.item_count : Array.isArray(d.items) ? d.items.length : billingLineItems(records).length;
+    return `<tr><td>${paidHistoryDate(r, d)}</td><td>PAY-${esc(r.id)}</td><td>${esc(d.method || '—')}</td><td>${count}</td><td><b>${K(d.amount || 0)}</b></td><td><button type="button" class="btn s" data-a="payreceipt:${r.id}">${T('Receipt')}</button></td></tr>`;
+  }).join('');
+  const cards = payments.map((r) => {
+    const d = jd(r), count = Number.isFinite(+d.item_count) ? +d.item_count : Array.isArray(d.items) ? d.items.length : billingLineItems(records).length;
+    return `<article class="bill-payment-card"><div class="bill-payment-card-head"><b>${paidHistoryDate(r, d)}</b><button type="button" class="btn s" data-a="payreceipt:${r.id}">▣ ${T('Receipt')}</button></div><div class="mu">PAY-${esc(r.id)}</div><div class="bill-payment-card-details"><span>${T('Method')}</span><b>${esc(d.method || '—')}</b><span>${T('Items')}</span><b>${count}</b><span>${T('Total Paid')}</span><b>${K(d.amount || 0)}</b></div></article>`;
+  }).join('');
+  const html = paidHistoryView == 'table'
+    ? `<div class="bill-payment-table-wrap"><table class="bill-payment-table"><thead><tr><th>${T('Date')}</th><th>${T('Receipt')}</th><th>${T('Method')}</th><th>${T('Items')}</th><th>${T('Total Paid')}</th><th></th></tr></thead><tbody>${rows}</tbody><tfoot><tr><th colspan="4">${T('Total Paid')}</th><th>${K(total)}</th><th></th></tr></tfoot></table></div>`
+    : `<div class="bill-payment-cards">${cards}</div>`;
+  return { total, html };
+}
+function paidHistoryPanelInner(payments, records) {
+  const history = paidHistoryTable(payments, records), nextView = paidHistoryView == 'table' ? 'cards' : 'table';
+  const icon = paidHistoryView == 'table' ? '▦' : '☷';
+  return `<h4><span>◇ ${T('Paid History')}</span><span class="paid-history-controls">${payments.length ? `<span class="billing-total-badge paid-total-badge">${T('Total Paid')}: ${K(history.total)}</span>` : ''}<button type="button" class="btn s paid-view-toggle" data-a="paidview" title="${T('Switch to ' + nextView + ' view')}" aria-label="${T('Switch to ' + nextView + ' view')}">${icon}</button></span></h4>${payments.length ? history.html : `<p class="emp">${T('No paid bills found.')}</p>`}`;
+}
 function billPanel() {
   const t = billTotals(recs), items = billingOutstandingItems(recs), pays = recs.filter((r) => r.kind == 'payment').sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
   const categories = [...new Set(items.map((item) => item.category))];
@@ -1672,13 +1710,9 @@ function billPanel() {
     const group = items.filter((item) => item.category == category), total = group.reduce((sum, item) => sum + item.price, 0);
     return `<div class="bill-charge-group"><div class="bill-charge-heading"><b>◇ ${T(category)}</b><b>${K(total)}</b></div>${group.map((item) => `<div class="bill-charge-item"><div>${esc(item.name)}<small>${K(item.unitPrice ?? item.price)}${item.quantity > 1 ? ` × ${item.quantity}` : ''}</small></div><div class="bill-charge-right"><b>${K(item.price)}</b>${item.category == 'Service Charges' ? `<div class="bill-quantity"><button type="button" class="btn s" data-a="svcminus:${item.recordId}:${item.itemIndex}" title="${T('Remove one')}">−</button><span>${item.quantity}</span><button type="button" class="btn s" data-a="svcplus:${item.recordId}:${item.itemIndex}" title="${T('Add one')}">+</button></div>` : ''}</div></div>`).join('')}</div>`;
   }).join('');
-  const paidRows = pays.map((r) => {
-    const d = jd(r), count = Number.isFinite(+d.item_count) ? +d.item_count : Array.isArray(d.items) ? d.items.length : billingLineItems(recs).length;
-    return `<div class="bill-payment"><div class="bill-payment-head"><div><b>${esc(r.date || '')}</b><div class="mu">Ref: PAY-${esc(r.id)}</div></div><span class="bd">${T('Paid')}</span><button class="btn s" data-a="payreceipt:${r.id}">▣ ${T('Receipt')}</button></div><div class="bill-payment-meta"><span>${T('Items')}:</span><span>${count}</span></div><div class="bill-payment-total"><span>${T('Total Paid')}:</span><b>${K(d.amount || 0)}</b></div></div>`;
-  }).join('');
   return `<div class="billing-page"><div class="billing-toolbar"><h2 class="rh">▱ ${T('Billing history')}</h2><div class="tools"><button class="btn" data-a="schinv">${T('Invoice')}</button><button class="btn" data-a="recpay" ${t.bal ? '' : 'disabled'}>+ ${T('Record payment')}</button><button class="btn g billing-payall" data-a="payall" ${t.bal ? '' : 'disabled'}>$ ${T('Pay All')}: ${K(t.bal)}</button></div></div>
 <div class="billing-columns"><section class="billing-panel"><h4><span>◇ ${T('Unpaid')}</span><span class="billing-total-badge">${T('Total')}: ${K(t.bal)}</span></h4>${t.bal ? unpaidItems : `<p class="emp">${T('No unpaid bills found.')}</p>`}<div class="bill-total"><b>${T('Total Unpaid Amount')}:</b><b>${K(t.bal)}</b></div></section>
-<section class="billing-panel"><h4>◇ ${T('Paid History')}</h4>${paidRows || `<p class="emp">${T('No paid bills found.')}</p>`}</section></div></div>`;
+<section class="billing-panel paid-history-panel">${paidHistoryPanelInner(pays, recs)}</section></div></div>`;
 }
 async function changeInvestigationQuantity(recordId, itemIndex, delta) {
   const r = recs.find((record) => String(record.id) == String(recordId) && record.kind == 'investigation');
@@ -1717,7 +1751,7 @@ function paymentReceipt(id) {
       <div><b>លេខវិក្កយបត្រ៖</b> PAY-${esc(r.id)}<br><b>កាលបរិច្ឆេទ៖</b> ${esc((r.date || '').replace('T', ' '))}<br><b>វិធីបង់ប្រាក់៖</b> ${esc(d.method || '')}</div>
     </section>
     <table class="payment-receipt-table"><thead><tr><th>ល.រ</th><th>បរិយាយ/Description</th><th>ចំនួន/Qty</th><th>តម្លៃ/Price</th><th>សរុប/Amount</th></tr></thead><tbody>${itemRows || '<tr><td colspan="5">&nbsp;</td></tr>'}</tbody></table>
-    <section class="payment-receipt-totals"><div><span>សរុប/Subtotal:</span><b>${K(subtotal)}</b></div>${discount ? `<div><span>បញ្ចុះតម្លៃ/Discount:</span><b>${K(discount)}</b></div>` : ''}<div class="payment-receipt-grand-total"><span>សរុបរួម/Grand Total:</span><b>${K(grandTotal)}</b></div><div><span>បានទទួល/Amount Received:</span><b>${K(received)}</b></div>${Number(d.change) > 0 ? `<div><span>ប្រាក់អាប់/Change:</span><b>${K(d.change)}</b></div>` : ''}</section>
+    <section class="payment-receipt-totals"><div><span>សរុប/Subtotal:</span><b>${K(subtotal)}</b></div>${discount ? `<div><span>បញ្ចុះតម្លៃ/Discount:</span><b>${K(discount)}</b></div>` : ''}<div class="payment-receipt-grand-total"><span>សរុបរួម/Grand Total:</span><b>${K(grandTotal)}</b></div><div><span>បានទទួល/Amount Received:</span><b>${K(received)}</b></div>${Number(d.remaining_balance) > 0 ? `<div><span>នៅសល់ត្រូវបង់/Remaining Balance:</span><b>${K(d.remaining_balance)}</b></div>` : ''}${Number(d.change) > 0 ? `<div><span>ប្រាក់អាប់/Change:</span><b>${K(d.change)}</b></div>` : ''}</section>
     <footer class="payment-receipt-signatures"><div><span>អ្នកទទួលប្រាក់ / Received by</span><i></i><small>(${esc(d.receiver_name || D.user && D.user.name || '')})</small></div><div><span>អតិថិជន / Customer</span><i></i><small>(${esc(p && p.name || '')})</small></div></footer>
   </div>`;
   printDoc('', html, { headerHtml: '<div class="payment-receipt-no-default-header"></div>' });
@@ -1729,22 +1763,18 @@ async function openIpdBilling(pid) {
   const charges = recs.filter((r) => (r.kind == 'schedule' && schBillable(r)) || (r.kind == 'investigation' && Array.isArray(jd(r).items) && jd(r).items.length)).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   const pays = recs.filter((r) => r.kind == 'payment').sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
   const t = billTotals(recs), unpaid = t.bal > 0;
+  const paidHistory = paidHistoryTable(pays, recs);
   const chargeRows = charges.map((r) => {
     const d = jd(r);
     if (r.kind == 'investigation') return `<div class="bill-item"><div><b>${T('Service Charges')}</b><div class="mu">${esc(r.date || '')}</div>${d.items.map((item) => { const qty = Math.max(1, +item.quantity || 1), unit = +item.unit_price || +item.price || 0; return `<div class="bill-charge-item"><span>${esc(item.name)}${qty > 1 ? ` × ${qty}` : ''}</span><b>${K(unit * qty)}</b></div>`; }).join('')}</div><b>${K(d.items.reduce((sum, item) => sum + (+item.unit_price || +item.price || 0) * Math.max(1, +item.quantity || 1), 0))}</b></div>`;
     return `<div class="bill-item"><div><b>${esc([d.selection, d.treatment_type, d.diagnosis || d.dx, r.notes].filter(Boolean).join(' — ') || r.title || 'Charge')}</b><div class="mu">${esc(r.date || '')}</div></div><b>${K(d.amount || 0)}</b></div>`;
-  }).join('');
-  const paidRows = pays.map((r) => {
-    const d = jd(r);
-    const count = Number.isFinite(+d.item_count) ? +d.item_count : Array.isArray(d.items) ? d.items.length : billingLineItems(recs).length;
-    return `<div class="bill-payment"><div class="bill-payment-head"><div><b>${esc(r.date || '')}</b><div class="mu">Ref: PAY-${esc(r.id)}</div></div><span class="bd">${T('Paid')}</span><button type="button" class="btn s" data-a="payreceipt:${r.id}">Receipt</button></div><div class="bill-payment-meta"><span>${T('Items')}:</span><span>${count}</span></div><div class="mu">${esc(T('Method'))}: ${esc(d.method || '—')}</div><div class="bill-payment-total"><span>${T('Total Paid')}:</span><b>${K(d.amount || 0)}</b></div></div>`;
   }).join('');
   const f = $('#mf');
   f.className = 'xl billing-dialog';
   f.innerHTML = `<div class="billing-title"><b>${esc(p.name)}</b><button type="button" class="btn s" data-a="close" aria-label="${T('Close')}">×</button></div>
 <div class="billing-toolbar"><h3>${T('Billing history')}</h3><button type="button" class="btn g" data-a="payall" ${unpaid ? '' : 'disabled'}>${T('Pay All')}: ${K(t.bal)}</button></div>
 <div class="billing-columns"><section class="billing-panel"><h4>${T('Unpaid')}</h4>${unpaid ? `${chargeRows || `<div class="bill-item"><b>${T('Outstanding balance')}</b><b>${K(t.bal)}</b></div>`}<div class="bill-total"><span>${T('Total')}:</span><b>${K(t.bal)}</b></div>` : '<p class="emp">No unpaid bills found.</p>'}</section>
-<section class="billing-panel"><h4>${T('Paid History')}</h4>${paidRows || '<p class="emp">No paid bills found.</p>'}</section></div>`;
+<section class="billing-panel paid-history-panel">${paidHistoryPanelInner(pays, recs)}</section></div>`;
   $('#md').classList.add('on');
 }
 async function invoicePrint(pid) {
