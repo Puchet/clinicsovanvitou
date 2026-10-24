@@ -1024,4 +1024,4 @@ document.documentElement.lang=lang;tr(document.body);
   $('#lg').style.display='none';
   if(rt=='pd'&&typeof restorePatientPage=='function')await restorePatientPage();
   else render();
-}}catch(e){}})();
+}else{$('#lg').hidden=false;$('#lg').style.display='grid'}}catch(e){if(tok){$('#lg').style.display='none';render();toast(e.message)}else{$('#lg').hidden=false;$('#lg').style.display='grid'}}finally{$('#startup-loading').hidden=true}})();

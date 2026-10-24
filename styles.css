@@ -685,6 +685,9 @@ tr:hover td {
   place-items: center;
   padding: 16px;
 }
+#lg[hidden] {
+  display: none;
+}
 .lb {
   display: grid;
   grid-template-columns: 1fr 1fr;
