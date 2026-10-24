@@ -745,6 +745,65 @@ tr:hover td {
   font-weight: 600;
   cursor: pointer;
 }
+.lr button:disabled {
+  cursor: wait;
+  opacity: .7;
+}
+.login-loading[hidden] {
+  display: none;
+}
+.login-loading {
+  position: fixed;
+  z-index: 1;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: #0f172ab8;
+  backdrop-filter: blur(4px);
+}
+.login-loading-card {
+  display: grid;
+  min-width: 230px;
+  justify-items: center;
+  gap: 10px;
+  padding: 26px 32px;
+  border: 1px solid #ffffff70;
+  border-radius: 16px;
+  background: #fff;
+  color: #0f172a;
+  box-shadow: 0 18px 50px #0004;
+}
+.login-loading-logo {
+  display: grid;
+  width: 64px;
+  height: 64px;
+  place-items: center;
+  border-radius: 20px;
+  background: linear-gradient(135deg, #2563eb, #7c3aed);
+  color: #fff;
+  animation: login-logo-pulse 1.2s ease-in-out infinite;
+}
+.login-loading-logo svg {
+  width: 42px;
+  height: 42px;
+}
+.login-loading-card strong {
+  color: #2563eb;
+  font-size: 14px;
+  letter-spacing: .04em;
+}
+.login-loading-card > span {
+  color: #64748b;
+  font-size: 13px;
+}
+@keyframes login-logo-pulse {
+  0%, 100% { transform: scale(.94); box-shadow: 0 0 0 0 #3b82f640; }
+  50% { transform: scale(1); box-shadow: 0 0 0 10px #3b82f600; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .login-loading-logo { animation: none; }
+}
 @media (max-width: 820px) {
   aside {
     position: fixed;
