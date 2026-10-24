@@ -23,7 +23,7 @@ function openForm(title, body, save, o = {}) {
   const heading = o.close ? `<div class="operation-form-heading"><h3>${title}</h3><button type="button" class="btn s" data-a="close" aria-label="${esc(o.closeLabel || 'Close')}">×</button></div>` : `<h3 style="margin:0 0 8px">${title}</h3>`;
   f.innerHTML = `${heading}${body}<div class="tools fb" style="justify-content:flex-end">${o.extra || ''}${o.hideCancel ? '' : '<button type="button" class="btn" data-a="close">Cancel</button>'}<button class="btn p">${o.ok || 'Save'}</button></div>`;
   $('#md').classList.add('on');
-  f.onsubmit = async (e) => { e.preventDefault(); try { await save(f); $('#md').classList.remove('on'); } catch (er) { toast(er.message); } };
+  f.onsubmit = async (e) => { e.preventDefault(); try { await save(f); if (!o.keepOpen) $('#md').classList.remove('on'); } catch (er) { toast(er.message); } };
 }
 async function upl(file, max = 480) {
   if (!file || !/^image\//.test(file.type)) throw new Error('Use a JPG, PNG or WebP picture');
@@ -38,10 +38,14 @@ async function upl(file, max = 480) {
 // ---------- printing (uses the clinic header from Clinic Settings) ----------
 function printDoc(title, html, options = {}) {
   const c = D.clinic || {};
+  const omitClinicBranding = options.omitClinicBranding === true;
   const hasCustomHeader = Object.prototype.hasOwnProperty.call(options, 'headerHtml');
-  const head = hasCustomHeader ? options.headerHtml : `<div class="ph-head">${c.banner ? `<img class="ph-banner" src="${API_BASE}/uploads/${esc(c.banner)}" alt="">` : c.logo ? `<img class="ph-logo" src="${API_BASE}/uploads/${esc(c.logo)}" alt="">` : ''}${c.show_name && c.name ? `<h2>${esc(c.name)}</h2>` : ''}${c.specialty ? `<div>${esc(c.specialty)}</div>` : ''}${c.show_address && c.address ? `<div>${esc(c.address)}</div>` : ''}${c.show_phone && c.phone ? `<div>${esc(c.phone)}</div>` : ''}</div>`;
-  const customHeader = c.print_header ? `<div class="print-config-header">${esc(c.print_header)}</div>` : '';
-  const footer = c.print_footer ? `<footer class="print-config-footer">${esc(c.print_footer)}</footer>` : '';
+  const bannerOnly = omitClinicBranding && options.includeClinicBanner === true && c.banner
+    ? `<div class="ph-head"><img class="ph-banner" src="${API_BASE}/uploads/${esc(c.banner)}" alt=""></div>`
+    : '';
+  const head = omitClinicBranding ? bannerOnly : hasCustomHeader ? options.headerHtml : `<div class="ph-head">${c.banner ? `<img class="ph-banner" src="${API_BASE}/uploads/${esc(c.banner)}" alt="">` : c.logo ? `<img class="ph-logo" src="${API_BASE}/uploads/${esc(c.logo)}" alt="">` : ''}${c.show_name && c.name ? `<h2>${esc(c.name)}</h2>` : ''}${c.specialty ? `<div>${esc(c.specialty)}</div>` : ''}${c.show_address && c.address ? `<div>${esc(c.address)}</div>` : ''}${c.show_phone && c.phone ? `<div>${esc(c.phone)}</div>` : ''}</div>`;
+  const customHeader = !omitClinicBranding && c.print_header ? `<div class="print-config-header">${esc(c.print_header)}</div>` : '';
+  const footer = !omitClinicBranding && c.print_footer ? `<footer class="print-config-footer">${esc(c.print_footer)}</footer>` : '';
   let pa = $('#pa'); if (!pa) { pa = document.createElement('div'); pa.id = 'pa'; document.body.appendChild(pa); }
   pa.innerHTML = `<div class="print-document">${head || ''}${customHeader}${title ? `<h3>${esc(title)}</h3>` : ''}<main class="print-document-content">${html}</main>${footer}</div>`;
   if (options.printImmediately) window.print();
@@ -100,7 +104,7 @@ const CARE_MODULES = {
 };
 const VSF = [['t', 'Temperature (°C)'], ['hr', 'Heart rate (bpm)'], ['rr', 'Respiratory rate (bpm)'], ['bp', 'Blood pressure (mmHg)'], ['spo2', 'SpO2 (%)'], ['p', 'Pulse (P)'], ['w', 'Weight (kg)'], ['h', 'Height (cm)']];
 const COLORS = ['#e5e7eb', '#ef4444', '#f97316', '#f59e0b', '#22c55e', '#3b82f6', '#6366f1', '#a855f7', '#ec4899'];
-let pdId = null, ptab = 'vitals', recs = [], pdDate = '', investigationQuery = '', investigationSelection = new Set(), paidHistoryView = 'table';
+let pdId = null, ptab = 'vitals', recs = [], pdDate = '', investigationQuery = '', investigationSelection = new Set(), paidHistoryView = 'table', labPickerQuery = '', labPickerSelection = new Set(), labSubtab = 'results', echoSubtab = 'reports', echoPageSize = 'A4', echoTemplateId = '', echoPreviewZoom = 81;
 try {
   const savedPatientId = Number(sessionStorage.getItem('currentPatientId'));
   if (Number.isInteger(savedPatientId) && savedPatientId > 0) pdId = savedPatientId;
@@ -135,7 +139,7 @@ R.pd = function () {
   const p = curPt(); if (!p) return hd('Patients', '') + '<p class="emp">Patient not found.</p>';
   const vt = PT.filter(([k]) => !pdHideC.has(k)); if (vt.length && !vt.some(([k]) => k == ptab)) ptab = vt[0][0];
   const h = (k) => !pdHideI.has(k), ed = (k, l) => `<span class="mu">${l}</span> <a href="#" data-a="pedit:${k}" title="Edit">✎</a><br><b>${esc(p[k] || 'N/A')}</b>`;
-  const top = `<div class="tools" style="justify-content:space-between;margin-bottom:10px"><div class="mu"><a href="#" data-a="go:pt">Patient Management</a> / <b>${esc(p.name)}</b></div><div class="tools"><button class="btn p" data-a="pdprint">🖨 History</button><button class="btn ${pdCtl ? 'on2' : ''}" data-a="pdctl" title="Hide controls">🙈</button><button class="btn ${pdLay == 'grid' ? 'on2' : ''}" data-a="pdlay" title="Change layout">▦</button></div></div>`;
+  const top = `<div class="tools" style="justify-content:space-between;margin-bottom:10px"><div class="mu"><a href="#" data-a="go:pt">Patient Management</a> / <b>${esc(p.name)}</b></div><div class="tools"><button class="btn" data-a="pdschedule-followup">＋ ${T('Schedule Follow Up')}</button><button class="btn p" data-a="pdprint">🖨 History</button><button class="btn ${pdCtl ? 'on2' : ''}" data-a="pdctl" title="Hide controls">🙈</button><button class="btn ${pdLay == 'grid' ? 'on2' : ''}" data-a="pdlay" title="Change layout">▦</button></div></div>`;
   const ctl = pdCtl ? `<div class="card pdc"><b>Hide Patient Info:</b><div class="pdcg">${PI.map(([k, l]) => `<label class="cb"><input type="checkbox" data-a="hidei:${k}" ${pdHideI.has(k) ? 'checked' : ''}> ${l}</label>`).join('')}</div><b>Hide Content Sections:</b><div class="pdcg">${PT.map(([k, l]) => `<label class="cb"><input type="checkbox" data-a="hidec:${k}" ${pdHideC.has(k) ? 'checked' : ''}> ${l}</label>`).join('')}</div></div>` : '';
   const head = `<div class="card pdh"><div class="pda"><div class="av big">${p.photo ? `<img src="/uploads/${esc(p.photo)}" alt="">` : '👤'}</div><label class="btn s" style="margin-top:6px;cursor:pointer">Change photo<input type="file" id="pfp" accept="image/*" hidden></label></div>
 <div class="pdi"><div class="tools" style="justify-content:space-between"><div>${h('name') ? `<span class="mu">Name</span> <b style="font-size:18px">${esc(p.name)}</b>${p.latin_name ? ` <span class="mu">(${esc(p.latin_name)})</span>` : ''}` : ''}${h('id') ? ` &nbsp; <span class="mu">ID:</span> ${p.id}` : ''}${h('age') ? ` &nbsp; <span class="mu">Age:</span> <b>${fmtAge(p)}</b>` : ''}</div><button class="btn" data-a="regedit:${D.pt.indexOf(p)}">Edit patient</button></div>
@@ -150,6 +154,7 @@ function recCard(r) {
   if (r.kind == 'vitals') return `<div class="rc">${act}<div class="mu">${when}</div><div class="vs">${VSF.filter(([k]) => d[k]).map(([k, l]) => `<span><b>${l.replace(/ \(.*/, '')}:</b> ${esc(d[k])} ${(l.match(/\((.*)\)/) || [])[1] || ''}</span>`).join('') || '—'}</div></div>`;
   if (r.kind == 'medical') return `<div class="rc">${act}<div class="mu">${when}</div><b>${esc(d.dx || d.cc || 'Medical Record')}</b><div class="mu">${esc((d.cc || '').slice(0, 140))}</div><div class="ra2"><button class="btn s" data-a="rprint:${r.id}">Print</button></div></div>`;
   if (r.kind == 'investigation' && Array.isArray(d.items)) return `<div class="rc investigation-record">${act}<div class="mu">${when}</div><b>Requested services</b><div class="investigation-record-items">${d.items.map((item) => { const qty = Math.max(1, +item.quantity || 1), unit = +item.unit_price || +item.price || 0; return `<div><span>${esc(item.name)}${qty > 1 ? ` × ${qty}` : ''}</span><b>${K(unit * qty)}</b></div>`; }).join('')}</div><div class="investigation-record-total">Total: <b>${K(d.items.reduce((sum, item) => sum + (+item.unit_price || +item.price || 0) * Math.max(1, +item.quantity || 1), 0))}</b></div></div>`;
+  if (r.kind == 'lab' && Array.isArray(d.fields)) return `<article class="rc lab-result-record lab-result-summary"><div class="lab-result-summary-copy"><b class="lab-result-summary-title">${esc(d.test_name || r.title || 'Lab result')}</b><span class="mu">${esc(T('Date'))}: ${when}</span><span class="lab-result-status"><span aria-hidden="true">✓</span>${T('Completed')}</span></div><div class="ra lab-result-actions"><button type="button" class="btn p" data-a="redit:${r.id}" title="${esc(T('Edit'))}" aria-label="${esc(T('Edit'))}"><span aria-hidden="true">✎</span>${T('Edit')}</button><button type="button" class="btn p" data-a="labrecordprint:${r.id}" title="${esc(T('Print'))}" aria-label="${esc(T('Print'))}"><span aria-hidden="true">▣</span>${T('Print')}</button><button type="button" class="btn lab-result-format" data-a="labrecordprint:${r.id}:sl" title="Print S+L report" aria-label="Print S+L report"><span aria-hidden="true">⌁</span>S+L</button><button type="button" class="btn lab-result-format" data-a="labrecordprint:${r.id}:cl" title="Print CL report" aria-label="Print CL report"><span aria-hidden="true">▣</span>CL</button><button type="button" class="btn r" data-a="rdel:${r.id}" title="${esc(T('Delete'))}" aria-label="${esc(T('Delete'))}"><span aria-hidden="true">▤</span></button></div></article>`;
   if (r.kind == 'vaccination') {
     const doses = vaccinationDoses(d);
     const categoryLabel = d.category == 'child' ? 'Child vaccination' : d.category == 'adult' ? 'Adult vaccination' : d.category == 'other' ? 'Other' : d.category;
@@ -208,6 +213,8 @@ function recPanel() {
   }
   const L = recs.filter((r) => r.kind == ptab && (!pdDate || (r.date || '').startsWith(pdDate)));
   if (ptab == 'investigation') return investigationPanel(L);
+  if (ptab == 'lab') return labPanel(L);
+  if (ptab == 'echo') return echoPanel();
   return `<div class="hd"><h2 class="rh">${lbl(ptab)}</h2>${ptab == 'medical' ? '<div class="tools"><button class="btn" data-a="htc" title="HT Controls">⚙</button><button class="btn" data-a="mhist">History</button><button class="btn" data-a="mrd">MRD</button><button class="btn g" data-a="radd">+ Add</button></div>' : '<button class="btn g" data-a="radd">+ Add</button>'}</div>${ptab == 'beu' ? `<div class="gr">${L.map(recCard).join('')}</div>` : L.map(recCard).join('')}${L.length ? '' : '<p class="emp">Nothing here yet.</p>'}`;
 }
 const consultationSymptoms = [
@@ -531,6 +538,610 @@ function investigationServiceList() {
 function investigationPanel(records) {
   return `<section class="investigation-request card"><div class="investigation-request-head"><h2 class="rh">${T('Request service')}</h2><div class="tools"><input id="investigation-service-search" class="in" type="search" placeholder="${esc(T('Search services…'))}" value="${esc(investigationQuery)}"><button class="btn p" data-a="investigation-request" ${investigationSelection.size ? '' : 'disabled'}>${T('Add selected')}${investigationSelection.size ? ` (${investigationSelection.size})` : ''}</button></div></div><div class="investigation-service-grid" id="investigation-service-list">${investigationServiceList()}</div></section><section class="investigation-history"><h3>${T('Service requests')}</h3>${records.map(recCard).join('') || `<p class="emp">${T('No services requested yet.')}</p>`}</section>`;
 }
+function labUploadForm() {
+  openForm(T('Upload Document'), `<div class="g2">${fIn(T('Document name'), 'title', '', 'text', 'required')}${fIn(T('Date'), 'date', ymd(new Date()), 'date')}</div>${fTa(T('Notes'), 'notes', '', 3)}${imgField(T('Document image'), 'image', '', T('Remove picture'))}`, async (form) => {
+    const data = new FormData(form), image = data.get('image');
+    if (!image) throw new Error(T('Select a document image'));
+    await api('POST', 'records', { patient_id: pdId, kind: 'documents', title: data.get('title'), date: data.get('date'), notes: data.get('notes'), image });
+    await loadRecs(); labSubtab = 'documents'; render(); toast('Saved');
+  }, { cls: 'wide lab-upload-form', ok: T('Save') });
+  $('#mf [name="title"]').required = true;
+}
+function labHistoryPrint(records) {
+  const rows = records.map((record) => {
+    const data = jd(record);
+    const result = Array.isArray(data.fields)
+      ? data.fields.map((field) => `${esc(field.name)}: ${esc(field.result || '—')}${field.unit ? ` ${esc(field.unit)}` : ''}${field.normal_range ? ` (${esc(T('Normal Range'))}: ${esc(field.normal_range)})` : ''}`).join('<br>')
+      : data.lab_attachment && record.image ? `<img class="lab-print-image" src="/uploads/${esc(record.image)}" alt="">` : '';
+    return `<tr><td>${esc((record.date || '').replace('T', ' '))}</td><td>${esc(data.test_name || record.title || T('Lab result'))}</td><td>${result}</td><td>${esc(record.notes || '')}</td></tr>`;
+  }).join('');
+  printDoc(T('Lab results'), ptBlock(curPt()) + `<table class="pk full"><thead><tr>${['Date', 'Test', 'Result', 'Notes'].map((label) => `<th>${esc(T(label))}</th>`).join('')}</tr></thead><tbody>${rows || `<tr><td colspan="4">${esc(T('Nothing here yet.'))}</td></tr>`}</tbody></table>`);
+}
+function labHistory(records) {
+  const rows = records.map((record, index) => {
+    const data = jd(record);
+    const summary = Array.isArray(data.fields)
+      ? data.fields.map((field) => `${field.name}: ${field.result || '—'}${field.unit ? ` ${field.unit}` : ''}`).join('; ')
+      : T('Uploaded result image');
+    return `<tr><td>${index + 1}</td><td>${esc((record.date || '').replace('T', ' '))}</td><td>${esc(data.test_name || record.title || T('Lab result'))}</td><td>${esc(summary)}</td><td>${esc(record.notes || '')}</td><td><button type="button" class="btn s" data-a="redit:${record.id}">${T('Edit')}</button> <button type="button" class="btn s r" data-a="rdel:${record.id}">✕</button></td></tr>`;
+  }).join('');
+  openForm(T('Lab Result History'), `<div class="lab-history-table-wrap"><table class="lab-history-table"><thead><tr>${['No.', 'Date', 'Test', 'Result', 'Notes', 'Actions'].map((label) => `<th>${esc(T(label))}</th>`).join('')}</tr></thead><tbody>${rows || `<tr><td colspan="6">${esc(T('Nothing here yet.'))}</td></tr>`}</tbody></table></div>`, async () => {}, {
+    cls: 'xl lab-history-dialog',
+    ok: T('Close'),
+    hideCancel: true,
+    extra: `<button type="button" class="btn" data-a="labhistoryprint">${T('Print')}</button>`
+  });
+}
+function labPanel(records) {
+  const allLabRecords = recs.filter((record) => record.kind == 'lab' && (!pdDate || (record.date || '').startsWith(pdDate)))
+    .sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
+  const documents = recs.filter((record) => record.kind == 'documents' && (!pdDate || (record.date || '').startsWith(pdDate)))
+    .sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
+  const resultsActive = labSubtab == 'results';
+  return `<section class="lab-workspace"><header class="lab-workspace-header"><h2 class="rh">${T('Lab results')}</h2><div class="lab-workspace-actions"><button type="button" class="btn lab-upload-button" data-a="labupload"><span aria-hidden="true">↥</span>${T('Upload Document')}</button><button type="button" class="btn" data-a="labhistory"><span aria-hidden="true">◴</span>${T('History')}</button><button type="button" class="btn" data-a="labprint"><span aria-hidden="true">▧</span>${T('Print')}</button><button type="button" class="btn p" data-a="radd"><span aria-hidden="true">＋</span>${T('Add Lab Result')}</button></div></header><div class="lab-workspace-tabs" role="tablist"><button type="button" class="lab-workspace-tab ${resultsActive ? 'on' : ''}" role="tab" aria-selected="${resultsActive}" data-a="labtab:results"><span aria-hidden="true">⚗</span>${T('Results')} (${allLabRecords.length})</button><button type="button" class="lab-workspace-tab ${!resultsActive ? 'on' : ''}" role="tab" aria-selected="${!resultsActive}" data-a="labtab:documents"><span aria-hidden="true">▤</span>${T('Documents')} (${documents.length})</button></div>${resultsActive
+    ? `<section class="lab-results-panel">${allLabRecords.map(recCard).join('') || `<p class="emp">${T('Nothing here yet.')}</p>`}</section>`
+    : `<section class="lab-results-panel">${documents.map(recCard).join('') || `<p class="emp">${T('Nothing here yet.')}</p>`}</section>`}</section>`;
+}
+function echoTemplate() {
+  return D.echo.find((template) => String(template.id) == String(echoTemplateId)) || D.echo[0] || null;
+}
+function echoTemplatePicker(onSelect = null) {
+  if (!D.echo.length) return toast(T('Create an Echo Template first'));
+  const selected = echoTemplate();
+  openForm(T('Select Echo Template'), `<label class="echo-template-search"><span aria-hidden="true">⌕</span><input class="in" id="echo-template-search" type="search" placeholder="${esc(T('Search echo templates…'))}" autocomplete="off" aria-label="${esc(T('Search echo templates…'))}"></label><div class="echo-template-options" role="radiogroup" aria-label="${esc(T('Select Echo Template'))}">${D.echo.map((template) => `<label class="echo-template-option"><input type="radio" name="echo_template_id" value="${esc(template.id)}" ${selected && String(selected.id) == String(template.id) ? 'checked' : ''}><span>${esc(template.name)}</span></label>`).join('')}<p class="echo-template-empty" hidden>${T('No Echo templates found')}</p></div>`, async (form) => {
+    const id = new FormData(form).get('echo_template_id');
+    const template = D.echo.find((item) => String(item.id) == String(id));
+    if (!template) throw new Error(T('Echo template not found'));
+    if (onSelect) return onSelect(template);
+    echoTemplateId = String(id);
+    render();
+  }, { ok: T('Select'), cls: 'echo-template-picker-form', close: true, keepOpen: !!onSelect });
+}
+function echoReportDraftSnapshot() {
+  const form = $('#mf');
+  const values = new FormData(form);
+  const editors = Array.from(form.querySelectorAll('[data-echo-editor]'));
+  const notes = editors.length
+    ? editors.map((editor, index) => ({ title: `កំណត់ហេតុ (${index + 1})`, content: String(editor.innerHTML || '').trim() }))
+    : [{ title: 'កំណត់ហេតុ (1)', content: String(values.get('echo_report_content') || '').trim() }];
+  return {
+    date: String(values.get('echo_report_date') || ''),
+    draft: {
+      doctor: String(values.get('echo_report_doctor_new') || values.get('echo_report_doctor') || '').trim(),
+      service_id: String(values.get('echo_report_service_id') || ''),
+      service_name: String(values.get('echo_report_service_name') || ''),
+      report_notes: notes,
+      report_content: notes.map((note) => note.content).join(''),
+      sections: Array.from(form.querySelectorAll('[data-echo-report-field]')).reduce((sections, label) => {
+        sections.push({ values: [{ name: label.dataset.echoReportField, value: label.querySelector('textarea')?.value || '' }] });
+        return sections;
+      }, []),
+      images: echoReportImages()
+    }
+  };
+}
+function echoReportChooseTemplate(record, template, snapshot) {
+  const currentFields = new Map(snapshot.draft.sections.flatMap((section) => section.values || []).map((field) => [field.name, field.value]));
+  let templateSections;
+  try {
+    templateSections = Array.isArray(template.sections) ? template.sections : JSON.parse(template.sections || '[]');
+  } catch {
+    throw new Error(T('Echo template could not be read'));
+  }
+  const sections = (templateSections.length ? templateSections : [{ title: T('Findings'), content: '', fields: [] }]).map((section) => {
+    const fields = Array.isArray(section.fields) && section.fields.length ? section.fields : [T('Findings')];
+    return {
+      ...section,
+      fields,
+      values: fields.map((name) => ({ name, value: currentFields.get(name) || '' }))
+    };
+  });
+  const templateContent = sections.map((section) => `${section.title ? `<h3>${esc(section.title)}</h3>` : ''}${section.content || ''}`).join('');
+  const notes = snapshot.draft.report_notes.map((note, index) => index == 0 ? { ...note, content: templateContent } : note);
+  const draft = { ...snapshot.draft, report_notes: notes, report_content: notes.map((note) => note.content).join(''), sections };
+  echoTemplateId = String(template.id);
+  echoReportForm(record, { template, draft, date: snapshot.date });
+}
+function echoReportForm(record = null, options = {}) {
+  const existing = { ...(record ? jd(record) : {}), ...(options.draft || {}) };
+  const template = options.template || (record
+    ? D.echo.find((item) => String(item.id) == String(existing.template_id)) || { id: existing.template_id, name: existing.template_name || T('Echo Report'), sections: '[]' }
+    : echoTemplate());
+  if (!template) return toast(T('Create an Echo Template first'));
+  const templateSections = Array.isArray(existing.sections)
+    ? existing.sections
+    : (() => { try { return JSON.parse(template.sections || '[]'); } catch { return []; } })();
+  const sections = templateSections.length ? templateSections : [{ title: T('Findings'), content: '', fields: [] }];
+  const date = (record?.date || options.date || ymd(new Date())).slice(0, 10);
+  const [dateYear, dateMonth, dateDay] = date.split('-').map(Number);
+  const doctors = [...D.dr.map((doctor) => String(doctor.name || '').trim()).filter(Boolean)];
+  if (existing.doctor && !doctors.includes(existing.doctor)) doctors.unshift(existing.doctor);
+  const currentDoctor = existing.doctor || D.user?.name || '';
+  if (currentDoctor && !doctors.includes(currentDoctor)) doctors.unshift(currentDoctor);
+  const currentServiceId = String(existing.service_id || '');
+  const currentServiceName = existing.service_name || '';
+  const reportImages = Array.isArray(existing.images) ? existing.images.filter((image) => image && image.photo) : record?.image ? [{ photo: record.image, name: record.image }] : [];
+  const initialContent = existing.report_content || sections.map((section) => {
+    const title = section.title ? `<h3>${esc(section.title)}</h3>` : '';
+    return `${title}${section.content || ''}`;
+  }).join('');
+  const reportNotes = Array.isArray(existing.report_notes) && existing.report_notes.length
+    ? existing.report_notes
+    : [{ title: 'កំណត់ហេតុ (1)', content: initialContent }];
+  const initialFieldPreview = sections.flatMap((section) => Array.isArray(section.values) ? section.values : []).filter((field) => field.value).map((field) => `<p><b>${esc(field.name)}:</b> ${esc(field.value)}</p>`).join('');
+  const serviceMatches = currentServiceName ? D.sv.filter((service) => String(service.name || '').toLocaleLowerCase().includes(String(currentServiceName).toLocaleLowerCase())) : [];
+  const editorToolbar = `<div class="echo-rich-toolbar" role="toolbar" aria-label="${T('Report formatting')}">
+    <select class="in echo-font-select" data-echo-command="fontName" data-echo-section="patient-report" aria-label="${T('Font')}"><option>Arial</option><option>Times New Roman</option><option>Khmer OS</option><option>Moul</option><option>Koulen</option></select>
+    <select class="in echo-size-select" data-echo-command="fontSize" data-echo-section="patient-report" aria-label="${T('Text size')}"><option value="2">${T('Normal')}</option><option value="3">${T('Medium')}</option><option value="5">${T('Large')}</option></select>
+    ${[['bold','B'],['italic','I'],['underline','U'],['justifyLeft','≡'],['justifyCenter','☰'],['justifyRight','≡'],['insertUnorderedList','☷'],['insertOrderedList','1.'],['createLink','↗'],['insertTable','▦'],['undo','↶'],['redo','↷'],['removeFormat','Tx']].map(([command,label]) => `<button type="button" class="btn s echo-tool echo-tool-${command}" data-a="echoformat:patient-report:${command}" aria-label="${esc(command)}" title="${esc(command)}">${label}</button>`).join('')}
+    ${[['foreColor','#000000'],['hiliteColor','#ffff00']].map(([command,color]) => `<label class="echo-color-tool" title="${command == 'foreColor' ? T('Text Color') : T('Highlight Color')}"><span class="echo-tool echo-tool-${command}">${command == 'foreColor' ? 'A' : '▨'}</span><input type="color" data-echo-color="${command}" data-echo-section="patient-report" value="${color}" aria-label="${esc(command)}"></label>`).join('')}
+  </div>`;
+  const noteEditorHtml = (index, content) => {
+    const sectionId = index ? `patient-report-${index + 1}` : 'patient-report';
+    const toolbar = editorToolbar.replaceAll('patient-report', sectionId);
+    const actions = `<div class="echo-report-quick-actions">${index == 0 ? `<button type="button" class="btn" data-a="patient-echo-twin" aria-label="បន្ថែមកំណត់ហេតុទី 2" title="បន្ថែមកំណត់ហេតុទី 2"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="8" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13" y="4" width="8" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M7 9h2m-2 4h2m8-4h2m-2 4h2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>ភ្លោះ</span></button>` : ''}<button type="button" class="btn" data-a="echoformat:${sectionId}:insertTable"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3 9h18M9 9v11m6-11v11" fill="none" stroke="currentColor" stroke-width="1.8"/></svg><span>បញ្ចូលតារាង</span></button>${index == 0 ? `<button type="button" class="btn" data-a="patient-echo-report-template">▤ ប្លង់គំរូ</button>` : ''}</div>`;
+    return `<section class="echo-report-note-panel" data-echo-note="${index + 1}"><div class="echo-report-pane-heading"><h4>កំណត់ហេតុ (${index + 1})</h4><div class="echo-report-heading-tools">${actions}</div></div>${toolbar}<input id="echo-image-file-${sectionId}" type="file" accept="image/jpeg,image/png,image/webp" hidden><section class="echo-report-editor-section" data-echo-section="${sectionId}"><div id="echo-report-editor${index ? `-${index + 1}` : ''}" class="echo-rich-editor echo-report-editor" contenteditable="true" role="textbox" aria-label="${T('Echo report content')} ${index + 1}" aria-multiline="true" data-echo-editor="${sectionId}">${content || ''}</div><input type="hidden" name="echo_report_content${index ? `_${index + 1}` : ''}" data-echo-content value="${esc(content || '')}"></section></section>`;
+  };
+  const body = `<div class="echo-report-composer-meta">
+    <div class="echo-report-date-group"><label class="echo-report-label" for="echo-report-date">កាលបរិច្ឆេទ</label><input id="echo-report-date" class="in" type="date" name="echo_report_date" value="${esc(date)}">
+      <div class="echo-date-parts"><label>ថ្ងៃ<select class="in" id="echo-report-day" name="echo_report_day">${Array.from({length:31},(_,i)=>i+1).map((day)=>`<option value="${day}" ${day == dateDay ? 'selected' : ''}>${day}</option>`).join('')}</select></label><label>ខែ<select class="in" id="echo-report-month" name="echo_report_month">${Array.from({length:12},(_,i)=>i+1).map((month)=>`<option value="${month}" ${month == dateMonth ? 'selected' : ''}>${String(month).padStart(2,'0')}</option>`).join('')}</select></label><label>ឆ្នាំ<select class="in" id="echo-report-year" name="echo_report_year">${Array.from({length:9},(_,i)=>dateYear-5+i).map((year)=>`<option value="${year}" ${year == dateYear ? 'selected' : ''}>${year}</option>`).join('')}</select></label></div>
+    </div>
+    <div class="echo-report-service-group"><label class="echo-report-label" for="echo-service-search">សេវាកម្ម (Services)</label><div class="echo-service-search-row"><input class="in" id="echo-service-search" type="search" placeholder="${esc(T('Search services…'))}" value="${esc(currentServiceName)}" autocomplete="off"><button type="button" class="btn p" data-a="patient-echo-service-search" aria-label="${T('Search')}">⌕</button></div><div id="echo-service-results" class="echo-service-results" ${currentServiceName ? '' : 'hidden'}>${serviceMatches.map((service)=>`<button type="button" class="echo-service-result" data-a="patient-echo-service:${esc(service.id)}">${esc(service.name)}</button>`).join('')}</div><input type="hidden" id="echo-report-service-id" name="echo_report_service_id" value="${esc(currentServiceId)}"><input type="hidden" id="echo-report-service-name" name="echo_report_service_name" value="${esc(currentServiceName)}"><div id="echo-selected-service" class="echo-selected-service">${currentServiceName ? esc(currentServiceName) : ''}</div></div>
+    <div class="echo-report-person-group"><label class="echo-report-label" for="echo-report-doctor">គ្រូពេទ្យ</label><div class="echo-report-doctor-row"><select class="in" id="echo-report-doctor" name="echo_report_doctor"><option value="">${T('Select a doctor')}</option>${doctors.map((doctor)=>`<option value="${esc(doctor)}" ${doctor == currentDoctor ? 'selected' : ''}>${esc(doctor)}</option>`).join('')}</select><button type="button" class="btn echo-add-person" data-a="patient-echo-doctor-add" aria-label="${T('Add doctor')}">＋</button></div><input class="in echo-report-doctor-new" id="echo-report-doctor-new" name="echo_report_doctor_new" placeholder="${esc(T('Enter doctor name'))}" hidden></div>
+    <div class="echo-report-patient"><span class="echo-report-label">អ្នកជំងឺ</span><strong>${esc(curPt()?.name || '')}</strong><span>${esc(curPt()?.phone || '')}</span></div>
+  </div>
+  <div class="echo-report-workspace">
+    <section class="echo-report-editor-pane"><div id="echo-report-notes" class="echo-report-notes-grid">${reportNotes.map((note, index) => noteEditorHtml(index, note.content || '')).join('')}</div>
+      <details class="echo-report-template-fields"><summary>${T('Template fields')}</summary>${sections.map((section, sectionIndex) => {
+        const names = Array.isArray(section.fields) && section.fields.length ? section.fields : [T('Findings')];
+        const savedFields = Array.isArray(section.values) ? section.values : [];
+        return `<div class="echo-report-template-field-group">${section.title ? `<h5>${esc(section.title)}</h5>` : ''}${names.map((name, fieldIndex) => {
+          const saved = savedFields.find((field) => field.name == name);
+          return `<label data-echo-report-field="${esc(name)}">${esc(name)}<textarea class="in" name="echo_value_${sectionIndex}_${fieldIndex}" rows="2">${esc(saved?.value || '')}</textarea></label>`;
+        }).join('')}</div>`;
+      }).join('')}</details>
+    </section>
+    <aside class="echo-report-preview-pane"><div class="echo-report-pane-heading"><h4>របាយការណ៍</h4><span>${esc(echoPageSize)}</span></div><div id="echo-report-preview" class="echo-report-preview">${echoReportDocumentHtml(curPt(), date, initialContent + initialFieldPreview, reportImages, true, currentDoctor)}</div>
+      <section class="echo-report-attachments" aria-label="បញ្ចូលរូបភាព"><label class="echo-report-label">រូបភាព</label><div id="echo-report-image-list" class="echo-report-image-list">${echoReportImageRows(reportImages)}</div><label class="echo-report-upload" for="echo-report-upload"><span aria-hidden="true">⇧</span><span>បញ្ចូលរូបភាព</span><input id="echo-report-upload" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden></label><small class="echo-report-attachment-hint">${T('JPG, PNG or WebP')}</small></section>
+    </aside>
+  </div>
+  <input type="hidden" id="echo-report-images" name="echo_report_images" value="${esc(JSON.stringify(reportImages))}">`;
+  const form = $('#mf');
+  form.className = 'echo-report-form echo-report-composer-form';
+  form.innerHTML = `<div class="echo-report-composer-heading"><div><span class="echo-report-heading-mark">◈</span><h3>បញ្ចូលរបាយការណ៍អេកូ</h3></div><div class="echo-report-composer-heading-actions"><button type="button" class="btn s" data-a="close" aria-label="${T('Close')}">×</button></div></div>${body}<footer class="echo-report-composer-footer"><button class="echo-report-save">${T('Save')}　✓</button></footer>`;
+  form.dataset.echoReportImages = JSON.stringify(reportImages);
+  form.dataset.echoReportRecordId = record ? String(record.id) : '';
+  form.dataset.echoReportTemplateId = String(template.id);
+  $('#md').classList.add('on');
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    try {
+      const values = new FormData(form);
+      const noteEditors = Array.from(form.querySelectorAll('[data-echo-editor]'));
+      const notes = noteEditors.length
+        ? noteEditors.map((editor, index) => ({ title: `កំណត់ហេតុ (${index + 1})`, content: String(editor.innerHTML || '').trim() }))
+        : [{ title: 'កំណត់ហេតុ (1)', content: String(values.get('echo_report_content') || $('#echo-report-editor')?.innerHTML || '').trim() }];
+      const reportContent = notes.length > 1
+        ? notes.map((note) => `<h3>${esc(note.title)}</h3>${note.content}`).join('')
+        : String(values.get('echo_report_content') || notes[0]?.content || '').trim();
+      const dataSections = sections.map((section, sectionIndex) => {
+      const fields = Array.isArray(section.fields) && section.fields.length ? section.fields : [T('Findings')];
+      return {
+        title: section.title || '',
+        content: section.content || '',
+        fields,
+        values: fields.map((name, fieldIndex) => ({
+          name,
+          value: String(values.get(`echo_value_${sectionIndex}_${fieldIndex}`) || '').trim()
+        }))
+      };
+      });
+      if (!notes.some((note) => note.content.replace(/<[^>]*>/g, '').trim()) && !dataSections.some((section) => section.values.some((field) => field.value))) throw new Error(T('Enter at least one Echo finding'));
+      const serviceId = String(values.get('echo_report_service_id') || '').trim(), serviceName = String(values.get('echo_report_service_name') || '').trim();
+      const doctor = String(values.get('echo_report_doctor_new') || values.get('echo_report_doctor') || '').trim();
+      const images = JSON.parse(form.dataset.echoReportImages || '[]');
+      const data = { template_id: template.id, template_name: template.name, doctor, service_id: serviceId, service_name: serviceName, report_content: reportContent, report_notes: notes, sections: dataSections, images, page_size: echoPageSize };
+      const payload = { patient_id: pdId, kind: 'echo', title: 'Echo Report', date: values.get('echo_report_date'), image: images[0]?.photo || '', data };
+      if (record) await api('PUT', 'records/' + record.id, payload);
+      else await api('POST', 'records', payload);
+      await loadRecs();
+      echoSubtab = 'reports';
+      $('#md').classList.remove('on');
+      render();
+      toast(T('Saved'));
+    } catch (error) { toast(error.message); }
+  };
+}
+function echoReportServiceResults(query = '') {
+  const results = $('#echo-service-results');
+  if (!results) return;
+  const normalized = String(query || '').trim().toLocaleLowerCase();
+  const services = D.sv.filter((service) => !normalized || String(service.name || '').toLocaleLowerCase().includes(normalized)).slice(0, 12);
+  results.innerHTML = services.map((service) => `<button type="button" class="echo-service-result" data-a="patient-echo-service:${esc(service.id)}">${esc(service.name)}</button>`).join('') || `<span class="echo-service-empty">${T('No services found')}</span>`;
+  results.hidden = false;
+}
+function echoReportPreviewUpdate() {
+  const preview = $('#echo-report-preview'), form = $('#mf');
+  if (!preview || !form) return;
+  const editors = Array.from(form.querySelectorAll('[data-echo-editor]'));
+  const notes = (editors.length ? editors : [$('#echo-report-editor')]).filter(Boolean);
+  const fields = Array.from(form.querySelectorAll('[data-echo-report-field]')).map((label) => {
+    const value = label.querySelector('textarea')?.value.trim();
+    return value ? `<p><b>${esc(label.dataset.echoReportField)}:</b> ${esc(value)}</p>` : '';
+  }).join('');
+  const doctor = $('#echo-report-doctor-new')?.value || $('#echo-report-doctor')?.value || '';
+  const content = notes.length > 1
+    ? notes.map((editor, index) => `<h3>កំណត់ហេតុ (${index + 1})</h3>${editor.innerHTML}`).join('')
+    : notes[0]?.innerHTML || '';
+  preview.innerHTML = echoReportDocumentHtml(curPt(), $('#echo-report-date')?.value || '', content + fields, echoReportImages(), true, doctor);
+}
+function echoReportAddTwin() {
+  const notes = $('#echo-report-notes'), first = notes?.querySelector('.echo-report-note-panel');
+  if (!notes || !first) throw new Error(T('Echo report editor is unavailable'));
+  const existingTwin = notes.querySelector('[data-echo-note="2"]');
+  const toggle = first.querySelector('[data-a="patient-echo-twin"]');
+  if (existingTwin) {
+    existingTwin.remove();
+    if (toggle) {
+      toggle.querySelector('span').textContent = 'ភ្លោះ';
+      toggle.setAttribute('aria-label', 'បន្ថែមកំណត់ហេតុទី 2');
+      toggle.setAttribute('title', 'បន្ថែមកំណត់ហេតុទី 2');
+    }
+    echoReportPreviewUpdate();
+    return;
+  }
+  const twin = first.cloneNode(true);
+  twin.dataset.echoNote = '2';
+  twin.querySelector('h4').textContent = 'កំណត់ហេតុ (2)';
+  const secondId = 'patient-report-2';
+  for (const element of [twin, ...twin.querySelectorAll('*')]) {
+    for (const attribute of ['id', 'name', 'data-a', 'data-echo-section', 'data-echo-editor', 'data-echo-color', 'data-echo-command']) {
+      const value = element.getAttribute && element.getAttribute(attribute);
+      if (value) element.setAttribute(attribute, value.replaceAll('patient-report', secondId).replace('patient-echo-insert-image:1', 'patient-echo-insert-image:2'));
+    }
+  }
+  twin.querySelector('[data-a="patient-echo-twin"]')?.remove();
+  twin.querySelector('[data-a="patient-echo-report-template"]')?.remove();
+  const editor = twin.querySelector('[data-echo-editor]');
+  const hidden = twin.querySelector('[data-echo-content]');
+  if (!editor || !hidden) throw new Error(T('Second Echo report editor could not be created'));
+  editor.id = 'echo-report-editor-2';
+  hidden.name = 'echo_report_content_2';
+  editor.innerHTML = '';
+  hidden.value = '';
+  notes.append(twin);
+  if (toggle) {
+    toggle.querySelector('span').textContent = 'តែមួយ';
+    toggle.setAttribute('aria-label', 'ត្រឡប់ទៅកំណត់ហេតុមួយ');
+    toggle.setAttribute('title', 'ត្រឡប់ទៅកំណត់ហេតុមួយ');
+  }
+  echoReportPreviewUpdate();
+}
+function echoReportImageRows(images) {
+  if (!images.length) return '';
+  return images.map((image, index) => `<div class="echo-report-image-row"><span class="echo-report-image-name" title="${esc(image.name || image.photo)}">${esc(image.name || image.photo)}</span><button type="button" class="echo-report-image-remove" data-a="patient-echo-image-remove:${index}" aria-label="${T('Remove image')}"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M10 11v6m4-6v6M6 7l1 14h10l1-14M9 7V4h6v3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></button></div>`).join('');
+}
+function echoReportImages() {
+  try {
+    const images = JSON.parse($('#mf').dataset.echoReportImages || '[]');
+    return Array.isArray(images) ? images.filter((image) => image && image.photo) : [];
+  } catch (error) {
+    throw new Error(T('Echo report attachments could not be read'));
+  }
+}
+function echoReportRemoveImage(index) {
+  const images = echoReportImages();
+  if (!Number.isInteger(index) || index < 0 || index >= images.length) return toast(T('Image not found'));
+  images.splice(index, 1);
+  const form = $('#mf'), hidden = $('#echo-report-images'), list = $('#echo-report-image-list');
+  form.dataset.echoReportImages = JSON.stringify(images);
+  hidden.value = JSON.stringify(images);
+  list.innerHTML = echoReportImageRows(images);
+  echoReportPreviewUpdate();
+}
+async function echoReportUpload(files) {
+  const selected = Array.from(files || []);
+  if (!selected.length) return;
+  try {
+    const form = $('#mf'), hidden = $('#echo-report-images'), list = $('#echo-report-image-list');
+    if (!form || !hidden || !list) throw new Error(T('Echo report form is unavailable'));
+    const images = echoReportImages();
+    for (const file of selected) {
+      if (!/^image\/(jpeg|png|webp)$/i.test(file.type || '')) throw new Error(T('Use a JPG, PNG or WebP picture'));
+      if (file.size > 2e6) throw new Error(T('Picture is too large (max 2 MB)'));
+      const response = await fetch(API_BASE + '/api/uploads', { method: 'POST', headers: { 'Content-Type': file.type, ...(tok ? { Authorization: 'Bearer ' + tok } : {}) }, body: file });
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result || !result.photo) throw new Error(result && result.error || T('Image upload failed'));
+      images.push({ photo: result.photo, name: file.name || result.photo });
+      form.dataset.echoReportImages = JSON.stringify(images);
+      hidden.value = JSON.stringify(images);
+      list.innerHTML = echoReportImageRows(images);
+      echoReportPreviewUpdate();
+    }
+  } catch (error) {
+    toast(error.message);
+  }
+}
+function echoReportClinicHeaderHtml() {
+  const clinic = D.clinic || {};
+  return `<div class="echo-report-clinic-header">${clinic.banner
+    ? `<img class="echo-report-clinic-banner" src="${API_BASE}/uploads/${esc(clinic.banner)}" alt="">`
+    : `${clinic.logo ? `<img class="echo-report-clinic-logo" src="${API_BASE}/uploads/${esc(clinic.logo)}" alt="">` : ''}${clinic.show_name && clinic.name ? `<strong>${esc(clinic.name)}</strong>` : ''}${clinic.specialty ? `<span>${esc(clinic.specialty)}</span>` : ''}${clinic.show_address && clinic.address ? `<span>${esc(clinic.address)}</span>` : ''}${clinic.show_phone && clinic.phone ? `<span>${esc(clinic.phone)}</span>` : ''}`}</div>`;
+}
+function echoReportDocumentHtml(patient, date, content, images = [], preview = false, doctor = '') {
+  const sex = patient?.sex == 'M' ? 'ប្រុស' : patient?.sex == 'F' ? 'ស្រី' : fmtSex(patient?.sex);
+  const dateText = String(date || '').slice(0, 10).split('-').reverse().join('/');
+  const attachments = images.filter((image) => image && image.photo).map((image) => `<figure class="echo-report-document-image"><img src="${esc(API_BASE + '/uploads/' + encodeURIComponent(image.photo))}" alt=""></figure>`).join('');
+  return `<article class="echo-report-document${preview ? ' echo-report-document-preview' : ''}">${preview ? echoReportClinicHeaderHtml() : ''}<div class="echo-report-patient-meta"><div><b>Name:</b><span>${esc(patient?.name || '')}</span></div><div><b>ID:</b><span>${esc(patient?.id || '')}</span></div><div><b>Age/Sex:</b><span>${esc(fmtAge(patient || {}))} / ${esc(sex || 'N/A')}</span></div><div><b>Date:</b><span>${esc(dateText)}</span></div></div><h2 class="echo-report-document-title">របាយការណ៍អេកូ (ECHO REPORT)</h2><div class="echo-report-document-columns${attachments ? ' has-images' : ''}"><section class="echo-report-document-result"><h3>Result :</h3><div class="echo-report-document-content">${content || ''}</div></section>${attachments ? `<section class="echo-report-document-images">${attachments}</section>` : ''}</div>${doctor ? `<footer class="echo-report-document-signature"><span>វេជ្ជបណ្ឌិត / Doctor</span><b>${esc(doctor)}</b></footer>` : ''}</article>`;
+}
+function echoReportContent(record, preview = false) {
+  const data = jd(record);
+  const sections = Array.isArray(data.sections) ? data.sections : [];
+  const fields = sections.flatMap((section) => section.values || []).filter((field) => field.value).map((field) => `<p><b>${esc(field.name)}:</b> ${esc(field.value)}</p>`).join('');
+  const report = Array.isArray(data.report_notes) && data.report_notes.length
+    ? `${data.report_notes.map((note, index) => `${data.report_notes.length > 1 ? `<h3>${esc(note.title || `កំណត់ហេតុ (${index + 1})`)}</h3>` : ''}${note.content || ''}`).join('')}${fields}`
+    : data.report_content
+      ? `${data.report_content}${fields}`
+      : sections.map((section) => `${section.title ? `<h3>${esc(section.title)}</h3>` : ''}${section.content || ''}${(section.values || []).map((field) => `<p><b>${esc(field.name)}:</b> ${esc(field.value || '')}</p>`).join('')}`).join('');
+  const images = Array.isArray(data.images) && data.images.length ? data.images : record.image ? [{ photo: record.image }] : [];
+  return echoReportDocumentHtml(curPt(), record.date, report, images, preview, data.doctor || '');
+}
+function echoReportView(record) {
+  echoPreviewZoom = 81;
+  const form = $('#mf');
+  form.className = 'echo-report-preview-dialog';
+  form.innerHTML = `<header class="echo-preview-toolbar"><div class="echo-preview-title"><span aria-hidden="true">▣</span><b>${T('Print Preview')}</b></div><div class="echo-preview-controls"><div class="echo-preview-zoom-controls"><button type="button" data-a="patient-echo-preview-zoom:out" aria-label="${T('Zoom out')}">−</button><output id="echo-preview-zoom-label">${echoPreviewZoom}%</output><button type="button" data-a="patient-echo-preview-zoom:in" aria-label="${T('Zoom in')}">＋</button><button type="button" data-a="patient-echo-preview-zoom:reset" aria-label="${T('Reset zoom')}">⟳</button></div><label class="echo-preview-text-controls"><span aria-hidden="true">T</span><small>A</small><input id="echo-preview-text-size" type="range" min="80" max="140" value="100" aria-label="${T('Preview text size')}"><b>A</b></label></div><div class="echo-preview-actions"><button type="button" class="btn p" data-a="patient-echo-preview-print:${record.id}">▣ ${T('Print')}</button><button type="button" class="echo-preview-close" data-a="close" aria-label="${T('Close')}">×</button></div></header><main class="echo-preview-stage"><div class="echo-preview-paper" style="--echo-preview-zoom:${echoPreviewZoom / 100}">${echoReportContent(record, true)}</div></main>`;
+  form.onsubmit = (event) => event.preventDefault();
+  $('#md').classList.add('on');
+}
+function echoReportPreviewZoom(action) {
+  echoPreviewZoom = action == 'reset' ? 81 : Math.max(40, Math.min(140, echoPreviewZoom + (action == 'in' ? 10 : -10)));
+  const paper = $('#mf .echo-preview-paper'), label = $('#echo-preview-zoom-label');
+  if (paper) paper.style.setProperty('--echo-preview-zoom', String(echoPreviewZoom / 100));
+  if (label) label.textContent = `${echoPreviewZoom}%`;
+}
+function echoReportPreviewTextSize(size) {
+  const textScale = Math.max(80, Math.min(140, Number(size) || 100)) / 100;
+  const paper = $('#mf .echo-preview-paper');
+  if (!paper) return;
+  paper.style.setProperty('--echo-preview-text-size', `${10 * textScale}pt`);
+  paper.style.setProperty('--echo-preview-title-size', `${13 * textScale}pt`);
+  paper.style.setProperty('--echo-preview-section-title-size', `${10 * textScale}pt`);
+}
+function echoReportPreviewPrint(id) {
+  const record = recs.find((item) => item.id == id && item.kind == 'echo');
+  if (!record) return toast(T('Echo report not found'));
+  echoReportPrint(record);
+}
+function echoReportInsertDate() {
+  const editor = $('#echo-report-editor');
+  if (!editor) return toast(T('Echo editor not found'));
+  editor.focus();
+  echoRestoreSelection(editor);
+  const date = ymd(new Date()).split('-').reverse().join('/');
+  if (typeof document.execCommand == 'function') document.execCommand('insertText', false, date);
+  else editor.insertAdjacentHTML('beforeend', `<span>${esc(date)}</span>`);
+  const content = editor.closest('[data-echo-section]')?.querySelector('[data-echo-content]');
+  if (content) content.value = editor.innerHTML;
+  echoReportPreviewUpdate();
+}
+function echoReportPrint(record, format = 'Default') {
+  const savedSize = jd(record).page_size;
+  const size = ['A4', 'A5', 'Letter'].includes(savedSize) ? savedSize : ['A4', 'A5', 'Letter'].includes(echoPageSize) ? echoPageSize : 'A4';
+  const signatureSpace = size == 'A5' ? '150mm' : size == 'Letter' ? '216mm' : '235mm';
+  const html = `<style>@page{size:${size};margin:8mm}#pa .echo-report-document{min-height:${signatureSpace}}</style><div class="echo-report-print echo-report-print-${esc(format.toLowerCase().replace(/[^a-z0-9]+/g, '-'))}">${echoReportContent(record)}</div>`;
+  printDoc('', html, { omitClinicBranding: true, includeClinicBanner: true });
+}
+function echoUploadForm() {
+  openForm(T('Upload Document'), `<div class="g2">${fIn(T('Document name'), 'title', '', 'text', 'required')}${fIn(T('Date'), 'date', ymd(new Date()), 'date')}</div>${fTa(T('Notes'), 'notes', '', 3)}${imgField(T('Document image'), 'image', '', T('Remove picture'))}`, async (form) => {
+    const data = new FormData(form), image = data.get('image');
+    if (!image) throw new Error(T('Select a document image'));
+    await api('POST', 'records', { patient_id: pdId, kind: 'documents', title: data.get('title'), date: data.get('date'), notes: data.get('notes'), image });
+    await loadRecs(); echoSubtab = 'documents'; render(); toast(T('Saved'));
+  }, { cls: 'wide lab-upload-form', ok: T('Save') });
+  $('#mf [name="title"]').required = true;
+}
+function echoPanel() {
+  const reports = recs.filter((record) => record.kind == 'echo' && (!pdDate || (record.date || '').startsWith(pdDate)))
+    .sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
+  const documents = recs.filter((record) => record.kind == 'documents' && (!pdDate || (record.date || '').startsWith(pdDate)))
+    .sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
+  const selected = echoTemplate();
+  const isReports = echoSubtab == 'reports';
+  return `<section class="echo-workspace"><header class="echo-workspace-header"><h2>${T('Echo results')}</h2><div class="echo-workspace-actions"><button type="button" class="btn echo-size-button" data-a="patient-echo-size">${esc(echoPageSize)}⌄</button><button type="button" class="btn" data-a="patient-echo-template" title="${esc(T('Select Echo Template'))}">▤ ${T('Template layout')}<span class="echo-template-current">${esc(selected?.name || 'Template A')}</span></button><button type="button" class="btn" data-a="patient-echo-upload">↥ ${T('Upload')}</button><button type="button" class="btn p" data-a="patient-echo-add">＋ ${T('Add Report')}</button></div></header><div class="echo-workspace-tabs" role="tablist"><button type="button" class="echo-workspace-tab ${isReports ? 'on' : ''}" role="tab" aria-selected="${isReports}" data-a="patient-echo-tab:reports">♧ ${T('Reports')}</button><button type="button" class="echo-workspace-tab ${!isReports ? 'on' : ''}" role="tab" aria-selected="${!isReports}" data-a="patient-echo-tab:documents">▤ ${T('Documents')} (${documents.length})</button></div><section class="echo-report-list">${isReports ? reports.map((record) => {
+    const data = jd(record), date = (record.date || '').slice(0, 10).split('-').reverse().join('/');
+    return `<article class="rc echo-report-card"><div class="echo-report-card-copy"><b>${esc(record.title || 'Echo Report')}</b><div class="echo-report-card-meta"><span>▧ ${esc(date)}</span>${data.doctor ? `<span class="echo-doctor-chip">♙ ${esc(data.doctor)}</span>` : ''}</div></div><div class="echo-report-card-actions"><button type="button" class="btn echo-view-action" data-a="patient-echo-view:${record.id}">◉ ${T('View')}</button><button type="button" class="btn" data-a="patient-echo-edit:${record.id}">▧ ${T('Edit')}</button><span class="echo-print-options"><button type="button" class="btn" data-a="patient-echo-print:${record.id}:Default">▣ ${T('Default')}</button>${['RI', 'LF', 'PT'].map((format) => `<button type="button" class="btn" data-a="patient-echo-print:${record.id}:${format}">${format}</button>`).join('')}</span><button type="button" class="btn p" data-a="patient-echo-print:${record.id}:P-I">◫ P-I</button><button type="button" class="btn r" data-a="rdel:${record.id}" aria-label="${T('Delete')}" title="${T('Delete')}">▤</button></div></article>`;
+  }).join('') || `<p class="emp">${T('Nothing here yet.')}</p>` : documents.map(recCard).join('') || `<p class="emp">${T('Nothing here yet.')}</p>`}</section></section>`;
+}
+function labPickerCards() {
+  const query = labPickerQuery.trim().toLocaleLowerCase();
+  const labs = D.lab.filter((lab) => !query || `${lab.name} ${lab.cat || ''}`.toLocaleLowerCase().includes(query));
+  const groups = new Map();
+  labs.forEach((lab) => {
+    const category = lab.cat || T('Other');
+    if (!groups.has(category)) groups.set(category, []);
+    groups.get(category).push(lab);
+  });
+  return [...groups].map(([category, items]) => `<section class="lab-picker-group"><h4>${esc(category)}</h4><div class="lab-picker-grid">${items.map((lab) => `<button type="button" class="lab-picker-card ${labPickerSelection.has(String(lab.id)) ? 'selected' : ''}" data-a="labpick:${lab.id}" aria-pressed="${labPickerSelection.has(String(lab.id))}"><span>${esc(lab.name)}</span><small>${K(lab.price)}</small></button>`).join('')}</div></section>`).join('') || `<p class="emp">${T('No matching lab tests.')}</p>`;
+}
+function labResultPicker(preserveSelection = false) {
+  labPickerQuery = '';
+  if (!preserveSelection) labPickerSelection = new Set();
+  const form = $('#mf');
+  form.className = 'xl lab-result-picker';
+  form.innerHTML = `<div class="operation-form-heading"><h3>${T('Add Lab Result')}</h3><button type="button" class="btn s" data-a="close" aria-label="${T('Close')}">×</button></div><label class="lab-picker-search"><span aria-hidden="true">⌕</span><input class="in" id="lab-result-search" type="search" placeholder="${esc(T('Search lab tests…'))}"></label><div class="lab-picker-list" id="lab-result-list">${labPickerCards()}</div><div class="tools fb lab-picker-footer"><span>${labPickerSelection.size} ${T('selected')}</span><button type="button" class="btn" data-a="close">${T('Cancel')}</button><button type="button" class="btn p" data-a="labcontinue" ${labPickerSelection.size ? '' : 'disabled'}>${T('Next')} →</button></div>`;
+  $('#md').classList.add('on');
+}
+function labResultRangeStatus(result, range) {
+  const valueText = String(result ?? '').trim();
+  const rangeText = String(range ?? '').trim();
+  const numeric = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/;
+  if (!numeric.test(valueText)) return '';
+  const value = Number(valueText);
+  const number = '[+-]?(?:\\d+(?:\\.\\d*)?|\\.\\d+)';
+  const interval = new RegExp(`^\\s*(${number})\\s*(?:-|–|—|to)\\s*(${number})\\s*$`, 'i').exec(rangeText);
+  if (interval) return value >= Number(interval[1]) && value <= Number(interval[2]) ? 'in-range' : 'out-of-range';
+  const bound = new RegExp(`^\\s*(<=|>=|<|>|≤|≥)\\s*(${number})\\s*$`).exec(rangeText);
+  if (!bound) return '';
+  const limit = Number(bound[2]);
+  return bound[1] == '<' ? value < limit ? 'in-range' : 'out-of-range'
+    : bound[1] == '<=' || bound[1] == '≤' ? value <= limit ? 'in-range' : 'out-of-range'
+    : bound[1] == '>' ? value > limit ? 'in-range' : 'out-of-range'
+    : value >= limit ? 'in-range' : 'out-of-range';
+}
+function labVitalSignsPrint() {
+  const latest = recs.filter((record) => record.kind == 'vitals' && String(record.patient_id) == String(pdId))
+    .sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id)[0];
+  const data = latest ? jd(latest) : {};
+  const items = [
+    ['សីតុណ្ហភាព', 't', '°C'],
+    ['ចង្វាក់បេះដូង', 'hr', 'bpm'],
+    ['អត្រាដកដង្ហើម', 'rr', 'bpm'],
+    ['សម្ពាធឈាម', 'bp', ''],
+    ['ទម្ងន់', 'w', 'kg'],
+    ['កម្ពស់', 'h', 'cm'],
+    ['SpO2', 'spo2', '%'],
+    ['ជីពចរ', 'p', 'bpm']
+  ];
+  return `<section class="lab-report-vitals"><h3>សញ្ញាជីវិត</h3><div class="lab-report-vitals-grid">${items.map(([label, key, unit]) => `<div><b>${label}:</b> ${esc(data[key] || 'N/A')}${unit ? ` ${unit}` : ''}</div>`).join('')}</div></section>`;
+}
+function labResultPrint(date, tests, technician, requestedBy, fields, format = '') {
+  const groups = new Map();
+  tests.forEach((test) => {
+    const category = test.category || test.cat || test.name;
+    if (!groups.has(category)) groups.set(category, []);
+    groups.get(category).push(test);
+  });
+  const sections = [...groups].map(([category, items]) => `<section><h3>${esc(category)}</h3>${items.map((test) => {
+    const rows = fields.filter((field) => String(field.template_id) == String(test.id)).map((field) => `<tr><td>${esc(field.name)}</td><td class="lab-report-result ${labResultRangeStatus(field.result, field.normal_range)}">${esc(field.result || '')}</td><td>${esc(field.unit || '')}</td><td>${esc(field.normal_range || '')}</td></tr>`).join('');
+    return `${items.length > 1 ? `<h4>${esc(test.name)}</h4>` : ''}<table class="lab-report-table"><colgroup><col class="lab-report-test-col"><col class="lab-report-result-col"><col class="lab-report-unit-col"><col class="lab-report-range-col"></colgroup><tbody>${rows}</tbody></table>`;
+  }).join('')}</section>`).join('');
+  const patient = curPt() || {};
+  const printDate = date ? date.split('-').reverse().join('/') : '';
+  const header = `<div class="lab-report-patient"><div><p><b>${T('Patient name')}:</b> ${esc(patient.name || '')}</p><p><b>${T('Patient ID')}:</b> ${esc(patient.id || '')}</p><p><b>${T('Sex')}:</b> ${esc(T(fmtSex(patient.sex) || 'N/A'))}</p></div><div><p><b>${T('Age')}:</b> ${esc(fmtAge(patient))}</p><p><b>${T('Requested by')}:</b> ${esc(requestedBy || '')}</p><p><b>${T('Date')}:</b> ${esc(printDate)}</p></div></div><div class="lab-report-divider"></div>`;
+  const formatClass = format == 'CL' ? ' lab-report-cl' : '';
+  const vitals = format == 'S+L' ? labVitalSignsPrint() : '';
+  printDoc('', `<section class="lab-report${formatClass}">${header}${format ? `<div class="lab-report-format">${esc(format)}</div>` : ''}${vitals}<div class="lab-report-sections">${sections}</div><footer class="lab-report-signature"><div>Technical Laboratory</div><span aria-hidden="true"></span><small>${esc(technician || '....................')}</small></footer></section>`, { omitClinicBranding: true, includeClinicBanner: true });
+}
+function labSavedResultPrint(id, format = '') {
+  const record = recs.find((item) => item.id == id);
+  if (!record) return toast(T('Lab result not found'));
+  const data = jd(record), tests = Array.isArray(data.tests) && data.tests.length
+    ? data.tests.map((test) => ({ id: test.template_id, name: test.name, category: test.category }))
+    : [{ id: data.template_id, name: data.test_name || record.title || T('Lab result'), category: data.category }];
+  labResultPrint((record.date || '').slice(0, 10), tests, data.lab_technician || '', data.requested_by || '', Array.isArray(data.fields) ? data.fields : [], format);
+}
+function labResultForm(templates, record = null) {
+  const existing = record ? jd(record) : {};
+  const selectedTemplates = Array.isArray(templates) ? templates : [templates];
+  if (!selectedTemplates.length || selectedTemplates.some((template) => !template)) return toast(T('Lab template not found'));
+  const savedTests = Array.isArray(existing.tests) ? existing.tests : null;
+  const tests = savedTests
+    ? savedTests.map((test) => {
+      const template = selectedTemplates.find((item) => String(item.id) == String(test.template_id));
+      return { ...(template || {}), id: test.template_id, name: test.name || template?.name, cat: test.category || template?.cat, price: test.price ?? template?.price };
+    })
+    : selectedTemplates;
+  const fields = savedTests
+    ? savedTests.flatMap((test) => (test.fields || []).map((field) => ({ ...field, template_id: test.template_id, category: test.category, test_name: test.name })))
+    : selectedTemplates.flatMap((template) => {
+      const templateFields = labFieldValues(template);
+      return (templateFields.length ? templateFields : [{ name: template.name }]).map((field) => ({ ...field, template_id: template.id, category: template.cat || '', test_name: template.name }));
+    });
+  if (!fields.length) fields.push({ name: T('Result'), template_id: tests[0].id, category: tests[0].cat || '', test_name: tests[0].name });
+  const values = new Map((existing.fields || []).map((field, index) => [`${field.template_id ?? ''}:${field.name}:${index}`, field.result || '']));
+  const existingValues = (existing.fields || []).map((field) => field.result || '');
+  const total = tests.reduce((sum, test) => sum + (Number(test.price) || 0), 0);
+  const title = tests.map((test) => test.name).join(', ');
+  const renderFieldRow = (field, index) => {
+    const value = existingValues[index] || values.get(`${field.template_id}:${field.name}:${index}`) || '';
+    return `<div class="lab-entry-row"><span class="lab-entry-name">${esc(field.name)}</span><input class="in" name="lab_result_${index}" value="${esc(value)}" aria-label="${esc(field.name)} ${esc(T('Result'))}"><span class="lab-entry-range">${esc(field.normal_range || '')}</span><span class="lab-entry-unit">${esc(field.unit || '')}</span></div>`;
+  };
+  const categories = [...new Set(tests.map((test) => test.cat || test.name))];
+  const sections = categories.map((category) => `<section class="lab-entry-section"><h4>${esc(category)}</h4>${tests.filter((test) => (test.cat || test.name) == category).map((test) => {
+    const rows = fields.map((field, index) => String(field.template_id) == String(test.id) ? renderFieldRow(field, index) : '').join('');
+    return `${tests.length > 1 ? `<h5>${esc(test.name)}</h5>` : ''}<div class="lab-entry-columns"><span>${T('Test')}</span><span>${T('Result')}</span><span>${T('Normal Range')}</span><span>${T('Unit')}</span></div><div class="lab-entry-grid">${rows}</div>`;
+  }).join('')}</section>`).join('');
+  const body = `<div class="lab-result-header-fields"><label class="fl">${T('Date')}<input class="in" name="date" type="date" value="${esc((record?.date || ymd(new Date())).slice(0, 10))}"></label>${fIn(T('Requested by'), 'requested_by', existing.requested_by || '')}${fIn(T('Lab technician'), 'lab_technician', existing.lab_technician || '')}<div class="lab-entry-total"><span>${T('Total')}</span><b>${K(total)}</b></div></div><div class="lab-entry-sections">${sections}</div>${fTa('Notes', 'notes', record?.notes || '', 2)}`;
+  openForm(`${record ? T('Edit Lab Result') : T('Add Lab Result')} — ${esc(title)}`, body, async (form) => {
+    const data = new FormData(form);
+    const resultFields = fields.map((field, index) => ({ ...field, result: String(data.get(`lab_result_${index}`) || '').trim() }));
+    if (!resultFields.some((field) => field.result)) throw new Error(T('Enter at least one lab result'));
+    const testsData = tests.map((test) => ({
+      template_id: test.id,
+      name: test.name,
+      category: test.cat || '',
+      price: Number(test.price) || 0,
+      fields: resultFields.filter((field) => String(field.template_id) == String(test.id)).map(({ template_id, category, test_name, ...field }) => field)
+    }));
+    const body = { patient_id: pdId, kind: 'lab', title, date: data.get('date'), notes: data.get('notes'), data: { template_id: tests.length == 1 ? tests[0].id : null, test_name: title, category: tests.length == 1 ? tests[0].cat || '' : '', price: total, requested_by: data.get('requested_by'), lab_technician: data.get('lab_technician'), tests: testsData, fields: resultFields } };
+    if (record) await api('PUT', 'records/' + record.id, body);
+    else await api('POST', 'records', body);
+    labSubtab = 'results'; await loadRecs(); render(); toast('Saved');
+  }, { cls: 'xl lab-result-form', ok: T('Save'), hideCancel: true, extra: `<button type="button" class="btn" data-a="labresultprint">${T('Print')}</button><button type="button" class="btn" data-a="labresultback">${T('Back')}</button>` });
+  $('#mf').dataset.labPrintTests = JSON.stringify(tests);
+  $('#mf').dataset.labPrintFields = JSON.stringify(fields);
+}
+function labResultSelectionNext() {
+  const templates = [...labPickerSelection].map((id) => D.lab.find((lab) => String(lab.id) == String(id))).filter(Boolean);
+  if (!templates.length) return toast(T('Select a lab test'));
+  labResultForm(templates);
+}
+function labResultPrintFromForm() {
+  const form = $('#mf'), tests = JSON.parse(form.dataset.labPrintTests || '[]'), fields = JSON.parse(form.dataset.labPrintFields || '[]');
+  const data = new FormData(form);
+  const results = fields.map((field, index) => ({ ...field, result: String(data.get(`lab_result_${index}`) || '').trim() }));
+  labResultPrint(data.get('date') || '', tests, data.get('lab_technician') || '', data.get('requested_by') || '', results);
+}
+Object.assign(L, {
+  'Add Lab Result': 'បញ្ចូលលទ្ធផល Lab',
+  'Edit Lab Result': 'កែប្រែលទ្ធផល Lab',
+  'Upload Document': 'បញ្ចូលឯកសារ',
+  'Document name': 'ឈ្មោះឯកសារ',
+  'Document image': 'រូបភាពឯកសារ',
+  'Select a document image': 'សូមជ្រើសរើសរូបភាពឯកសារ',
+  'Lab Result History': 'ប្រវត្តិលទ្ធផល Lab',
+  'Echo Report': 'របាយការណ៍ Echo',
+  'Add Echo Report': 'បន្ថែមរបាយការណ៍ Echo',
+  'Edit Echo Report': 'កែប្រែរបាយការណ៍ Echo',
+  'Select Echo Template': 'ជ្រើសរើសប្លង់គំរូ',
+  'Template layout': 'ប្លង់គំរូ',
+  'No Echo templates found': 'រកមិនឃើញប្លង់គំរូ Echo ទេ',
+  'Echo template could not be read': 'មិនអាចអានប្លង់គំរូ Echo បានទេ',
+  'Create an Echo Template first': 'សូមបង្កើតទម្រង់ Echo ជាមុន',
+  'Enter at least one Echo finding': 'សូមបញ្ចូលលទ្ធផល Echo យ៉ាងតិចមួយ',
+  'Echo template not found': 'រកមិនឃើញទម្រង់ Echo ទេ',
+  'Findings': 'លទ្ធផលពិនិត្យ',
+  'Doctor': 'វេជ្ជបណ្ឌិត',
+  'View': 'មើល',
+  'Default': 'លំនាំដើម',
+  'Reports': 'របាយការណ៍',
+  'Add Report': 'បន្ថែមរបាយការណ៍',
+  'Completed': 'បានបញ្ចប់',
+  'Edit': 'កែប្រែ',
+  'Print': 'បោះពុម្ព',
+  'Delete': 'លុប',
+  'Date': 'កាលបរិច្ឆេទ',
+  'Requested by': 'អ្នកស្នើសុំ',
+  'Lab technician': 'អ្នកបច្ចេកទេស Lab',
+  'Total': 'សរុប',
+  'Test': 'តេស្ត',
+  'Patient name': 'ឈ្មោះអ្នកជំងឺ',
+  'Patient ID': 'លេខសម្គាល់អ្នកជំងឺ',
+  'selected': 'បានជ្រើសរើស',
+  'Back': 'ត្រឡប់ក្រោយ',
+  'Documents': 'ឯកសារ',
+  'Results': 'លទ្ធផល',
+  'Uploaded result image': 'បានបញ្ចូលរូបភាពលទ្ធផល',
+  'Search lab tests…': 'ស្វែងរក Lab...',
+  'Search lab tests…': 'ស្វែងរក Lab...',
+  'No matching lab tests.': 'រកមិនឃើញតេស្ត Lab ទេ។',
+  'Other': 'ផ្សេងៗ',
+  'Next': 'បន្ទាប់',
+  'Select a lab test': 'សូមជ្រើសរើសតេស្ត Lab',
+  'Result': 'លទ្ធផល',
+  'Enter at least one lab result': 'សូមបញ្ចូលលទ្ធផល Lab យ៉ាងតិចមួយ'
+});
 function operationParticipantRow(selected = '') {
   const doctors = D.dr.map((doctor) => `<option value="${esc(doctor.id)}" ${String(doctor.id) == String(selected) ? 'selected' : ''}>${esc(doctor.name)}${doctor.specialist ? ` · ${esc(doctor.specialist)}` : ''}</option>`).join('');
   return `<div class="operation-participant-row"><select class="in" name="participants" aria-label="Physician"><option value="">Select physician</option>${doctors || '<option value="" disabled>No physicians available</option>'}</select><button type="button" class="btn s" data-a="opremovephysician" title="Remove physician">×</button></div>`;
@@ -641,7 +1252,7 @@ async function requestInvestigationServices() {
   toast('Services requested');
 }
 function genForm(r) {
-  const k = ptab, e = !!r; r = r || { date: ymd(new Date()) };
+  const k = r ? r.kind : ptab, e = !!r; r = r || { date: ymd(new Date()) };
   if (k == 'vaccination') { vaccinationForm(e ? r : null); return; }
   if (k == 'operation') { operationForm(e ? r : null); return; }
   const module = CARE_MODULES[k];
@@ -1175,6 +1786,68 @@ R.ap = function () {
 };
 const apOpen = (a) => modal(a ? 'Edit' : 'Add appointment', P.ap.f, a || { ...P.ap.d, date: apOpen.date, time: '' }, (o) => a ? api('PUT', 'appointments/' + a.id, o) : api('POST', 'appointments', { ...P.ap.d, ...o }));
 
+const followUpRows = () => D.ap.filter((appointment) => appointment.type === 'Follow Up');
+R.fu = function () {
+  const today = ymd(new Date()), rows = followUpRows()
+    .filter((appointment) => !q || JSON.stringify({ ...appointment, patient_name: ptById(appointment.patient_id)?.name || appointment.name }).toLowerCase().includes(q.toLowerCase()))
+    .sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.time || '').localeCompare(b.time || ''));
+  const dueCount = rows.filter((appointment) => appointment.reminder_date && appointment.reminder_date <= today && appointment.reminder_status !== 'Sent' && !['Done', 'Cancelled'].includes(appointment.st)).length;
+  return hd(T('Follow Up'), T('Schedule and track follow-up appointments and reminders.'), sr(T('Search patient name…')) + `<button class="btn g" data-a="fuadd">＋ ${T('Schedule Follow Up')}</button>`) +
+    `<div class="follow-up-summary"><div class="card"><span>${T('Follow-up appointments')}</span><b>${rows.length}</b></div><div class="card"><span>${T('Reminders due')}</span><b>${dueCount}</b></div></div>` +
+    `<div class="card follow-up-table-wrap"><table class="follow-up-table"><thead><tr>${['Patient', 'Reason / service', 'Date', 'Time', 'Doctor', 'Reminder', 'Status', 'Actions'].map((label) => `<th>${T(label)}</th>`).join('')}</tr></thead><tbody>${rows.map((appointment) => {
+      const patient = ptById(appointment.patient_id), reminder = appointment.reminder_date
+        ? appointment.reminder_status === 'Sent' ? T('Sent') : appointment.reminder_date <= today ? T('Due') : T('Scheduled')
+        : '—';
+      return `<tr><td><button type="button" class="follow-up-patient" data-a="fuopen:${appointment.patient_id}">${esc(patient?.name || appointment.name)}</button></td><td>${esc(appointment.svc || '—')}</td><td>${esc(appointment.date || '')}</td><td>${esc(appointment.time || '—')}</td><td>${esc(appointment.doc || '—')}</td><td>${appointment.reminder_date ? `${esc(appointment.reminder_date)} <span class="bd ${appointment.reminder_status === 'Sent' ? '' : appointment.reminder_date <= today ? 'b' : ''}">${reminder}</span>` : reminder}</td><td><span class="bd ${appointment.st === 'Cancelled' ? 'x' : appointment.st === 'Waiting' ? 'b' : ''}">${esc(appointment.st || 'Waiting')}</span></td><td class="follow-up-actions"><button type="button" class="btn s" data-a="fuedit:${appointment.id}">${T('Edit')}</button>${appointment.reminder_date && appointment.reminder_status !== 'Sent' ? ` <button type="button" class="btn s" data-a="furemind:${appointment.id}">${T('Mark reminder sent')}</button>` : ''}</td></tr>`;
+    }).join('') || `<tr><td colspan="8" class="emp">${T('No follow-up appointments yet.')}</td></tr>`}</tbody></table></div>`;
+};
+
+function followUpForm(id = null, patientId = null) {
+  const appointment = id == null ? null : D.ap.find((item) => item.id == id && item.type === 'Follow Up');
+  if (id != null && !appointment) return toast(T('Follow-up appointment not found.'));
+  const selectedPatientId = patientId || appointment?.patient_id || '';
+  const statusOptions = ['Waiting', 'Confirmed', 'Done', 'Cancelled'];
+  const patientField = `<label class="fl">${T('Patient')}<select class="in" name="patient_id" required><option value="">${T('Select patient')}</option>${D.pt.map((patient) => `<option value="${esc(patient.id)}" ${patient.id == selectedPatientId ? 'selected' : ''}>${esc(patient.name)}</option>`).join('')}</select></label>`;
+  const doctorField = `<label class="fl">${T('Doctor')}<select class="in" name="doc"><option value="">${T('Select doctor')}</option>${D.dr.map((doctor) => `<option value="${esc(doctor.name)}" ${doctor.name == appointment?.doc ? 'selected' : ''}>${esc(doctor.name)}</option>`).join('')}</select></label>`;
+  const body = `<div class="follow-up-form-grid">${patientField}${fIn(T('Reason / service'), 'svc', appointment?.svc || '')}${fIn(T('Appointment date'), 'date', appointment?.date || '', 'date', 'required')}${fIn(T('Time'), 'time', appointment?.time || '', 'time')}${doctorField}${fSel(T('Status'), 'st', appointment?.st || 'Waiting', statusOptions)}${fIn(T('Reminder date'), 'reminder_date', appointment?.reminder_date || '', 'date')}${fSel(T('Reminder status'), 'reminder_status', appointment?.reminder_status || 'Pending', ['Pending', 'Sent'])}<label class="follow-up-notes">${T('Notes')}<textarea class="in" name="notes" rows="3">${esc(appointment?.notes || '')}</textarea></label></div>`;
+  openForm(T(appointment ? 'Edit Follow Up' : 'Schedule Follow Up'), body, async (form) => {
+    const values = Object.fromEntries(new FormData(form)), patient = ptById(Number(values.patient_id));
+    if (!patient) throw new Error(T('Select a patient'));
+    if (!values.date) throw new Error(T('Appointment date is required'));
+    if (values.reminder_date && values.reminder_date > values.date) throw new Error(T('Reminder date must be on or before the appointment date'));
+    if (appointment && values.reminder_date !== appointment.reminder_date && values.reminder_status === 'Sent') values.reminder_status = 'Pending';
+    const payload = {
+      name: patient.name,
+      patient_id: patient.id,
+      phone: patient.phone || '',
+      type: 'Follow Up',
+      svc: String(values.svc || ''),
+      date: values.date,
+      time: String(values.time || ''),
+      doc: String(values.doc || ''),
+      st: String(values.st || 'Waiting'),
+      reminder_date: String(values.reminder_date || ''),
+      reminder_status: String(values.reminder_status || 'Pending'),
+      notes: String(values.notes || '')
+    };
+    await api(appointment ? 'PUT' : 'POST', appointment ? `appointments/${appointment.id}` : 'appointments', payload);
+    await load();
+    render();
+    toast(T('Saved'));
+  }, { cls: 'follow-up-form' });
+}
+
+async function markFollowUpReminderSent(id) {
+  const appointment = D.ap.find((item) => item.id == id && item.type === 'Follow Up');
+  if (!appointment) return toast(T('Follow-up appointment not found.'));
+  try {
+    await api('PUT', `appointments/${appointment.id}`, { reminder_status: 'Sent' });
+    await load();
+    render();
+    toast(T('Reminder marked as sent'));
+  } catch (error) { toast(error.message); }
+}
+
 // ---------- Excel export ----------
 async function exportExcel() {
   const key = (P[rt] && P[rt].k) || rt, rows = rt == 'pt' ? ptRows().map(([r]) => r) : D[key]; if (!Array.isArray(rows) || !rows.length) return toast('Nothing here yet.');
@@ -1220,11 +1893,57 @@ async function exportExcel() {
 function pAct(a, x, y, el) {
   const rec = () => recs.find((r) => r.id == x);
   if (a == 'reg') regForm(); else if (a == 'regedit') regForm(D.pt[+x]); else if (a == 'open') openPatient(+x).catch((e) => toast(e.message));
+  else if (a == 'fuadd') followUpForm();
+  else if (a == 'fuedit') followUpForm(Number(x));
+  else if (a == 'fudone') return completePatientFollowUp(Number(x));
+  else if (a == 'furemind') markFollowUpReminderSent(Number(x));
+  else if (a == 'fuopen') openPatient(Number(x)).catch((e) => toast(e.message));
+  else if (a == 'pdschedule-followup') followUpForm(null, x ? Number(x) : pdId);
   else if (a == 'agem') { $('#agebox').dataset.mode = x; document.querySelectorAll('#agem button').forEach((b) => b.classList.toggle('on', b.dataset.a == 'agem:' + x)); }
   else if (a == 'vsbtn') { $('#vsbox').hidden = !$('#vsbox').hidden; } else if (a == 'regprint') regPrint();
   else if (a == 'opaddphysician') $('#operation-participants').insertAdjacentHTML('beforeend', operationParticipantRow());
   else if (a == 'opremovephysician') el.closest('.operation-participant-row').remove();
-  else if (a == 'rtab') { ptab = x; try { sessionStorage.setItem('currentPatientTab', ptab); } catch (e) { /* retain the current view */ } render(); } else if (a == 'radd') { ptab == 'vitals' ? vsForm() : ptab == 'medical' ? mrForm() : ptab == 'schedule' ? schForm() : ptab == 'consultation' ? consultationFormPicker() : genForm(); }
+  else if (a == 'rtab') { ptab = x; try { sessionStorage.setItem('currentPatientTab', ptab); } catch (e) { /* retain the current view */ } render(); } else if (a == 'radd') { ptab == 'vitals' ? vsForm() : ptab == 'medical' ? mrForm() : ptab == 'schedule' ? schForm() : ptab == 'consultation' ? consultationFormPicker() : ptab == 'lab' ? labResultPicker() : ptab == 'echo' ? echoReportForm() : genForm(); }
+  else if (a == 'patient-echo-add') echoReportForm();
+  else if (a == 'patient-echo-edit') { const record = recs.find((item) => item.id == x); if (record) echoReportForm(record); }
+  else if (a == 'patient-echo-view') { const record = recs.find((item) => item.id == x); if (record) echoReportView(record); }
+  else if (a == 'patient-echo-print') { const record = recs.find((item) => item.id == x); if (record) echoReportPrint(record, y || 'Default'); }
+  else if (a == 'patient-echo-preview-zoom') echoReportPreviewZoom(x);
+  else if (a == 'patient-echo-preview-print') echoReportPreviewPrint(x);
+  else if (a == 'patient-echo-twin') echoReportAddTwin();
+  else if (a == 'patient-echo-report-template') {
+    const recordId = $('#mf').dataset.echoReportRecordId;
+    const snapshot = echoReportDraftSnapshot();
+    echoTemplatePicker((template) => echoReportChooseTemplate(recordId ? recs.find((item) => String(item.id) == recordId) || null : null, template, snapshot));
+  }
+  else if (a == 'patient-echo-service-search') echoReportServiceResults($('#echo-service-search')?.value || '');
+  else if (a == 'patient-echo-image-remove') echoReportRemoveImage(Number(x));
+  else if (a == 'patient-echo-service') {
+    const service = D.sv.find((item) => String(item.id) == String(x));
+    if (!service) return toast(T('Service not found'));
+    $('#echo-report-service-id').value = service.id;
+    $('#echo-report-service-name').value = service.name;
+    $('#echo-selected-service').textContent = service.name;
+    $('#echo-service-search').value = service.name;
+    $('#echo-service-results').hidden = true;
+  }
+  else if (a == 'patient-echo-doctor-add') {
+    const input = $('#echo-report-doctor-new');
+    input.hidden = false;
+    input.focus();
+  }
+  else if (a == 'patient-echo-template') echoTemplatePicker();
+  else if (a == 'patient-echo-size') { echoPageSize = echoPageSize == 'A4' ? 'Letter' : echoPageSize == 'Letter' ? 'A5' : 'A4'; render(); }
+  else if (a == 'patient-echo-upload') echoUploadForm();
+  else if (a == 'patient-echo-tab') { echoSubtab = x; render(); }
+  else if (a == 'labtab') { labSubtab = x; render(); }
+  else if (a == 'labupload') labUploadForm();
+  else if (a == 'labhistory') labHistory(recs.filter((record) => record.kind == 'lab').sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id));
+  else if (a == 'labhistoryprint') labHistoryPrint(recs.filter((record) => record.kind == 'lab').sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id));
+  else if (a == 'labprint') labHistoryPrint(recs.filter((record) => record.kind == 'lab' && (!pdDate || (record.date || '').startsWith(pdDate))).sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id));
+  else if (a == 'labresultprint') labResultPrintFromForm();
+  else if (a == 'labrecordprint') labSavedResultPrint(x, y == 'sl' ? 'S+L' : y == 'cl' ? 'CL' : '');
+  else if (a == 'labresultback') labResultPicker(true);
   else if (a == 'consult-medical') consultationForm('standard');
   else if (a == 'consult-documents') { ptab = 'documents'; render(); }
   else if (a == 'consult-cnf') consultationForm('md');
@@ -1248,7 +1967,7 @@ function pAct(a, x, y, el) {
   else if (a == 'centerprint-record') { const r = rec(); if (r) centerPrint(jd(r).rows || []); }
   else if (a == 'investigation-request') requestInvestigationServices().catch((e) => toast(e.message));
   else if (a == 'svcplus' || a == 'svcminus') changeInvestigationQuantity(x, Number(y), a == 'svcplus' ? 1 : -1).catch((e) => toast(e.message));
-  else if (a == 'redit') { const r = rec(); r.kind == 'vitals' ? vsForm(r) : r.kind == 'medical' ? mrForm(r) : r.kind == 'schedule' ? schForm(r) : r.kind == 'mrd' ? mrdForm(r) : r.kind == 'cnf' ? cnfForm(r) : r.kind == 'consultation' && jd(r).consultation_mode == 'center' ? centerForm(r) : r.kind == 'consultation' && jd(r).consultation_mode ? consultationForm(jd(r).consultation_mode, r) : genForm(r); }
+  else if (a == 'redit') { const r = rec(); r.kind == 'vitals' ? vsForm(r) : r.kind == 'medical' ? mrForm(r) : r.kind == 'schedule' ? schForm(r) : r.kind == 'mrd' ? mrdForm(r) : r.kind == 'lab' && jd(r).lab_attachment ? genForm(r) : r.kind == 'lab' ? labResultForm(D.lab.find((lab) => String(lab.id) == String(jd(r).template_id)) || { id: jd(r).template_id, name: jd(r).test_name || r.title, cat: jd(r).category, price: jd(r).price, fields: JSON.stringify(jd(r).fields || []) }, r) : r.kind == 'cnf' ? cnfForm(r) : r.kind == 'consultation' && jd(r).consultation_mode == 'center' ? centerForm(r) : r.kind == 'consultation' && jd(r).consultation_mode ? consultationForm(jd(r).consultation_mode, r) : genForm(r); }
   else if (a == 'rdel') { if (confirm(T('Delete this record?'))) api('DELETE', 'records/' + x).then(loadRecs).then(render).catch((e) => toast(e.message)); }
   else if (a == 'rprint') { const r = rec(); printDoc('Medical Record', ptBlock(curPt()) + `<p>${esc((r.date || '').replace('T', ' '))}</p>` + mrPrintHtml(jd(r))); }
   else if (a == 'vaxprint') { const r = rec(); if (r) vaccinationPrint(r); }
@@ -1271,9 +1990,10 @@ function pAct(a, x, y, el) {
   else if (a == 'ptcol') { const S = ptHide[ptMode()]; if (S.has(x)) S.delete(x); else if (ptShown().length > 1) S.add(x); else toast('At least one column must stay visible'); savePt(); render(); }
   else if (a == 'ptmr') openPatient(+x).then(() => { ptab = 'medical'; render(); mrForm(); }).catch((e) => toast(e.message));
   else if (a == 'ipdout') ipdOut(+x); else if (a == 'ipdreturn') returnIpdPatientToOpd(+x).catch((e) => toast(e.message)); else if (a == 'ipdbed') ipdBed(+x); else if (a == 'ipdtreat') ipdTreat(+x); else if (a == 'ipdedit') ipdEdit(+x); else if (a == 'ipdprint') ipdPrint(+x); else if (a == 'ipdshare') ipdShare(+x); else if (a == 'ipdadd') ipdAdd();
-  else if (a == 'ptbed') bedForm(+x); else if (a == 'ptadmit') ptAdmit(+x); else if (a == 'ptprint') ptCard(+x);
+  else if (a == 'ptbed') bedForm(+x); else if (a == 'bedfollowup') return movePatientToFollowUp(+x); else if (a == 'ptadmit') ptAdmit(+x); else if (a == 'ptprint') ptCard(+x);
   else if (a == 'pttreat') treatmentFollowup(+x).catch((e) => toast(e.message));
-  else if (a == 'ptdx') { const q0 = ptById(+x), opts = ['', ...new Set([q0.diagnosis, ...D.dx.map((d) => d.name)].filter(Boolean))]; modal('Diagnosis', [['Diagnosis', 'diagnosis', 'sel', opts]], q0, (o) => api('PUT', 'patients/' + q0.id, o)); }
+  else if (a == 'ptdx') patientDiagnosisForm(+x);
+  else if (a == 'ptdxnewdx') newDiagnosisForm(+x);
   else if (a == 'ptpay') payForm(+x, true); else if (a == 'ptinv') invoicePrint(+x).catch((e) => toast(e.message));
   else if (a == 'payall') return payForm(pdId, true);
   else if (a == 'payreceipt') paymentReceipt(+x);
@@ -1291,11 +2011,14 @@ function pAct(a, x, y, el) {
   }
   else if (a == 'ipdbill') openIpdBilling(+x).catch((e) => toast(e.message));
   else if (a == 'ipdinvoice') invoicePrint(+x).catch((e) => toast(e.message));
-  else if (a == 'tfadd') { tfRows = tfDraftRows(); tfRows.push({ date: nowLocal(), vitals: '', diagnosis: '', notes: '' }); tfRender(); }
+  else if (a == 'tfadd') { tfRows = tfDraftRows(); tfRows.push(tfNewRow()); tfRender(); }
   else if (a == 'tfremove') { tfRows = tfDraftRows(); tfRows.splice(+x, 1); tfRender(); }
   else if (a == 'tfhistory') { tfRows = tfDraftRows(); tfShowHistory = !tfShowHistory; tfRender(); }
   else if (a == 'tfedit') { const r = tfHistory.find((q) => q.id == x); if (r) { tfRows = [tfRowFromRecord(r)]; tfShowHistory = false; tfRender(); } }
+  else if (a == 'tfdelete') tfDeleteRecord(+x).catch((e) => toast(e.message));
   else if (a == 'tfprint') tfPrintAll();
+  else if (a == 'labpick') { const id = String(x); labPickerSelection.has(id) ? labPickerSelection.delete(id) : labPickerSelection.add(id); const list = $('#lab-result-list'); if (list) list.innerHTML = labPickerCards(); const next = document.querySelector('[data-a="labcontinue"]'); if (next) next.disabled = !labPickerSelection.size; const count = document.querySelector('.lab-picker-footer span'); if (count) count.textContent = `${labPickerSelection.size} ${T('selected')}`; }
+  else if (a == 'labcontinue') labResultSelectionNext();
   else if (a == 'pdctl') { pdCtl = !pdCtl; render(); } else if (a == 'pdlay') { pdLay = pdLay == 'grid' ? 'list' : 'grid'; savePd(); render(); }
   else if (a == 'hidei' || a == 'hidec') { const S = a == 'hidei' ? pdHideI : pdHideC; S.has(x) ? S.delete(x) : S.add(x); savePd(); render(); }
   else if (a == 'dashap') { cal.mode = 'day'; cal.d = new Date(); cal.list = false; rt = 'ap'; q = ''; render(); }
@@ -1321,6 +2044,11 @@ document.addEventListener('change', async (e) => {
 document.addEventListener('input', (e) => {
   if (['payall_discount_input', 'payall_discount_currency'].includes(e.target.name)) payAllDiscountRefresh();
   else if (['received', 'all_discount'].includes(e.target.name) && $('#mf').classList.contains('payall-dialog')) payAllRefresh();
+  else if (e.target.id == 'lab-result-search') {
+    labPickerQuery = e.target.value;
+    const list = $('#lab-result-list');
+    if (list) list.innerHTML = labPickerCards();
+  }
   else if (e.target.id == 'pdd') { pdDate = e.target.value; $('#rp').innerHTML = recPanel(); }
   else if (e.target.id == 'investigation-service-search') {
     investigationQuery = e.target.value;
@@ -1344,7 +2072,7 @@ const fmtD = (s) => { const d = String(s || '').slice(0, 10).split('-'); return 
 const usd = (n) => '$' + (n / ((D.clinic && D.clinic.rate) || 4000)).toFixed(2);
 const trunc = (s, n = 28) => { s = String(s || ''); return s.length > n ? s.slice(0, n) + '…' : s; };
 const pgNums = (c, n) => { const a = [...new Set([1, 2, 3, 4, n, c - 1, c, c + 1].filter((x) => x >= 1 && x <= n))].sort((x, y) => x - y), o = []; a.forEach((x, i) => { if (i && x - a[i - 1] > 1) o.push('…'); o.push(x); }); return o; };
-const PTAB = [['OPD', 'OPD'], ['IPD', 'IPD'], ['Unpaid', 'Unpaid'], ['NSSF', 'NSSF'], ['Details', 'Details']];
+const PTAB = [['OPD', 'OPD'], ['IPD', 'IPD'], ['Unpaid', 'Unpaid'], ['NSSF', 'NSSF'], ['Follow Up', 'Follow Up'], ['Details', 'Details']];
 // ---- per-column filters (filter row under the header) ----
 const pf = {};
 const lc = (v) => String(v ?? '').toLowerCase();
@@ -1360,13 +2088,14 @@ function ageOk(r, v) {
 const PFN = {
   id: (r, v) => String(r.id).includes(v.trim()), date: (r, v) => fmtD(r.reg_date || r.created_at).includes(v.trim()) || String(r.reg_date || r.created_at || '').includes(v.trim()),
   name: (r, v) => has(r.name, v), latin: (r, v) => has(r.latin_name, v), nssf: (r, v) => has(r.nssf_id, v), nat: (r, v) => has(r.national_id, v),
+  followup: (r, v) => { const appointment = followUpFor(r.id); return has(appointment ? [appointment.date, appointment.st, appointment.svc, appointment.reminder_date].join(' ') : r.follow_up ? 'Follow Up' : 'No follow-up', v); },
   type: (r, v) => v == 'IPD' ? r.type == 'IPD' : r.type != 'IPD', treat: (r, v) => has(r.treatment, v), dx: (r, v) => has(r.diagnosis || r.last_dx, v),
   mr: (r, v) => v == 'yes' ? r.mr_count > 0 : !(r.mr_count > 0),   age: ageOk, sex: (r, v) => r.sex == v, pay: (r, v) => v == 'unpaid' ? patientDue(r.id) > 0 : !(patientDue(r.id) > 0),
   phone: (r, v) => lc(r.phone).replace(/\s/g, '').includes(lc(v).replace(/\s/g, '')), addr: (r, v) => has(r.addr, v),
   comp: (r, v) => has(r.complaints, v), hist: (r, v) => has(r.history, v), regd: (r, v) => has(r.reg_date, v) };
 const SEL = { type: [['', 'All'], ['OPD', 'OPD'], ['IPD', 'IPD']], mr: [['', 'All'], ['yes', 'With record'], ['no', 'No record']], sex: [['', 'All'], ['M', 'Male'], ['F', 'Female']], pay: [['', 'All'], ['unpaid', 'Unpaid'], ['paid', 'Paid']] };
 const pfActive = () => Object.entries(pf).filter(([, v]) => v !== '' && v != null);
-const tabOk = (r) => tab == 'IPD' ? r.type == 'IPD' : tab == 'Unpaid' ? patientDue(r.id) > 0 : tab == 'NSSF' ? r.nssf : tab == 'Details' ? true : r.type != 'IPD';
+const tabOk = (r) => tab == 'IPD' ? r.type == 'IPD' : tab == 'Unpaid' ? patientDue(r.id) > 0 : tab == 'NSSF' ? r.nssf : tab == 'Follow Up' ? !!r.follow_up || !!followUpFor(r.id) : tab == 'Details' ? true : r.type != 'IPD';
 const colOk = (r) => pfActive().every(([k, v]) => PFN[k] ? PFN[k](r, String(v)) : true);
 const ptRows = () => ft('pt').filter(([r]) => tabOk(r) && colOk(r));
 const fCell = (k) => !k ? '<th class="fr"><button class="btn s" data-a="pfclear" title="Clear filters">✕</button></th>'
@@ -1374,27 +2103,50 @@ const fCell = (k) => !k ? '<th class="fr"><button class="btn s" data-a="pfclear"
   : `<th class="fr ${k == 'latin' ? 'c-latin' : ''}"><input class="in" data-pf="${k}" value="${esc(pf[k] || '')}" placeholder="${k == 'age' ? '20-40' : '🔍'}"></th>`;
 // ---- rows ----
 // ---- columns: each one can be shown or hidden (saved in this browser) ----
-const COLF = [['id', 'ID'], ['date', 'Date'], ['name', 'Name'], ['latin', 'Latin name'], ['nssf', 'NSSF ID'], ['nat', 'National ID'], ['type', 'IPD/OPD'], ['treat', 'Treatment'], ['dx', 'Diagnosis'], ['mr', 'Medical Record'], ['age', 'Age'], ['sex', 'Gender'], ['pay', 'Unpaid'], ['phone', 'Phone'], ['addr', 'Address'], ['act', 'Actions']];
-const COLD = [['id', 'ID'], ['name', 'Name'], ['latin', 'Latin name'], ['phone', 'Phone'], ['addr', 'Address'], ['comp', 'Complaints'], ['hist', 'Past medical history'], ['regd', 'Registration date'], ['nssf', 'NSSF ID'], ['nat', 'National ID'], ['act', 'Actions']];
+const COLF = [['id', 'ID'], ['date', 'Date'], ['name', 'Name'], ['latin', 'Latin name'], ['nssf', 'NSSF ID'], ['nat', 'National ID'], ['type', 'IPD/OPD'], ['treat', 'Treatment'], ['dx', 'Diagnosis'], ['followup', 'Follow Up'], ['mr', 'Medical Record'], ['age', 'Age'], ['sex', 'Gender'], ['pay', 'Unpaid'], ['phone', 'Phone'], ['addr', 'Address'], ['act', 'Actions']];
+const COLD = [['id', 'ID'], ['name', 'Name'], ['latin', 'Latin name'], ['phone', 'Phone'], ['addr', 'Address'], ['followup', 'Follow Up'], ['comp', 'Complaints'], ['hist', 'Past medical history'], ['regd', 'Registration date'], ['nssf', 'NSSF ID'], ['nat', 'National ID'], ['act', 'Actions']];
 let ptHide = { full: new Set(), det: new Set() }, ptColsOpen = false, ptFilt = false;
 try { const h = JSON.parse(localStorage.getItem('ptHide') || '{}'); ptHide = { full: new Set(h.full || []), det: new Set(h.det || []) }; ptFilt = localStorage.getItem('ptFilt') == '1'; } catch (e) { /* defaults */ }
 const savePt = () => { try { localStorage.setItem('ptHide', JSON.stringify({ full: [...ptHide.full], det: [...ptHide.det] })); localStorage.setItem('ptFilt', ptFilt ? '1' : '0'); } catch (e) { /* ignore */ } };
 const ptMode = () => (tab == 'Details' ? 'det' : 'full');
 const ptDefs = () => (tab == 'Details' ? COLD : COLF);
 const ptShown = () => ptDefs().filter(([k]) => !ptHide[ptMode()].has(k));
+const followUpFor = (patientId) => {
+  const today = ymd(new Date());
+  return followUpRows().filter((appointment) => appointment.patient_id == patientId && !['Done', 'Cancelled'].includes(appointment.st))
+    .sort((a, b) => {
+      const aFuture = a.date >= today, bFuture = b.date >= today;
+      if (aFuture !== bFuture) return aFuture ? -1 : 1;
+      const dateOrder = (a.date || '').localeCompare(b.date || '');
+      return (aFuture ? dateOrder : -dateOrder) || (a.time || '').localeCompare(b.time || '');
+    })[0];
+};
+const followUpCell = (patient) => {
+  const appointment = followUpFor(patient.id);
+  if (!appointment) return `<td>${patient.follow_up ? `<span class="bd">${T('Follow Up')}</span>` : `<button type="button" class="btn s" data-a="pdschedule-followup:${patient.id}">＋ ${T('Schedule Follow Up')}</button>`}</td>`;
+  const overdue = appointment.date < ymd(new Date());
+  return `<td><div class="patient-follow-up"><span>${esc(fmtD(appointment.date))}</span><span class="bd ${overdue ? 'x' : appointment.st == 'Waiting' ? 'b' : ''}">${esc(overdue ? T('Overdue') : T(appointment.st || 'Waiting'))}</span><button type="button" class="btn s" data-a="fuedit:${appointment.id}">${T('Edit')}</button></div></td>`;
+};
 const act = (r, i) => `<button class="sq b" data-a="regedit:${i}" title="Edit">✎</button> <button class="sq r" data-a="del:pt:${i}" title="Delete">🗑</button>`;
 const ptNm = (r, sm = true) => `<div class="pn"><div><a href="#" data-a="open:${r.id}">${esc(r.name)}</a>${sm && r.latin_name ? `<small class="pl">${esc(r.latin_name)}</small>` : ''}</div><span class="ic"><a href="#" data-a="open:${r.id}" title="Open patient file">👁</a><a href="#" data-a="ptadmit:${r.id}" title="${r.type == 'IPD' ? 'Discharge' : 'Admit to IPD'}">${r.type == 'IPD' ? '🚪' : '🛏'}</a><a href="#" data-a="ptprint:${r.id}" title="Print patient card">🖨</a></span></div>`;
+const patientFollowUpAction = (patient) => tab == 'Follow Up'
+  ? `<a href="#" class="pill opd clk" data-a="fudone:${patient.id}" title="${T('Done - return to OPD')}">${T('Done')}</a>`
+  : patient.type != 'IPD' && !patient.follow_up
+    ? `<a href="#" class="pill opd clk" data-a="bedfollowup:${patient.id}" title="${T('Follow Up')}">${T('FUP')}</a>`
+    : '';
 const cellsFull = (r, i, sm) => ({
   id: `<td>${r.id}</td>`, date: `<td>${fmtD(r.reg_date || r.created_at)}</td>`, name: `<td>${ptNm(r, sm)}</td>`, latin: `<td class="c-latin">${esc(r.latin_name || '')}</td>`,
-  nssf: `<td>${esc(r.nssf_id || 'N/A')}</td>`, nat: `<td>${esc(r.national_id || 'N/A')}</td>`, type: `<td><span class="pill ${r.type == 'IPD' ? 'ipd' : 'opd'} clk" data-a="ptadmit:${r.id}" title="${r.type == 'IPD' ? 'Discharge to OPD' : 'Admit to IPD'}">${r.type == 'IPD' ? 'IPD' : 'OPD'}</span></td>`,
+  nssf: `<td>${esc(r.nssf_id || 'N/A')}</td>`, nat: `<td>${esc(r.national_id || 'N/A')}</td>`, type: `<td><span class="pill ${r.type == 'IPD' ? 'ipd' : 'opd'} clk" data-a="ptadmit:${r.id}" title="${r.type == 'IPD' ? 'Discharge to OPD' : 'Admit to IPD'}">${r.type == 'IPD' ? 'IPD' : 'OPD'}</span> ${patientFollowUpAction(r)}</td>`,
   treat: `<td title="${esc(r.treatment || '')}">${esc(trunc(r.treatment, 14))} <a href="#" class="ed" data-a="pttreat:${r.id}" title="Edit treatment">✎</a></td>`,
   dx: `<td title="${esc(r.diagnosis || r.last_dx || '')}">${esc(trunc(r.diagnosis || r.last_dx || 'N/A', 14))} <a href="#" class="ed" data-a="ptdx:${r.id}" title="Edit diagnosis">✎</a></td>`,
+  followup: followUpCell(r),
   mr: `<td><button class="mrb" data-a="ptmr:${r.id}" title="New medical record">✎</button></td>`, age: `<td>${fmtAge(r)}</td>`,
   sex: `<td>${r.sex ? `<span class="pill ${r.sex == 'F' ? 'f' : 'm'}">${fmtSex(r.sex)}</span>` : ''}</td>`,
   pay: `<td>${patientDue(r.id) > 0 ? `<div class="due" data-a="ptpay:${r.id}" title="Record payment"><b>KHR ${patientDue(r.id).toLocaleString('en-US')}</b><br>${usd(patientDue(r.id))}</div>` : `<span class="paid">✔ Paid</span> <a href="#" data-a="ptinv:${r.id}" title="Invoice">🧾</a>`}</td>`,
   phone: `<td>${r.phone ? '📞 ' + esc(r.phone) : '<span class="mu">📞</span>'}</td>`, addr: `<td title="${esc(r.addr || '')}">${esc(trunc(r.addr || 'N/A', 14))}</td>`, act: `<td style="white-space:nowrap">${act(r, i)}</td>` });
 const cellsDet = (r, i) => ({
   id: `<td>${r.id}</td>`, name: `<td>${ptNm(r, false)}</td>`, latin: `<td>${esc(r.latin_name || '')}</td>`, phone: `<td>${esc(r.phone || '')}</td>`, addr: `<td>${esc(r.addr || '')}</td>`,
+  followup: followUpCell(r),
   comp: `<td style="white-space:pre-wrap;min-width:180px">${esc(r.complaints || '')}</td>`, hist: `<td style="white-space:pre-wrap;min-width:180px">${esc(r.history || '')}</td>`,
   regd: `<td>${esc((r.reg_date || '').replace('T', ' '))}</td>`, nssf: `<td>${esc(r.nssf_id || '')}</td>`, nat: `<td>${esc(r.national_id || '')}</td>`, act: `<td style="white-space:nowrap">${act(r, i)}</td>` });
 function ptView() {
@@ -1432,13 +2184,75 @@ async function returnIpdPatientToOpd(id) {
   rt = 'pt'; tab = 'OPD'; q = ''; pg = 1;
   render(); toast('Discharged');
 }
+async function movePatientToFollowUp(patientId) {
+  const patient = ptById(patientId);
+  if (!patient) return toast(T('Patient not found.'));
+  try {
+    await api('PUT', `patients/${patient.id}`, { follow_up: 1 });
+    await load();
+    $('#md').classList.remove('on');
+    rt = 'pt'; tab = 'Follow Up'; q = ''; pg = 1;
+    render();
+    toast(T('Moved to Follow Up'));
+  } catch (error) { toast(error.message); }
+}
+function patientDiagnosisForm(patientId, selectedDiagnosis = null) {
+  const patient = ptById(patientId);
+  if (!patient) return toast(T('Patient not found.'));
+  const diagnosis = selectedDiagnosis || patient.diagnosis;
+  const options = ['', ...new Set([diagnosis, ...D.dx.map((item) => item.name)].filter(Boolean))];
+  modal('Diagnosis', [['Diagnosis', 'diagnosis', 'sel', options]], { ...patient, diagnosis }, (values) => api('PUT', `patients/${patient.id}`, values));
+  $('#mf').innerHTML += `<button type="button" class="btn s" data-a="ptdxnewdx:${patient.id}">＋ ${T('New Diagnosis')}</button>`;
+}
+function newDiagnosisForm(patientId) {
+  const patient = ptById(patientId);
+  if (!patient) return toast(T('Patient not found.'));
+  const form = $('#mf');
+  form.className = 'wide';
+  form.innerHTML = `<h3 style="margin:0 0 8px">${T('New Diagnosis')}</h3>${fIn(T('Diagnosis'), 'name', '', 'text', 'required')}<div class="tools fb" style="justify-content:flex-end"><button type="button" class="btn" data-a="close">${T('Cancel')}</button><button class="btn p">${T('Save')}</button></div>`;
+  $('#md').classList.add('on');
+  form.onsubmit = async (event) => {
+    event.preventDefault();
+    const name = String(new FormData(form).get('name') || '').trim();
+    if (!name) return toast(T('Name is required'));
+    if (D.dx.some((diagnosis) => diagnosis.name.toLowerCase() == name.toLowerCase())) return toast(T('Diagnosis already exists'));
+    try {
+      await api('POST', 'diagnoses', { name });
+      await api('PUT', `patients/${patient.id}`, { diagnosis: name });
+      await load();
+      $('#md').classList.remove('on');
+      render();
+      toast(T('Saved'));
+      patientDiagnosisForm(patient.id, name);
+    } catch (error) { toast(error.message); }
+  };
+}
+async function completePatientFollowUp(patientId) {
+  const patient = ptById(patientId);
+  if (!patient) return toast(T('Patient not found.'));
+  try {
+    for (const appointment of D.ap.filter((item) => item.type === 'Follow Up' && item.patient_id == patientId && !['Done', 'Cancelled'].includes(item.st))) {
+      await api('PUT', `appointments/${appointment.id}`, { st: 'Done' });
+    }
+    for (const admission of D.ipd.filter((item) => String(item.code) == String(patientId) && !item.out)) {
+      await api('PUT', `ipd/${admission.id}`, { out: 1, dis: ymd(new Date()) });
+    }
+    await api('PUT', `patients/${patientId}`, { follow_up: 0, type: 'OPD' });
+    await load();
+    rt = 'pt'; tab = 'OPD'; q = ''; pg = 1;
+    render();
+    toast(T('Returned to OPD'));
+  } catch (error) { toast(error.message); }
+}
 function ptCard(id) {
   const p = ptById(id); printDoc('Patient card', ptBlock(p) + kv([['Treatment', p.treatment], ['Diagnosis', p.diagnosis || p.last_dx], ['Complaints', p.complaints], ['Past medical history', p.history], ['Registered', fmtD(p.reg_date || p.created_at)]]));
 }
 let tfPatientId = null, tfRows = [], tfHistory = [], tfShowHistory = false;
+const TF_VITALS_TEMPLATE = ['សម្ពាធឈាម:', 'ជីពចរ:', 'ចង្វាក់បេះដូង:', 'ចង្វាក់ដង្ហើម:', 'សីតុណ្ហភាព:', 'អុកស៊ីសែន:', 'ជាតិស្ករ:'].join('\n');
+const tfNewRow = () => ({ date: nowLocal(), vitals: TF_VITALS_TEMPLATE, diagnosis: '', notes: '' });
 const tfRowFromRecord = (r) => {
   const d = jd(r);
-  return { id: r.id, date: r.date || nowLocal(), vitals: d.vitals || '', diagnosis: d.diagnosis || '', notes: r.notes || '' };
+  return { id: r.id, date: r.date || nowLocal(), vitals: d.vitals || TF_VITALS_TEMPLATE, diagnosis: d.diagnosis || '', notes: r.notes || '' };
 };
 function tfDraftRows() {
   const f = $('#mf');
@@ -1453,13 +2267,13 @@ function tfDraftRows() {
 function tfRender() {
   const p = ptById(tfPatientId), f = $('#mf');
   if (!p) return toast('Patient not found.');
-  const rows = tfRows.map((r, i) => `<div class="tf-row"><div><input class="in" type="datetime-local" name="tf-date-${i}" value="${esc(r.date || nowLocal())}"><textarea class="in" name="tf-vitals-${i}" placeholder="${T('Enter vital signs')}">${esc(r.vitals || '')}</textarea></div>
+  const rows = tfRows.map((r, i) => `<div class="tf-row"><div><input class="in" type="datetime-local" name="tf-date-${i}" value="${esc(r.date || nowLocal())}"><textarea class="in" name="tf-vitals-${i}">${esc(r.vitals ?? TF_VITALS_TEMPLATE)}</textarea></div>
 <textarea class="in" name="tf-diagnosis-${i}" placeholder="${T("Describe patient's condition, symptoms, or diagnosis")}">${esc(r.diagnosis || '')}</textarea>
 <textarea class="in" name="tf-notes-${i}" placeholder="${T('Prescribed medication, treatment plan, or notes...')}">${esc(r.notes || '')}</textarea>
 <div class="tf-actions"><button type="button" class="btn s r" data-a="tfremove:${i}" title="${T('Remove row')}">✕</button></div></div>`).join('');
   const history = tfShowHistory ? `<div class="tf-history"><h4>${T('Treatment History')}</h4>${tfHistory.map((r) => {
     const d = jd(r);
-    return `<div class="tf-history-row"><div><b>${esc((r.date || '').replace('T', ' '))}</b><div>${esc(d.diagnosis || '')}</div><div class="mu">${esc(r.notes || '')}</div></div><button type="button" class="btn s" data-a="tfedit:${r.id}">${T('Edit')}</button></div>`;
+    return `<div class="tf-history-row"><div><b>${esc((r.date || '').replace('T', ' '))}</b><div>${esc(d.diagnosis || '')}</div><div class="mu">${esc(r.notes || '')}</div></div><div class="tools"><button type="button" class="btn s" data-a="tfedit:${r.id}">${T('Edit')}</button><button type="button" class="btn s r" data-a="tfdelete:${r.id}" title="${T('Delete this record?')}">✕</button></div></div>`;
   }).join('') || `<p class="emp">${T('No history records yet.')}</p>`}</div>` : '';
   openForm(`${T('Treatment Follow-up')} — ${esc(p.name)}`, `<div class="tf-patient">${T('Patient')}: ${esc(p.name)} &nbsp;|&nbsp; ${T('Age')}: ${esc(fmtAge(p))} &nbsp;|&nbsp; ${T('Sex')}: ${esc(fmtSex(p.sex) || 'N/A')}</div>
 <div class="tf-toolbar"><button type="button" class="btn" data-a="tfhistory">${tfShowHistory ? T('Hide History') : T('View History')}</button><button type="button" class="btn g" data-a="tfadd">+ ${T('Add New Treatment Row')}</button></div>
@@ -1473,10 +2287,14 @@ function tfRender() {
       else await api('POST', 'records', body);
     }
     await load();
+    tfHistory = (await api('GET', 'records?patient_id=' + tfPatientId + '&kind=treatment&limit=5000')).sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
     if (pdId == tfPatientId) await loadRecs();
+    tfRows = [tfNewRow()];
+    tfShowHistory = true;
     render();
+    tfRender();
     toast('Saved');
-  }, { cls: 'xl treatment-followup', ok: 'Save Record', extra: '<button type="button" class="btn" data-a="tfprint">Print All Records</button>' });
+  }, { cls: 'xl treatment-followup', ok: 'Save Record', keepOpen: true, extra: '<button type="button" class="btn" data-a="tfprint">Print All Records</button>' });
   const ftop = $('#mf h3');
   if (ftop) ftop.innerHTML = `<span>${T('Treatment Follow-up')} — ${esc(p.name)}</span><button type="button" class="btn s" data-a="close" aria-label="${T('Close')}">×</button>`;
 }
@@ -1484,17 +2302,46 @@ async function treatmentFollowup(pid) {
   const p = ptById(pid); if (!p) return toast('Patient not found.');
   tfPatientId = pid;
   tfHistory = (await api('GET', 'records?patient_id=' + pid + '&kind=treatment&limit=5000')).sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
-  tfRows = [ { date: nowLocal(), vitals: '', diagnosis: '', notes: '' } ];
+  tfRows = [tfNewRow()];
   tfShowHistory = false;
   tfRender();
 }
 function tfPrintAll() {
   const p = ptById(tfPatientId);
-  const body = tfHistory.slice().sort((a, b) => (a.date || '').localeCompare(b.date || '')).map((r) => {
+  if (!p) return toast('Patient not found.');
+  const history = tfHistory.filter((r) => {
     const d = jd(r);
-    return `<div class="rc"><b>${esc((r.date || '').replace('T', ' '))}</b>${kv([['Vital signs', d.vitals], ['Diagnosis / Evolution', d.diagnosis], ['Treatment / Notes', r.notes]])}</div>`;
+    return [d.vitals, d.diagnosis, r.notes || d.notes].some((value) => String(value || '').trim());
+  }).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const rows = history.map((r) => {
+    const d = jd(r);
+    const [date, time] = String(r.date || '').replace('T', ' ').split(/\s+/, 2);
+    const dateTime = `${fmtD(date)}${time ? ` ${esc(time.slice(0, 5))}` : ''}`;
+    const cell = (value) => esc(value || '').replace(/\r?\n/g, '<br>');
+    return `<tr><td><div class="tf-print-date">${dateTime}</div><div class="tf-print-text">${cell(d.vitals)}</div></td><td class="tf-print-text">${cell(d.diagnosis)}</td><td class="tf-print-text">${cell(r.notes || d.notes)}</td></tr>`;
   }).join('');
-  printDoc('Treatment Follow-up', ptBlock(p) + (body || `<p>${T('No history records yet.')}</p>`));
+  const today = fmtD(ymd(new Date()));
+  const body = `<section class="tf-print">
+<h2 class="tf-print-title"><span>ការតាមដានការព្យាបាល</span><small>TREATMENT FOLLOW-UP CHART</small></h2>
+<div class="tf-print-patient">
+  <div><b>ឈ្មោះអ្នកជំងឺ / Patient name:</b> ${esc(p.name || '')}</div><div><b>ភេទ / Sex:</b> ${esc(fmtSex(p.sex) || 'N/A')}</div>
+  <div><b>អាយុ / Age:</b> ${esc(fmtAge(p))}</div>    <div><b>កាលបរិច្ឆេទ / Date:</b> ${today}</div>
+</div>
+<table class="tf-print-table"><colgroup><col style="width:22%"><col style="width:42%"><col style="width:36%"></colgroup>
+<thead><tr><th><span>ថ្ងៃខែ / សញ្ញាជីវិត</span><small>Date / Vital Signs</small></th><th><span>ការវិវត្តន៍របស់អ្នកជំងឺ</span><small>Patient's Evolution</small></th><th><span>ការព្យាបាល</span><small>Treatment</small></th></tr></thead>
+<tbody>${rows || `<tr><td colspan="3" class="emp">${T('No history records yet.')}</td></tr>`}</tbody></table>
+<div class="tf-print-signature"><span>ហត្ថលេខាគ្រូពេទ្យព្យាបាល</span><div></div><small>Doctor's Signature</small></div></section>`;
+  printDoc('', body);
+}
+async function tfDeleteRecord(id) {
+  if (!confirm(T('Delete this record?'))) return;
+  const draftRows = tfDraftRows();
+  await api('DELETE', 'records/' + id);
+  tfHistory = (await api('GET', 'records?patient_id=' + tfPatientId + '&kind=treatment&limit=5000')).sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
+  tfRows = draftRows;
+  if (pdId == tfPatientId) await loadRecs();
+  tfRender();
+  toast('Deleted');
 }
 // ---------- billing ----------
 let payAllContext = null;
@@ -1814,6 +2661,12 @@ Object.assign(L, { 'IPD/OPD': 'IPD/OPD', 'Treatment': 'ការព្យាប�
 Object.assign(L, { 'Treatment Follow-up': 'ការតាមដានការព្យាបាល', 'Date / Vital Signs': 'កាលបរិច្ឆេទ / សញ្ញាជីវិត', 'Diagnosis / Evolution': 'រោគវិនិច្ឆ័យ / ការវិវត្ត', 'Treatment / Notes': 'ការព្យាបាល / កំណត់ចំណាំ', 'Actions': 'សកម្មភាព', 'Patient': 'អ្នកជំងឺ', 'Enter vital signs': 'បញ្ចូលសញ្ញាជីវិត', "Describe patient's condition, symptoms, or diagnosis": 'ពិពណ៌នាអំពីស្ថានភាព រោគសញ្ញា ឬរោគវិនិច្ឆ័យ', 'Prescribed medication, treatment plan, or notes...': 'ថ្នាំ ផែនការព្យាបាល ឬកំណត់ចំណាំ...', 'Remove row': 'លុបជួរដេក', 'Treatment History': 'ប្រវត្តិការព្យាបាល', 'Hide History': 'លាក់ប្រវត្តិ', 'Add New Treatment Row': 'បន្ថែមជួរដេកការព្យាបាលថ្មី', 'Add a treatment row to begin.': 'បន្ថែមជួរដេកការព្យាបាលដើម្បីចាប់ផ្តើម។', 'Print All Records': 'បោះពុម្ពកំណត់ត្រាទាំងអស់', 'Save Record': 'រក្សាទុកកំណត់ត្រា', 'Enter treatment details before saving': 'សូមបញ្ចូលព័ត៌មានការព្យាបាលមុនពេលរក្សាទុក' });
 try { if (localStorage.getItem('sbc') == '1' && document.body.classList) document.body.classList.add('sbc'); } catch (e) { /* ignore */ }
 Object.assign(L, { 'Menu': 'ម៉ឺនុយ' });
+Object.assign(L, { 'Waiting': 'រង់ចាំ', 'Confirmed': 'បានបញ្ជាក់', 'Status': 'ស្ថានភាព', 'Edit': 'កែប្រែ' });
+Object.assign(L, { 'Follow Up': 'ការតាមដាន', 'Schedule and track follow-up appointments and reminders.': 'កំណត់ពេល និងតាមដានការណាត់ជួបបន្ត និងការរំលឹក။', 'Schedule Follow Up': 'កំណត់ពេលតាមដាន', 'Follow-up appointments': 'ការណាត់ជួបតាមដាន', 'Reminders due': 'ការរំលឹកដល់ពេល', 'Reason / service': 'មូលហេតុ / សេវាកម្ម', 'Appointment date': 'កាលបរិច្ឆេទណាត់ជួប', 'Reminder date': 'កាលបរិច្ឆេទរំលឹក', 'Reminder status': 'ស្ថានភាពរំលឹក', 'Mark reminder sent': 'សម្គាល់ថាបានផ្ញើការរំលឹក', 'Reminder marked as sent': 'បានសម្គាល់ថាបានផ្ញើការរំលឹក', 'Select patient': 'ជ្រើសរើសអ្នកជំងឺ', 'Select doctor': 'ជ្រើសរើសគ្រូពេទ្យ', 'Select a patient': 'សូមជ្រើសរើសអ្នកជំងឺ', 'Appointment date is required': 'ត្រូវបញ្ចូលកាលបរិច្ឆេទណាត់ជួប', 'Reminder date must be on or before the appointment date': 'កាលបរិច្ឆេទរំលឹកត្រូវមុន ឬត្រូវនឹងថ្ងៃណាត់ជួប', 'Follow-up appointment not found.': 'រកមិនឃើញការណាត់ជួបតាមដានទេ។', 'No follow-up appointments yet.': 'មិនទាន់មានការណាត់ជួបតាមដានទេ។', 'Pending': 'រង់ចាំ', 'Sent': 'បានផ្ញើ', 'Scheduled': 'បានកំណត់ពេល', 'Due': 'ដល់ពេល', 'Edit Follow Up': 'កែប្រែការតាមដាន' });
+Object.assign(L, { 'Overdue': 'ហួសកំណត់' });
+Object.assign(L, { 'Moved to Follow Up': 'បានផ្លាស់ទៅការតាមដាន' });
+Object.assign(L, { 'Done - return to OPD': 'រួចរាល់ - ត្រឡប់ទៅ OPD', 'Returned to OPD': 'បានត្រឡប់ទៅ OPD' });
+Object.assign(L, { 'New Diagnosis': 'បន្ថែមរោគវិនិច្ឆ័យថ្មី', 'Diagnosis already exists': 'រោគវិនិច្ឆ័យនេះមានរួចហើយ' });
 Object.assign(L, { 'All': 'ទាំងអស់', 'With record': 'មានកំណត់ត្រា', 'No record': 'គ្មានកំណត់ត្រា', '✕ Clear filters': '✕ សម្អាតតម្រង', 'Export Excel': 'នាំចេញ Excel' });
 Object.assign(L, { 'Columns': 'ជួរឈរ', '☰ Columns': '☰ ជួរឈរ', 'Filters': 'តម្រង', 'Show all': 'បង្ហាញទាំងអស់', 'Show or hide columns': 'បង្ហាញ ឬលាក់ជួរឈរ', 'At least one column must stay visible': 'ត្រូវទុកយ៉ាងហោចណាស់ជួរឈរមួយ' });
 Object.assign(L, { 'Request service': 'ស្នើសុំសេវាកម្ម', 'Search services…': 'ស្វែងរកសេវាកម្ម…', 'Add selected': 'បន្ថែមសេវាកម្មដែលបានជ្រើស', 'Service requests': 'សំណើសេវាកម្ម', 'No services requested yet.': 'មិនទាន់មានសំណើសេវាកម្មទេ។', 'No matching services.': 'រកមិនឃើញសេវាកម្មដែលត្រូវគ្នាទេ។', 'Requested services': 'សេវាកម្មដែលបានស្នើ', 'Select at least one service': 'សូមជ្រើសរើសសេវាកម្មយ៉ាងតិចមួយ', 'Services requested': 'បានស្នើសេវាកម្ម' });
@@ -1829,7 +2682,7 @@ function bedForm(pid) {
     if (cur) await api('PUT', 'ipd/' + cur.id, { room, bed });
     else { await api('POST', 'ipd', { name: p.name, code: String(pid), room, bed, adm: ymd(new Date()), paid: 0, out: 0 }); await api('PUT', 'patients/' + pid, { type: 'IPD' }); }
     await load(); render(); toast(cur ? 'Saved' : 'Admitted to IPD');
-  }, { cls: '', ok: 'Save' });
+  }, { cls: '', ok: 'Save', extra: `<button type="button" class="btn" data-a="bedfollowup:${pid}">${T('Follow Up')}</button>` });
   const first = $('#mf input'); if (first && first.focus) first.focus();
 }
 Object.assign(L, { 'Update Bed Information': 'ធ្វើបច្ចុប្បន្នភាពព័ត៌មានគ្រែ', 'Room Number': 'លេខបន្ទប់', 'Bed Number': 'លេខគ្រែ', 'Room / Bed': 'បន្ទប់ / គ្រែ', 'Bed': 'គ្រែ', 'Admitted to IPD': 'បានទទួលជាអ្នកជំងឺក្នុង' });
@@ -1868,9 +2721,10 @@ async function ipdOut(id) {
 }
 function ipdBed(id) {
   const r = ipdById(id); if (!r) return;
+  const patient = ipdPt(r);
   openForm('Update Bed Information', fIn('Room Number', 'room', r.room) + fIn('Bed Number', 'bed', r.bed), async (f) => {
     const m = new FormData(f); await api('PUT', 'ipd/' + id, { room: (m.get('room') || '').trim(), bed: (m.get('bed') || '').trim() }); await load(); render(); toast('Saved');
-  }, { cls: '', ok: 'Save' });
+  }, { cls: '', ok: 'Save', extra: patient ? `<button type="button" class="btn" data-a="bedfollowup:${patient.id}">${T('Follow Up')}</button>` : '' });
 }
 function ipdTreat(id) {
   const r = ipdById(id), p = ipdPt(r); if (!r) return;
@@ -1905,3 +2759,57 @@ function ipdShare(id) {
 }
 RX.push([/^(\d+) days?$/, '$1 ថ្ងៃ']);
 Object.assign(L, { 'Admission date': 'ថ្ងៃចូលសម្រាក', 'Discharge date': 'ថ្ងៃចេញពីពេទ្យ', 'Days': 'ចំនួនថ្ងៃ', 'Search patient by name or ID…': 'ស្វែងរកអ្នកជំងឺតាមឈ្មោះ ឬ ID…', 'Edit inpatient': 'កែប្រែអ្នកជំងឺក្នុង', 'Admit to IPD': 'ទទួលជាអ្នកជំងឺក្នុង', 'Patient': 'អ្នកជំងឺ', 'Patient name': 'ឈ្មោះអ្នកជំងឺ', 'Inpatient record': 'កំណត់ត្រាអ្នកជំងឺក្នុង', 'Copied': 'បានចម្លង' });
+document.addEventListener('input', (event) => {
+  const target = event.target;
+  if (target.id == 'echo-service-search') echoReportServiceResults(target.value);
+  if (target.id == 'echo-template-search') {
+    const query = String(target.value || '').trim().toLocaleLowerCase();
+    const options = Array.from($('#mf').querySelectorAll('.echo-template-option'));
+    let visible = 0;
+    for (const option of options) {
+      const matches = option.textContent.toLocaleLowerCase().includes(query);
+      option.hidden = !matches;
+      if (matches) visible++;
+    }
+    const empty = $('#mf .echo-template-empty');
+    if (empty) empty.hidden = visible > 0;
+  }
+  if (target.id == 'echo-preview-text-size') {
+    echoReportPreviewTextSize(target.value);
+  }
+  if ((target.dataset && String(target.dataset.echoEditor || '').startsWith('patient-report')) || (target.closest && target.closest('[data-echo-report-field]')) || target.id == 'echo-report-doctor-new') echoReportPreviewUpdate();
+});
+document.addEventListener('change', (event) => {
+  const target = event.target;
+  const editorImage = /^echo-image-file-(patient-report(?:-\d+)?)$/.exec(target.id || '');
+  if (editorImage) {
+    echoUploadImage(editorImage[1], target.files && target.files[0]).then(echoReportPreviewUpdate).finally(() => { target.value = ''; });
+    return;
+  }
+  if (target.id == 'echo-report-date') {
+    const parts = target.value.split('-');
+    if (parts.length == 3) {
+      $('#echo-report-year').value = String(Number(parts[0]));
+      $('#echo-report-month').value = String(Number(parts[1]));
+      $('#echo-report-day').value = String(Number(parts[2]));
+      echoReportPreviewUpdate();
+    }
+  } else if (['echo-report-day', 'echo-report-month', 'echo-report-year'].includes(target.id)) {
+    const year = Number($('#echo-report-year').value), month = Number($('#echo-report-month').value), requestedDay = Number($('#echo-report-day').value);
+    const day = Math.min(requestedDay, new Date(year, month, 0).getDate());
+    $('#echo-report-day').value = String(day);
+    const date = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    $('#echo-report-date').value = date;
+    echoReportPreviewUpdate();
+  } else if (target.id == 'echo-report-upload') {
+    echoReportUpload(target.files).finally(() => { target.value = ''; });
+  } else if (target.id == 'echo-report-doctor') {
+    echoReportPreviewUpdate();
+  }
+});
+document.addEventListener('mousedown', (event) => {
+  const button = event.target.closest && event.target.closest('[data-a="patient-echo-insert-date"]');
+  const panel = button && button.closest('.echo-report-note-panel');
+  const editor = panel && panel.querySelector('[data-echo-editor]'), selection = window.getSelection && window.getSelection();
+  if (button && editor && selection && selection.rangeCount && editor.contains(selection.anchorNode)) echoToolbarSelection = selection.getRangeAt(0).cloneRange();
+});
