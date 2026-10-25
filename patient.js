@@ -2535,6 +2535,10 @@ function billingLineItems(list) {
   return list.slice().sort((a, b) => (a.date || '').localeCompare(b.date || '') || (+a.id || 0) - (+b.id || 0)).flatMap((r) => {
     const d = jd(r);
     if (r.kind == 'schedule' && schBillable(r)) return [{ category: 'Treatment Charges', name: [d.selection, d.treatment_type, d.diagnosis || d.dx, r.notes].filter(Boolean).join(' — ') || r.title || 'Treatment charge', price: +d.amount || 0 }];
+    if (r.kind == 'lab') {
+      if (Array.isArray(d.tests) && d.tests.length) return d.tests.map((test) => ({ category: 'Lab Charges', name: test.name || d.test_name || r.title || T('Lab result'), price: +test.price || 0 }));
+      return +d.price > 0 ? [{ category: 'Lab Charges', name: d.test_name || r.title || T('Lab result'), price: +d.price }] : [];
+    }
     if (r.kind == 'investigation' && Array.isArray(d.items)) return d.items.map((item, itemIndex) => {
       const quantity = Math.max(1, +item.quantity || 1), unitPrice = +item.unit_price || +item.price || 0;
       return { category: 'Service Charges', name: item.name || 'Service', price: unitPrice * quantity, quantity, unitPrice, recordId: r.id, itemIndex };
@@ -2670,7 +2674,7 @@ Object.assign(L, { 'New Diagnosis': 'បន្ថែមរោគវិនិច�
 Object.assign(L, { 'All': 'ទាំងអស់', 'With record': 'មានកំណត់ត្រា', 'No record': 'គ្មានកំណត់ត្រា', '✕ Clear filters': '✕ សម្អាតតម្រង', 'Export Excel': 'នាំចេញ Excel' });
 Object.assign(L, { 'Columns': 'ជួរឈរ', '☰ Columns': '☰ ជួរឈរ', 'Filters': 'តម្រង', 'Show all': 'បង្ហាញទាំងអស់', 'Show or hide columns': 'បង្ហាញ ឬលាក់ជួរឈរ', 'At least one column must stay visible': 'ត្រូវទុកយ៉ាងហោចណាស់ជួរឈរមួយ' });
 Object.assign(L, { 'Request service': 'ស្នើសុំសេវាកម្ម', 'Search services…': 'ស្វែងរកសេវាកម្ម…', 'Add selected': 'បន្ថែមសេវាកម្មដែលបានជ្រើស', 'Service requests': 'សំណើសេវាកម្ម', 'No services requested yet.': 'មិនទាន់មានសំណើសេវាកម្មទេ។', 'No matching services.': 'រកមិនឃើញសេវាកម្មដែលត្រូវគ្នាទេ។', 'Requested services': 'សេវាកម្មដែលបានស្នើ', 'Select at least one service': 'សូមជ្រើសរើសសេវាកម្មយ៉ាងតិចមួយ', 'Services requested': 'បានស្នើសេវាកម្ម' });
-Object.assign(L, { 'Service Charges': 'ថ្លៃសេវាកម្ម', 'Treatment Charges': 'ថ្លៃព្យាបាល', 'Total Unpaid Amount': 'ចំនួនទឹកប្រាក់មិនទាន់បង់សរុប', 'Items': 'មុខទំនិញ' });
+Object.assign(L, { 'Service Charges': 'ថ្លៃសេវាកម្ម', 'Treatment Charges': 'ថ្លៃព្យាបាល', 'Lab Charges': 'ថ្លៃតេស្ត Lab', 'Total Unpaid Amount': 'ចំនួនទឹកប្រាក់មិនទាន់បង់សរុប', 'Items': 'មុខទំនិញ' });
 Object.assign(L, { 'Add Vaccination': 'បញ្ចូលបញ្ជីចាក់វ៉ាក់សាំង', 'Edit Vaccination': 'កែប្រែបញ្ជីចាក់វ៉ាក់សាំង', 'Vaccine category': 'ប្រភេទវ៉ាក់សាំង', 'Child vaccination': 'វ៉ាក់សាំងកុមារ', 'Adult vaccination': 'វ៉ាក់សាំងមនុស្សពេញវ័យ', 'Other': 'ផ្សេងៗ', 'Vaccine group': 'ឈ្មោះក្រុមវ៉ាក់សាំង', 'Enter vaccine group': 'បញ្ចូលប្រភេទវ៉ាក់សាំង', 'Vaccine name': 'ឈ្មោះវ៉ាក់សាំង', 'Dose date': 'ថ្ងៃ ខែ ឆ្នាំ', 'Given': 'ចាក់រួច', 'Not given': 'មិនទាន់ចាក់', 'Administered by': 'បុគ្គលិកចាក់វ៉ាក់សាំង' });
 
 // ---------- OPD -> IPD: click the OPD badge (or the bed icon) to enter Room and Bed ----------
