@@ -1066,7 +1066,6 @@ function labResultForm(templates, record = null) {
   openForm(`${record ? T('Edit Lab Result') : T('Add Lab Result')} — ${esc(title)}`, body, async (form) => {
     const data = new FormData(form);
     const resultFields = fields.map((field, index) => ({ ...field, result: String(data.get(`lab_result_${index}`) || '').trim() }));
-    if (!resultFields.some((field) => field.result)) throw new Error(T('Enter at least one lab result'));
     const testsData = tests.map((test) => ({
       template_id: test.id,
       name: test.name,
