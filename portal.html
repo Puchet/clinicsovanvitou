@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Patient Portal</title>
+  <style>
+    :root{font-family:Inter,"Noto Sans Khmer",Arial,sans-serif;color:#172033;background:#f3f4f6;font-synthesis:none}
+    *{box-sizing:border-box}
+    body{margin:0}
+    .portal-top{height:60px;background:#2563eb;color:#fff;display:flex;align-items:center;padding:0 max(calc((100vw - 910px)/2),20px);font-weight:700}
+    main{width:min(910px,calc(100% - 32px));margin:0 auto 48px}
+    .portal-hero{margin:0 0 18px;padding:22px 24px;background:linear-gradient(110deg,#3b82f6,#06b6d4);color:#fff;border-radius:0 0 10px 10px;box-shadow:0 4px 12px #17203320}
+    .portal-hero h1{margin:0 0 8px;font-size:23px}
+    .portal-hero p{margin:0;opacity:.9;font-size:14px}
+    .portal-tabs{display:flex;gap:6px;overflow-x:auto;margin-bottom:18px;padding:6px;background:#fff;border-radius:9px;box-shadow:0 1px 3px #17203312}
+    .portal-tabs button{flex:0 0 auto;padding:10px 13px;border:0;border-radius:6px;background:transparent;color:#52627a;font:inherit;font-size:13px;font-weight:600;cursor:pointer}
+    .portal-tabs button[aria-selected="true"]{background:#eff6ff;color:#2563eb}
+    .portal-panel[hidden]{display:none}
+    .portal-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .portal-card{min-width:0;padding:20px;background:#fff;border:1px solid #e1e6ee;border-radius:8px;box-shadow:0 1px 2px #1720330b}
+    .portal-card h2{margin:0 0 18px;font-size:18px}
+    .portal-info{display:grid;grid-template-columns:1fr 1fr;gap:14px 18px}
+    .portal-info div{min-width:0}
+    .portal-info span,.portal-muted{display:block;color:#718096;font-size:12px}
+    .portal-info b{display:block;margin-top:4px;overflow-wrap:anywhere;font-size:13px;font-weight:600}
+    .portal-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:20px}
+    .portal-actions button{flex:1;padding:9px 12px;border:1px solid #bfdbfe;border-radius:5px;background:#fff;color:#1e293b;font-weight:600;cursor:pointer}
+    .portal-actions button:hover{background:#eff6ff}
+    .portal-list{display:grid;gap:12px}
+    .portal-item{padding:14px;border:1px solid #e5eaf1;border-radius:7px}
+    .portal-item h3{margin:0 0 5px;font-size:15px}
+    .portal-item time{color:#718096;font-size:12px}
+    .portal-item p{margin:8px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}
+    .portal-item dl{display:grid;grid-template-columns:minmax(100px,auto) 1fr;gap:6px 12px;margin:10px 0 0;font-size:12px}
+    .portal-item dt{color:#718096}.portal-item dd{margin:0;overflow-wrap:anywhere}
+    .portal-message{margin:50px auto;max-width:500px;padding:28px;background:#fff;border-radius:10px;text-align:center;box-shadow:0 2px 8px #17203316}
+    .portal-message h1{margin-top:0;font-size:21px}.portal-message p{color:#64748b}
+    .portal-footer{padding:26px 0;color:#8290a4;text-align:center;font-size:12px}
+    .portal-private{margin:14px 0 0;padding:10px 12px;border-radius:6px;background:#f8fafc;color:#64748b;font-size:11px}
+    @media(max-width:640px){.portal-grid{grid-template-columns:1fr}.portal-info{gap:12px}.portal-hero{padding:18px}.portal-tabs button{padding:10px}}
+  </style>
+  <script>
+    const privateIPv4=/^(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})$/.test(location.hostname);
+    const localHost=location.hostname==='localhost'||location.hostname==='127.0.0.1'||location.hostname.endsWith('.local')||privateIPv4;
+    window.API_BASE=localHost?'':'https://clinicsovanvitou-backend-67e0.onrender.com';
+  </script>
+  <script src="portal.js" defer></script>
+</head>
+<body>
+  <header class="portal-top">Patient Portal</header>
+  <main id="portal">
+    <section class="portal-message" role="status"><h1>Loading patient portal…</h1></section>
+  </main>
+</body>
+</html>

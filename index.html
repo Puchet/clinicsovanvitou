@@ -65,7 +65,9 @@
     </div>
     <div id="ts"></div>
     <script>
-        window.API_BASE = (location.hostname === 'localhost' || location.hostname === '127.0.0.1') ? '' : 'https://clinicsovanvitou-backend-67e0.onrender.com';
+        const privateIPv4 = /^(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})$/.test(location.hostname);
+        const localHost = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname.endsWith('.local') || privateIPv4;
+        window.API_BASE = localHost ? '' : 'https://clinicsovanvitou-backend-67e0.onrender.com';
     </script>
     <script src="app.js"></script>
     <script src="patient.js"></script>

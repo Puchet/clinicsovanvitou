@@ -1,12 +1,129 @@
-const API_BASE=((typeof window!=='undefined'&&window.API_BASE)||'').replace(/\/+$/,'');
+const apiHost=(typeof window!=='undefined'&&window.location&&window.location.hostname)||'';
+const privateApiIPv4=/^(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})$/.test(apiHost);
+const localApiHost=apiHost==='localhost'||apiHost==='127.0.0.1'||apiHost.endsWith('.local')||privateApiIPv4;
+const API_BASE=(localApiHost?'':((typeof window!=='undefined'&&window.API_BASE)||'')).replace(/\/+$/,'');
 const $=s=>document.querySelector(s),esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])),K=n=>D.clinic&&D.clinic.currency=='USD'?'$'+(Number(n)/(D.clinic.rate||4000)).toFixed(2):'KHR '+Number(n).toLocaleString('en-US');
 const NM=['Sok Dara','Chan Sreyneang','Vann Rithy','Keo Sophea','Lim Sokha','Heng Vuthy','Pich Srey','Seng Bunthoeun','Mao Channary','Ouk Samnang','Tep Vanna','Nguon Sreymom'],AD=['Phnom Penh','Siem Reap','Kandal','Takeo','Battambang'];
-const D={pt:[],ap:[],ipd:[],dr:[],payslips:[],med:[],sv:[],lab:[],labcategories:[],echo:[],dx:[],rx:[],sy:[],ad:[],sf:[],ch:[],expenses:[],sales:[],medicineSales:[],rev:0,bill:[],billing:[],clinic:{},user:{}};
+const D={pt:[],ap:[],ipd:[],dr:[],payslips:[],leaves:[],med:[],sv:[],lab:[],labcategories:[],echo:[],dx:[],rx:[],sy:[],ad:[],sf:[],ch:[],expenses:[],sales:[],medicineSales:[],users:[],rev:0,bill:[],billing:[],clinic:{},user:{}};
+const PERMISSION_AREAS={patients:'Patients and patient records','appointments_ipd':'Appointments and IPD',clinical:'Clinical records, lab, echo and investigations',pharmacy_services:'Pharmacy, services and POS',finance_reports:'Finance and reports',staff_payroll:'Doctors and payroll',templates_reference:'Templates and reference data',clinic_settings:'Clinic settings',user_management:'User management'};
+const PERMISSION_ACTIONS=['view','create','edit','delete','print'];
+const PERMISSION_LABELS={view:'View',create:'Create',edit:'Edit',delete:'Delete',print:'Print'};
+function printerIcon(){return'<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9V3h12v6M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><path d="M6 14h12v7H6z"/><circle cx="18" cy="11" r=".5" fill="currentColor" stroke="none"/></svg>'}
+function blankPermissions(){return Object.fromEntries(Object.keys(PERMISSION_AREAS).map(area=>[area,Object.fromEntries(PERMISSION_ACTIONS.map(action=>[action,false]))]))}
+function canAccess(area,action='view'){return D.user.role=='admin'||D.user.permissions&&D.user.permissions[area]&&D.user.permissions[area][action]===true}
+function clinicPrintTemplateConfig(clinic=D.clinic||{}){
+  let value=clinic.print_template||{};
+  if(typeof value=='string'){try{value=JSON.parse(value)}catch(error){if(error instanceof SyntaxError)value={};else throw error}}
+  if(!value||typeof value!='object'||Array.isArray(value))value={};
+  const allowed=(candidate,values,fallback)=>values.includes(candidate)?candidate:fallback;
+  return{
+    paperSize:allowed(value.paperSize,['form','A4','A5','Letter'],'form'),
+    orientation:allowed(value.orientation,['auto','portrait','landscape'],'auto'),
+    marginMm:[5,8,10,12,15,20].includes(Number(value.marginMm))?Number(value.marginMm):null,
+    fontFamily:allowed(value.fontFamily,['system','inter','arial','khmer'],'system'),
+    fontSizePt:[8,9,10,11,12,14,16,18].includes(Number(value.fontSizePt))?Number(value.fontSizePt):null,
+    elements:Array.isArray(value.elements)?value.elements.filter(item=>item&&typeof item=='object'&&!Array.isArray(item)).map((item,index)=>({
+      id:String(item.id||`item-${index+1}`),type:item.type,zone:item.zone=='footer'?'footer':'header',
+      field:item.field||'customText',text:String(item.text||''),x:Number(item.x)||0,y:Number(item.y)||0,
+      width:Number(item.width)||20,height:Number(item.height)||20,fontSize:Number(item.fontSize)||10,
+      bold:!!item.bold,align:item.align||'left',color:item.color||'#111827',
+      background:item.background||'transparent',border:item.border!==false,
+      columns:Array.isArray(item.columns)?item.columns.filter(column=>['item','description','qty','each','vat','total'].includes(column)):[],
+      condition:item.condition||'always',
+    })):[],
+  };
+}
+let templateSelection=null,templateInspector='properties',templateDrag=null,templateItemSequence=0,templateDraft=null,templateDraftHeader='',templateDraftFooter='';
+const TEMPLATE_COLUMNS=[['item','Item'],['description','Description'],['qty','Qty'],['each','Each'],['vat','VAT'],['total','Total']];
+const templateFieldLabel=field=>({clinicName:'Clinic name',documentTitle:'Document title',currentDate:'Current date',clinicAddress:'Clinic address',clinicPhone:'Clinic phone',customText:'Custom text'})[field]||'Custom text';
+function templateItemValue(item){
+  const c=D.clinic||{};
+  return item.field=='clinicName'?c.name||'Clinic name':item.field=='documentTitle'?'Document title':item.field=='currentDate'?new Date().toLocaleDateString():item.field=='clinicAddress'?c.address||'Clinic address':item.field=='clinicPhone'?c.phone||'Clinic phone':item.text||'Text';
+}
+function templateNewItem(type){
+  const defaults={
+    label:{text:'New label',field:'customText',width:30,height:22,fontSize:10,bold:true},
+    field:{text:'',field:'clinicName',width:36,height:24,fontSize:11},
+    line:{text:'',field:'customText',width:48,height:8,fontSize:10},
+    vline:{text:'',field:'customText',width:8,height:42,fontSize:10},
+    image:{text:'',field:'clinicLogo',width:18,height:28,fontSize:10},
+    table:{text:'',field:'customText',width:92,height:50,fontSize:9,columns:['item','description','qty','each','vat','total']},
+    summary:{text:'Payment summary',field:'customText',width:38,height:34,fontSize:10},
+    tax:{text:'Tax summary',field:'customText',width:34,height:30,fontSize:10},
+  };
+  const base=defaults[type]||defaults.label;
+  const index=++templateItemSequence;
+  return{id:`print-item-${Date.now().toString(36)}-${index}`,type,zone:templateSelection&&clinicPrintTemplateConfig().elements.find(item=>item.id==templateSelection)?.zone||'header',x:3+(index%3)*3,y:4+(index%4)*18,...base,bold:!!base.bold,align:'left',color:'#111827',background:'transparent',border:type=='table',condition:'always'};
+}
+function templateElementHtml(item,selected=false){
+  const style=`left:${item.x}%;top:${item.y}%;width:${item.width}%;height:${item.height}%;font-size:${item.fontSize}pt;color:${esc(item.color)};background:${item.background=='transparent'?'transparent':esc(item.background)};text-align:${['left','center','right'].includes(item.align)?item.align:'left'};font-weight:${item.bold?'700':'400'};`;
+  let content='';
+  if(item.type=='line'||item.type=='vline')content=`<span class="template-line ${item.type=='vline'?'vertical':''}"></span>`;
+  else if(item.type=='image')content=D.clinic&&D.clinic.logo?`<img src="${API_BASE}/uploads/${esc(D.clinic.logo)}" alt="Clinic logo">`:'<span class="template-image-placeholder">Logo / Image</span>';
+  else if(item.type=='table')content=`<table class="template-table-preview"><thead><tr>${TEMPLATE_COLUMNS.filter(([key])=>item.columns.includes(key)).map(([,label])=>`<th>${label}</th>`).join('')}</tr></thead><tbody><tr>${TEMPLATE_COLUMNS.filter(([key])=>item.columns.includes(key)).map(([,label])=>`<td>${label=='description'?'Form details':'—'}</td>`).join('')}</tr></tbody></table>`;
+  else if(item.type=='summary'||item.type=='tax')content=`<div class="template-summary-preview"><b>${esc(item.text|| (item.type=='tax'?'Tax summary':'Payment summary'))}</b><span>${item.type=='tax'?'Tax':'Subtotal'} <i>—</i></span>${item.type=='summary'?'<span>Tax <i>—</i></span>':''}<strong>Total <i>—</i></strong></div>`;
+  else content=esc(item.field=='customText'?(item.text||'Text'):templateItemValue(item));
+  return `<div class="print-template-node ${selected?'selected':''} type-${item.type} ${item.border?'has-border':''}" data-template-id="${esc(item.id)}" style="${style}" ${selected?'aria-selected="true"':''}><div class="template-node-content">${content}</div>${selected?'<span class="template-drag-handle" data-template-drag title="Move item">⠿</span><span class="template-resize-handle" data-template-resize title="Resize item"></span>':''}</div>`;
+}
+function templateInspectorHtml(item,canEdit){
+  if(!item)return '<div class="template-inspector-empty">Select an item on the page or add one from the toolbar.</div>';
+  const input=(label,key,value,type='text')=>`<label class="template-property"><span>${label}</span><input class="in" data-template-property="${key}" type="${type}" value="${esc(value)}" ${canEdit?'':'disabled'}></label>`;
+  const select=(label,key,value,choices)=>`<label class="template-property"><span>${label}</span><select class="in" data-template-property="${key}" ${canEdit?'':'disabled'}>${choices.map(([val,text])=>`<option value="${val}" ${value==val?'selected':''}>${text}</option>`).join('')}</select></label>`;
+  const color=(label,key,value)=>`<label class="template-property"><span>${label}</span><input data-template-property="${key}" type="color" value="${/^#[0-9a-f]{6}$/i.test(value)?value:'#ffffff'}" ${canEdit?'':'disabled'}></label>`;
+  return `<div class="template-property-grid">
+    ${item.type=='label'||item.type=='summary'?input('Text','text',item.text):''}
+    ${item.type=='field'?select('Field value','field',item.field,[['clinicName','Clinic name'],['documentTitle','Document title'],['currentDate','Current date'],['clinicAddress','Clinic address'],['clinicPhone','Clinic phone']]):''}
+    ${item.type=='label'?select('Value source','field',item.field,[['customText','Text only'],['clinicName','Clinic name'],['documentTitle','Document title'],['currentDate','Current date'],['clinicAddress','Clinic address'],['clinicPhone','Clinic phone']]):''}
+    ${select('Section','zone',item.zone,[['header','Header area'],['footer','Footer area']])}
+    ${input('X position (%)','x',item.x,'number')}${input('Y position (%)','y',item.y,'number')}
+    ${input('Width (%)','width',item.width,'number')}${input('Height (%)','height',item.height,'number')}
+    ${input('Font size (pt)','fontSize',item.fontSize,'number')}
+    ${select('Text alignment','align',item.align,[['left','Left'],['center','Center'],['right','Right']])}
+    ${color('Text color','color',item.color)}
+    ${color('Fill color','background',item.background=='transparent'?'#ffffff':item.background)}
+    <label class="template-property"><span>Show border</span><input data-template-property="border" type="checkbox" ${item.border?'checked':''} ${canEdit?'':'disabled'}></label>
+    <label class="template-property"><span>Bold</span><input data-template-property="bold" type="checkbox" ${item.bold?'checked':''} ${canEdit?'':'disabled'}></label>
+    ${select('Display condition','condition',item.condition,[['always','Always show'],['hasLogo','Clinic logo is set'],['hasClinicAddress','Clinic address is set']])}
+  </div>${item.type=='table'?`<div class="template-columns"><b>Customize columns</b>${TEMPLATE_COLUMNS.map(([key,label])=>`<label><input type="checkbox" data-template-column="${key}" ${item.columns.includes(key)?'checked':''} ${canEdit?'':'disabled'}> ${label}</label>`).join('')}</div>`:''}<button type="button" class="btn s r template-delete" data-a="templatedelete:${esc(item.id)}" ${canEdit?'':'disabled'}>Remove item</button>`;
+}
+function beginPrintTemplateEditing(){
+  if(templateDraft)return;
+  templateDraft=clinicPrintTemplateConfig();
+  templateDraftHeader=D.clinic&&D.clinic.print_header||'';
+  templateDraftFooter=D.clinic&&D.clinic.print_footer||'';
+}
+function printTemplateEditorValues(){
+  beginPrintTemplateEditing();
+  document.querySelectorAll('[data-template-setting]').forEach(control=>{
+    const key=control.dataset.templateSetting,value=control.value;
+    if(key=='marginMm'||key=='fontSizePt')templateDraft[key]=value==''?null:Number(value);
+    else templateDraft[key]=value;
+  });
+  document.querySelectorAll('[data-template-shared]').forEach(control=>{
+    if(control.dataset.templateShared=='print_header')templateDraftHeader=control.value;
+    if(control.dataset.templateShared=='print_footer')templateDraftFooter=control.value;
+  });
+  return templateDraft;
+}
+async function savePrintTemplate(){
+  const config=printTemplateEditorValues();
+  const result=await api('PUT','clinic',{print_template:config,print_header:templateDraftHeader,print_footer:templateDraftFooter});
+  D.clinic=result;templateDraft=null;templateSelection=null;setPage('set');toast('Print template saved');render();
+}
+function previewPrintTemplate(){
+  const config=printTemplateEditorValues(),clinic=D.clinic,previous={print_template:clinic.print_template,print_header:clinic.print_header,print_footer:clinic.print_footer};
+  clinic.print_template=JSON.stringify(config);clinic.print_header=templateDraftHeader;clinic.print_footer=templateDraftFooter;
+  try{printDoc('Invoice',`<p>Preview of your shared print template.</p><table class="pk full"><thead><tr><th>Item</th><th>Description</th><th>Qty</th><th>Each</th><th>VAT</th><th>Total</th></tr></thead><tbody><tr><td>1</td><td>Sample form content</td><td>1</td><td>20.00</td><td>0.00</td><td>20.00</td></tr></tbody></table>`)}
+  finally{Object.assign(clinic,previous)}
+}
+function pageArea(page){return ({pt:'patients',ap:'appointments_ipd',fu:'appointments_ipd',ipd:'appointments_ipd',cur:'appointments_ipd',ch:'appointments_ipd',dr:'staff_payroll',leaves:'staff_payroll',med:'pharmacy_services',sv:'pharmacy_services',pos:'pharmacy_services',st:'pharmacy_services',lab:'templates_reference',echo:'templates_reference',dx:'templates_reference',rx:'templates_reference',sy:'templates_reference',bill:'finance_reports',mr:'finance_reports',ns:'finance_reports',an:'finance_reports',da:'staff_payroll',ad:'templates_reference',sf:'templates_reference',ptpl:'clinic_settings'})[page]}
+function pageAllowed(page){if(page=='set')return true;if(page=='dash')return D.user.role=='admin'||['patients','appointments_ipd','finance_reports'].some(area=>canAccess(area));const area=pageArea(page);return !area||canAccess(area)}
+function firstAllowedPage(){if(pageAllowed('dash'))return'dash';const routes={patients:'pt',appointments_ipd:'ap',clinical:'lab',pharmacy_services:'med',finance_reports:'bill',staff_payroll:'dr',templates_reference:'ad'};return Object.entries(routes).find(([area])=>canAccess(area))?.[1]||'set'}
 // an admitted patient (IPD row linked by patient ID) goes back to OPD when the stay ends
 const syncOpd=r=>{const p=D.pt.find(q=>String(q.id)==String(r.code));return p&&p.type=='IPD'?api('PUT','patients/'+p.id,{type:'OPD'}):0};
 const billingData=r=>{try{return JSON.parse(r.data||'{}')}catch{return{}}};
-const billingApplied=r=>{const d=billingData(r);return Number(d.applied_amount??d.amount)||0};
-const billingCharge=r=>{const d=billingData(r);if(r.kind=='schedule')return d.billable!==0&&d.billable!==false?(+d.amount||0):0;if(r.kind=='investigation'&&Array.isArray(d.items))return d.items.reduce((n,item)=>n+(+item.unit_price||+item.price||0)*(Math.max(1,+item.quantity||1)),0);if(r.kind=='lab')return Array.isArray(d.tests)?d.tests.reduce((n,test)=>n+(+test.price||0),0):(+d.price||0);return 0};
+const billingApplied=r=>{const d=billingData(r);const amount=Number(d.applied_amount ?? d.amount ?? d.received ?? d.paid_amount ?? 0);return Number.isFinite(amount)?amount:0};
+const billingCharge=r=>{const d=billingData(r);if(r.kind=='schedule'){const billable=d.billable;return billable===true||billable===1||billable==='1'?(+d.amount||0):0;}if(r.kind=='investigation'&&Array.isArray(d.items))return d.items.reduce((n,item)=>n+(+item.unit_price||+item.price||0)*(Math.max(1,+item.quantity||1)),0);if(r.kind=='lab')return Array.isArray(d.tests)?d.tests.reduce((n,test)=>n+(+test.price||0),0):(+d.price||0);if(r.kind=='prescription'&&Array.isArray(d.medicines))return d.medicines.reduce((n,item)=>n+(+item.price||0)*(Math.max(0,+item.quantity||0)),0);if(r.kind=='medlist'&&(d.dispensed===true||r.title=='Dispensed medicines')&&Array.isArray(d.items))return d.items.reduce((n,item)=>n+(+item.price||0)*(Math.max(1,+item.quantity||1)),0);return 0};
 const patientDue=id=>{const rs=D.billing.filter(r=>String(r.patient_id)==String(id));return Math.max(0,rs.reduce((n,r)=>n+billingCharge(r),0)-rs.filter(r=>r.kind=='payment').reduce((n,r)=>n+billingApplied(r),0))};
 const ipdPaid=r=>{const p=D.pt.find(q=>String(q.id)==String(r.code));return p?patientDue(p.id)<=0:!!r.paid};
 const mi=i=>D.med.find(m=>m.id==i)||{name:'(removed)',price:0};
@@ -75,6 +192,7 @@ function medicineFormHtml(){
   return `<section class="card medicine-form-card"><button type="button" class="medicine-form-toggle" data-a="medformclose"><span>បញ្ចូលឱសថថ្មី / ${editing?'Edit Medicine':'Add New Medicine'}</span><span>⌃</span></button><form id="medicine-form" class="medicine-form">
 <div class="medicine-image-field"><label>រូបភាពឱសថ / Medicine Image</label><div class="medicine-image-control"><div class="medicine-image-preview"><img id="pv_photo" src="${r.photo?`${API_BASE}/uploads/${esc(r.photo)}`:''}" alt="" ${r.photo?'':'hidden'}><span id="medicine-photo-placeholder" ${r.photo?'hidden':''}>⇧</span></div><input type="file" id="pf_photo" accept="image/*" hidden><input type="hidden" name="photo" id="pk_photo" value="${esc(r.photo||'')}"><button class="btn" type="button" data-a="medphoto">Upload</button></div></div>
 <div class="medicine-basic-grid"><label>ឈ្មោះថ្នាំ / Drug name<input class="in" name="name" value="${esc(r.name||'')}" placeholder="e.g. Paracetamol" required maxlength="255"></label><label>សមាសធាតុ / Composition<input class="in" name="composition" value="${esc(r.composition||'')}" placeholder="e.g. 500mg"></label><label class="medicine-stock-field">ចំនួនក្នុងស្តុក / In Stock<input class="in" name="stock" type="number" min="0" step="1" value="${esc(r.stock??'')}" placeholder="e.g. 100" required></label></div>
+<section class="medicine-default-dosage"><div class="medicine-units-heading"><b>Default prescription dosage / កម្រិតប្រើលំនាំដើម</b><span class="mu">Optional clinician-configured defaults for this medicine. Unset dose and duration fields stay blank.</span></div><div class="medicine-dosage-grid">${[['default_morning','Morning / ព្រឹក'],['default_noon','Noon / ថ្ងៃត្រង់'],['default_evening','Evening / ល្ងាច'],['default_night','Night / យប់']].map(([key,label])=>`<label>${label}<input class="in" name="${key}" value="${esc(r[key]??'')}" placeholder="—"></label>`).join('')}<label>Duration (days) / រយៈពេល<input class="in" name="default_duration" type="number" min="0" step="1" value="${esc(r.default_duration||'')}" placeholder="—"></label><label>Quantity / ចំនួន<input class="in" name="default_quantity" type="number" min="0" step="1" value="${esc(r.default_quantity||'')}" placeholder="—"></label></div></section>
 <section class="medicine-units"><div class="medicine-units-heading"><b>ឯកតាលក់ / Sales unit</b><span class="mu">Set each selling unit, price, and base-stock quantity.</span></div><div id="medicine-units-list">${units.map(medicineUnitRow).join('')}</div><button type="button" class="btn s medicine-unit-add" data-a="medunitadd">＋ Add sales unit</button></section>
 <div class="medicine-dates-grid"><label>ថ្ងៃផុតកំណត់ / Expiration date<input class="in" name="expiration_date" type="date" value="${esc(r.expiration_date||'')}"></label><label>ថ្ងៃជូនដំណឹង / Notification date<input class="in" name="notification_date" type="date" value="${esc(r.notification_date||'')}"></label></div>
 <div class="medicine-form-actions"><button type="button" class="btn" data-a="medformclose">Cancel</button><button type="submit" class="btn p">${editing?'Save changes':'បន្ថែម / Add'}</button></div></form></section>`;
@@ -221,6 +339,7 @@ function doctorAnalyticsChart(rows){
   return `<div class="doctor-analytics-chart-scroll"><svg class="doctor-analytics-svg" viewBox="0 0 ${width} ${height}" role="img" aria-label="${T('Patients per Doctor')}">${grid}<line x1="${left}" y1="${height-bottom}" x2="${width-right}" y2="${height-bottom}" stroke="var(--mu)"/>${bars}</svg></div><div class="doctor-analytics-legend"><i></i>${T('Number of Patients')}</div>`;
 }
 let rxSelected=new Map(),rxMedicineSearch='';
+const rxBi=(khmer,english)=>`<span class="rx-bilingual">${khmer}<small>${english}</small></span>`;
 function rxTemplateMeds(value){
   try{
     const parsed=JSON.parse(value||'');
@@ -232,15 +351,15 @@ function rxMedicineRows(){
   const query=rxMedicineSearch.trim().toLowerCase();
   return D.med.filter(m=>!query||`${m.name} ${m.composition||''}`.toLowerCase().includes(query)).map(m=>{
     const selected=rxSelected.has(String(m.id));
-    return `<button type="button" class="rx-medicine-option ${selected?'selected':''}" data-a="rxmedicine:${m.id}" aria-pressed="${selected}"><span class="rx-medicine-check">${selected?'✓':''}</span><span class="rx-medicine-description"><b>${esc(m.name)}</b><small>${esc([m.composition,`Stock: ${Number(m.stock)||0}`].filter(Boolean).join(' · '))}</small></span><b class="rx-medicine-price">${K(m.price)}</b></button>`;
-  }).join('')||`<p class="rx-empty">No medicines found.</p>`;
+    return `<button type="button" class="rx-medicine-option ${selected?'selected':''}" data-a="rxmedicine:${m.id}" aria-pressed="${selected}"><span class="rx-medicine-check">${selected?'✓':''}</span><span class="rx-medicine-description"><b>${esc(m.name)}</b><small>${esc([m.composition,`ស្តុក / Stock: ${Number(m.stock)||0}`].filter(Boolean).join(' · '))}</small></span><b class="rx-medicine-price">${K(m.price)}</b></button>`;
+  }).join('')||`<p class="rx-empty">រកមិនឃើញឱសថ / No medicines found.</p>`;
 }
 function rxTemplateRows(){
-  return [...rxSelected.entries()].map(([id,medicine])=>`<tr><td class="rx-template-medicine">${esc(medicine.name)}</td>${[['morning','Morning'],['noon','Noon'],['evening','Evening'],['duration','Days'],['quantity','Qty'],['instruction','Instructions']].map(([key,label])=>`<td><input class="in rx-dose-input" data-rx-id="${esc(id)}" data-rx-field="${key}" aria-label="${label} for ${esc(medicine.name)}" value="${esc(medicine[key]??'')}" ${key=='duration'||key=='quantity'?'type="number" min="0" step="1"':''}></td>`).join('')}<td><button type="button" class="btn s r" data-a="rxmedicine:${esc(id)}" aria-label="Remove ${esc(medicine.name)}">×</button></td></tr>`).join('')||'<tr><td colspan="8" class="rx-table-empty">Select medicines above to build the prescription.</td></tr>';
+  return [...rxSelected.entries()].map(([id,medicine])=>`<tr><td class="rx-template-medicine">${esc(medicine.name)}</td>${[['morning','ព្រឹក / Morning'],['noon','ថ្ងៃត្រង់ / Noon'],['evening','ល្ងាច / Evening'],['duration','រយៈពេល (ថ្ងៃ) / Days'],['quantity','ចំនួន / Quantity'],['instruction','ការណែនាំ / Instructions']].map(([key,label])=>`<td><input class="in rx-dose-input" data-rx-id="${esc(id)}" data-rx-field="${key}" aria-label="${label} ${esc(medicine.name)}" value="${esc(medicine[key]??'')}" ${key=='duration'||key=='quantity'?'type="number" min="0" step="1"':''}></td>`).join('')}<td><button type="button" class="btn s r" data-a="rxmedicine:${esc(id)}" aria-label="លុប / Remove ${esc(medicine.name)}">×</button></td></tr>`).join('')||`<tr><td colspan="8" class="rx-table-empty">សូមជ្រើសរើសថ្នាំខាងលើដើម្បីបង្កើតវេជ្ជបញ្ជា / Select medicines above to build the prescription.</td></tr>`;
 }
 function rxTemplateForm(index=null){
   const editing=index!=null,template=editing?D.rx[index]:null;
-  if(editing&&!template)return toast('Prescription template not found');
+  if(editing&&!template)return toast('រកមិនឃើញទម្រង់វេជ្ជបញ្ជា / Prescription template not found');
   rxMedicineSearch='';
   rxSelected=new Map();
   if(template)rxTemplateMeds(template.meds).forEach((item,position)=>{
@@ -250,7 +369,7 @@ function rxTemplateForm(index=null){
   });
   const form=$('#mf');
   form.className='rx-template-form';
-  form.innerHTML=`<div class="rx-template-heading"><h3>${editing?'Edit Template':'Create Template'}</h3><button type="button" class="btn s" data-a="close" aria-label="Close">×</button></div><label class="rx-disease-field">Disease Name <span>*</span><input class="in" name="name" value="${esc(template?.name||'')}" placeholder="Enter disease name" required autofocus></label><div class="rx-medicines-field"><label for="rx-medicine-search">Medicines</label><div class="rx-search-wrap"><span>⌕</span><input class="in" id="rx-medicine-search" placeholder="ស្វែងរកថ្នាំ / Search Medicine..."></div><div id="rx-medicine-list" class="rx-medicine-list">${rxMedicineRows()}</div></div><div class="rx-prescription-table-wrap"><table class="rx-prescription-table"><thead><tr><th>ឈ្មោះថ្នាំ</th><th>ព្រឹក</th><th>ថ្ងៃ</th><th>ល្ងាច</th><th>រយៈពេល (ថ្ងៃ)</th><th>ចំនួន</th><th>ការណែនាំ</th><th></th></tr></thead><tbody id="rx-prescription-rows">${rxTemplateRows()}</tbody></table></div><div class="rx-template-actions"><button type="button" class="btn" data-a="close">Cancel</button><button type="submit" class="btn p">${editing?'Update Template':'Save Template'}</button></div>`;
+  form.innerHTML=`<div class="rx-template-heading"><h3>${rxBi(editing?'កែប្រែទម្រង់':'បង្កើតទម្រង់',editing?'Edit Template':'Create Template')}</h3><button type="button" class="btn s" data-a="close" aria-label="បិទ / Close">×</button></div><label class="rx-disease-field">${rxBi('ឈ្មោះជំងឺ','Disease Name')} <span class="rx-required">*</span><input class="in" name="name" value="${esc(template?.name||'')}" placeholder="បញ្ចូលឈ្មោះជំងឺ / Enter disease name" required autofocus></label><div class="rx-medicines-field"><label for="rx-medicine-search">${rxBi('ថ្នាំ','Medicines')}</label><div class="rx-search-wrap"><span>⌕</span><input class="in" id="rx-medicine-search" placeholder="ស្វែងរកថ្នាំ / Search Medicine..."></div><div id="rx-medicine-list" class="rx-medicine-list">${rxMedicineRows()}</div></div><div class="rx-prescription-table-wrap"><table class="rx-prescription-table"><thead><tr><th>${rxBi('ឈ្មោះថ្នាំ','Medicine')}</th><th>${rxBi('ព្រឹក','Morning')}</th><th>${rxBi('ថ្ងៃត្រង់','Noon')}</th><th>${rxBi('ល្ងាច','Evening')}</th><th>${rxBi('រយៈពេល (ថ្ងៃ)','Duration (days)')}</th><th>${rxBi('ចំនួន','Quantity')}</th><th>${rxBi('ការណែនាំ','Instructions')}</th><th></th></tr></thead><tbody id="rx-prescription-rows">${rxTemplateRows()}</tbody></table></div><div class="rx-template-actions"><button type="button" class="btn" data-a="close">${rxBi('បោះបង់','Cancel')}</button><button type="submit" class="btn p">${rxBi(editing?'កែប្រែទម្រង់':'រក្សាទុកទម្រង់',editing?'Update Template':'Save Template')}</button></div>`;
   $('#md').classList.add('on');
   $('#rx-medicine-search').addEventListener('input',event=>{
     rxMedicineSearch=event.target.value;
@@ -259,12 +378,12 @@ function rxTemplateForm(index=null){
   form.onsubmit=async event=>{
     event.preventDefault();
     const name=String(new FormData(form).get('name')||'').trim();
-    if(!name)return toast('Disease name is required');
+    if(!name)return toast('សូមបញ្ចូលឈ្មោះជំងឺ / Disease name is required');
     const meds=[...rxSelected.values()].map(({id,...item})=>item);
-    if(!meds.length)return toast('Select at least one medicine');
+    if(!meds.length)return toast('សូមជ្រើសរើសថ្នាំយ៉ាងហោចណាស់មួយ / Select at least one medicine');
     try{
       await api(editing?'PUT':'POST',editing?'prescriptions/'+template.id:'prescriptions',{name,meds:JSON.stringify(meds)});
-      await load();$('#md').classList.remove('on');render();toast('Saved');
+      await load();$('#md').classList.remove('on');render();toast('បានរក្សាទុក / Saved');
     }catch(error){toast(error.message)}
   };
 }
@@ -284,10 +403,10 @@ function medicineDetailHtml(m){const units=medicineUnits(m),today=new Date().toI
 function reportEntries(){
   const payments=D.billing.filter(record=>record.kind=='payment').map(record=>{
     const data=billingData(record),patient=D.pt.find(item=>String(item.id)==String(record.patient_id));
-    return {id:record.id,kind:'payment',date:String(record.date||'').slice(0,10),person:patient?patient.name:'Patient',details:data.method||'Patient payment',amount:Number(data.amount)||0,canDelete:D.user.role=='admin'||record.created_by==D.user.id};
+    return {id:record.id,kind:'payment',date:String(record.date||'').slice(0,10),person:patient?patient.name:'Patient',details:data.method||'Patient payment',amount:Number(data.amount)||0,canDelete:D.user.role=='admin'||canAccess('finance_reports','delete')||(!D.user.permissions_custom&&record.created_by==D.user.id)};
   });
   const sales=D.sales.map(sale=>({id:sale.id,kind:'sale',date:String(sale.created_at||'').slice(0,10),person:'POS',details:`Medicine sale · ${sale.method||'Cash'}`,amount:Number(sale.total)||0,canDelete:false}));
-  const expenses=D.expenses.map(expense=>({id:expense.id,kind:'expense',date:expense.date,person:expense.category||'Expense',details:expense.name,amount:Number(expense.amount)||0,canDelete:D.user.role=='admin'}));
+  const expenses=D.expenses.map(expense=>({id:expense.id,kind:'expense',date:expense.date,person:expense.category||'Expense',details:expense.name,amount:Number(expense.amount)||0,canDelete:canAccess('finance_reports','delete')}));
   const matches=entry=>{
     if(reportFrom&&entry.date<reportFrom)return false;
     if(reportTo&&entry.date>reportTo)return false;
@@ -364,19 +483,93 @@ async function medicineReportExport(){
     const url=URL.createObjectURL(await response.blob()),anchor=document.createElement('a');anchor.href=url;anchor.download='medicine-report.xlsx';anchor.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
   }catch(error){toast(error.message)}
 }
+let userFormOpen=false,userEditId=null;
+function permissionEditor(value=blankPermissions()){
+  return `<div class="user-permission-grid"><div class="user-permission-heading">Area</div>${PERMISSION_ACTIONS.map(action=>`<div class="user-permission-heading">${PERMISSION_LABELS[action]}</div>`).join('')}${Object.entries(PERMISSION_AREAS).map(([area,label])=>`<div class="user-permission-area">${label}</div>${PERMISSION_ACTIONS.map(action=>`<label class="user-permission-check"><input type="checkbox" name="permission_${area}_${action}" ${value&&value[area]&&value[area][action]?'checked':''} ${canAccess(area,action)?'':'disabled'}><span class="sr-only">${label} ${PERMISSION_LABELS[action]}</span></label>`).join('')}`).join('')}</div>`;
+}
+function userManagementHtml(){
+  if(!PERMISSION_ACTIONS.some(action=>canAccess('user_management',action)))return '';
+  const editing=userEditId&&D.users.find(item=>item.id==userEditId);
+  const form=userFormOpen?`<form id="user-form" class="card user-management-form"><h3>${editing?'Edit user':'Create user'}</h3><div class="user-form-fields"><label>Name<input class="in" name="name" value="${esc(editing&&editing.name||'')}" required></label><label>Email<input class="in" type="email" name="email" value="${esc(editing&&editing.email||'')}" required></label><label>${editing?'New password (leave blank to keep current)':'Password (at least 8 characters)'}<input class="in" type="password" name="password" ${editing?'':'required minlength="8"'}></label></div><h4>Custom permissions</h4>${permissionEditor(editing?editing.permissions:blankPermissions())}<div class="tools"><button class="btn" type="button" data-a="usercancel">Cancel</button><button class="btn p" type="submit">${editing?'Save user':'Create user'}</button></div></form>`:'';
+  const rows=D.users.map(item=>`<tr><td>${esc(item.name)}</td><td>${esc(item.email)}</td><td>${item.role=='admin'?'Administrator':'Staff'}</td><td>${item.role=='admin'?'—':`${canAccess('user_management','edit')?`<button class="btn s" data-a="useredit:${item.id}">Edit</button> `:''}${canAccess('user_management','delete')?`<button class="btn s r" data-a="userdelete:${item.id}">Delete</button>`:''}`}</td></tr>`).join('')||'<tr><td colspan="4">No users found.</td></tr>';
+  return `<section class="user-management-section"><header><div><h2>User management</h2><p>Create staff accounts and select their section and action permissions.</p></div>${canAccess('user_management','create')?'<button class="btn p" data-a="useradd">+ Create user</button>':''}</header>${form}${canAccess('user_management','view')?`<div class="card"><table class="user-management-table"><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Actions</th></tr></thead><tbody>${rows}</tbody></table></div>`:''}</section>`;
+}
+function leavesPage(){
+  const rows=ft('leaves'),statusClass={Pending:'b',Approved:'',Rejected:'x'};
+  const requestButton=canAccess('staff_payroll','create')?`<button type="button" class="btn g" data-a="leaveform">＋ ${T('Request Leaves')}</button>`:'';
+  return hd(T('Leaves Form'),T('Submit and manage staff leave requests.'),requestButton)+`<div class="card"><table><thead><tr><th>${T('Employee')}</th><th>${T('Leave Type')}</th><th>${T('Start Date')}</th><th>${T('End Date')}</th><th>${T('Reason')}</th><th>${T('Status')}</th><th>${T('Actions')}</th></tr></thead><tbody>${rows.map(([leave,index])=>`<tr><td>${esc(leave.employee_name)}</td><td>${esc(leave.leave_type)}</td><td>${esc(leave.start_date)}</td><td>${esc(leave.end_date)}</td><td>${esc(leave.reason||'')}</td><td><span class="bd ${statusClass[leave.status]||''}">${esc(leave.status)}</span></td><td>${canAccess('staff_payroll','edit')?`<button type="button" class="btn s" data-a="leaveedit:${index}">${T('Edit')}</button> `:''}${canAccess('staff_payroll','delete')?`<button type="button" class="btn s r" data-a="del:leaves:${index}">${T('Delete')}</button>`:''}</td></tr>`).join('')||`<tr><td colspan="7" class="emp">${T('No leave requests yet.')}</td></tr>`}</tbody></table></div>`;
+}
+function leaveRequestForm(index=null){
+  const editing=index!=null,leave=editing?D.leaves[index]:null;
+  if(editing&&!leave)return toast(T('Leave request not found.'));
+  const today=new Date(Date.now()+7*60*60*1000).toISOString().slice(0,10),form=$('#mf');
+  form.className='leave-request-form';
+  form.innerHTML=`<div class="leave-form-heading"><h3>${T(editing?'Edit Leave Request':'Request Leaves')}</h3><button type="button" class="btn s" data-a="close" aria-label="${T('Close')}">×</button></div><label>${T('Employee')}<input class="in" name="employee_name" value="${esc(leave?.employee_name||D.user.name||'')}" required maxlength="255"></label><label>${T('Leave Type')}<select class="in" name="leave_type" required>${['Annual','Sick','Personal','Maternity','Other'].map(type=>`<option value="${type}" ${(leave?.leave_type||'Annual')==type?'selected':''}>${T(type)}</option>`).join('')}</select></label><div class="leave-date-fields"><label>${T('Start Date')}<input class="in" type="date" name="start_date" value="${esc(leave?.start_date||today)}" required></label><label>${T('End Date')}<input class="in" type="date" name="end_date" value="${esc(leave?.end_date||today)}" required></label></div><label>${T('Reason')}<textarea class="in" name="reason" rows="3" maxlength="10000">${esc(leave?.reason||'')}</textarea></label>${editing?`<label>${T('Status')}<select class="in" name="status">${['Pending','Approved','Rejected'].map(status=>`<option value="${status}" ${leave.status==status?'selected':''}>${T(status)}</option>`).join('')}</select></label>`:''}<div class="leave-form-actions"><button type="button" class="btn" data-a="close">${T('Cancel')}</button><button type="submit" class="btn p">${T(editing?'Save Changes':'Submit Request')}</button></div>`;
+  $('#md').classList.add('on');
+  form.onsubmit=async event=>{
+    event.preventDefault();
+    const values=Object.fromEntries(new FormData(form)),body={employee_name:String(values.employee_name||'').trim(),leave_type:String(values.leave_type||''),start_date:String(values.start_date||''),end_date:String(values.end_date||''),reason:String(values.reason||'').trim()};
+    if(body.start_date>body.end_date)return toast(T('End date must not be before start date.'));
+    if(editing)body.status=String(values.status||'Pending');else body.status='Pending';
+    try{if(editing)await api('PUT',`leaves/${leave.id}`,body);else await api('POST','leaves',body);await load();$('#md').classList.remove('on');render();toast(T(editing?'Leave request updated.':'Leave request submitted.'))}catch(error){toast(error.message)}
+  };
+}
 const R={mr(){
   const rows=medicineReportRows(),quantity=rows.reduce((total,row)=>total+(Number(row.qty)||0),0),revenue=rows.reduce((total,row)=>total+(Number(row.total)||0),0);
   const date=(label,id,value)=>`<label class="medicine-report-date"><span>${T(label)}</span><input class="in" id="${id}" type="date" value="${esc(value)}"></label>`;
-  const tableRows=rows.map(row=>`<tr><td><b>${esc(row.name)}</b></td><td>${new Date(`${row.date}T00:00:00`).toLocaleDateString('en-US')}</td><td>${Number(row.qty)||0}</td><td class="medicine-report-total">${K(row.total)}</td><td>${D.user.role=='admin'?`<button class="btn medicine-report-delete" data-a="medreportdelete:${row.sale_id}:${row.item_id}" aria-label="${T('Delete')} ${esc(row.name)}" title="${T('Delete')}">▣</button>`:''}</td></tr>`).join('')||`<tr><td class="medicine-report-empty" colspan="5">${T('No medicine sales found for this date range.')}</td></tr>`;
+  const tableRows=rows.map(row=>`<tr><td><b>${esc(row.name)}</b></td><td>${new Date(`${row.date}T00:00:00`).toLocaleDateString('en-US')}</td><td>${Number(row.qty)||0}</td><td class="medicine-report-total">${K(row.total)}</td><td>${canAccess('pharmacy_services','delete')?`<button class="btn medicine-report-delete" data-a="medreportdelete:${row.sale_id}:${row.item_id}" aria-label="${T('Delete')} ${esc(row.name)}" title="${T('Delete')}">▣</button>`:''}</td></tr>`).join('')||`<tr><td class="medicine-report-empty" colspan="5">${T('No medicine sales found for this date range.')}</td></tr>`;
   return `<header class="medicine-report-heading"><h2>${T('Medicine sales report')}</h2><p>${T('Track medicine quantities and sales revenue by date.')}</p></header><section class="card medicine-report-filters">${date('From date','medicine-report-from',medicineReportFrom)}${date('To date','medicine-report-to',medicineReportTo)}<button type="button" class="btn p" data-a="medreportapply">${T('Search')}</button><button type="button" class="btn medicine-report-export" data-a="medreportexport">${T('Export Excel')}</button></section><section class="medicine-report-summary"><article class="card"><span>${T('Quantity sold')}</span><strong>${quantity.toLocaleString('en-US')}</strong><i>▱</i></article><article class="card"><span>${T('Total revenue')}</span><strong>${K(revenue)}</strong><i>▥</i></article></section><section class="card medicine-report-table-wrap"><table class="medicine-report-table"><thead><tr><th>${T('Medicine name')}</th><th>${T('Date sold')}</th><th>${T('Quantity')}</th><th>${T('Total')}</th><th>${T('Actions')}</th></tr></thead><tbody>${tableRows}</tbody></table></section>`;
 },
+leaves(){return leavesPage()},
 sf(){return sampleFilePage()},
+ptpl(){
+  beginPrintTemplateEditing();
+  const c=D.clinic||{},config=templateDraft,canEdit=canAccess('clinic_settings','edit');
+  const selected=config.elements.find(item=>item.id==templateSelection)||null;
+  const conditionPanel=selected
+    ?`<div class="template-property-grid"><b class="template-property-heading">Display this item when</b><label class="template-property template-property-wide"><span>Condition</span><select class="in" data-template-property="condition" ${canEdit?'':'disabled'}>${[['always','Always show'],['hasLogo','Clinic logo is set'],['hasClinicAddress','Clinic address is set']].map(([value,label])=>`<option value="${value}" ${selected.condition==value?'selected':''}>${label}</option>`).join('')}</select></label></div>`
+    :'<div class="template-inspector-empty">Select an item to edit its display conditions.</div>';
+  const select=(label,key,value,choices)=>`<label class="template-property"><span>${label}</span><select class="in" data-template-setting="${key}" ${canEdit?'':'disabled'}>${choices.map(([val,text])=>`<option value="${val}" ${value==val?'selected':''}>${text}</option>`).join('')}</select></label>`;
+  const nodes=zone=>config.elements.filter(item=>item.zone==zone).map(item=>templateElementHtml(item,item.id==templateSelection)).join('');
+  const pageSize=config.paperSize=='form'?'A4':config.paperSize;
+  return `<section class="template-editor">
+    <header class="template-ribbon">
+      <div class="template-ribbon-group"><button class="template-ribbon-action primary" data-a="saveprinttemplate" ${canEdit?'':'disabled'}>▣<span>Save &amp; Close</span></button><button class="template-ribbon-action" data-a="templateclose">×<span>Close</span></button></div>
+      <div class="template-ribbon-group"><b>Template</b><button class="template-ribbon-action" data-a="printtemplatepreview">▧<span>Preview</span></button><button class="template-ribbon-action" data-a="templatecopy" ${canEdit?'':'disabled'}>▣<span>Copy item</span></button><button class="template-ribbon-action" data-a="templaterename" ${canEdit?'':'disabled'}>✎<span>Rename item</span></button></div>
+      <div class="template-ribbon-group"><b>Arrange</b><button class="template-ribbon-action" data-a="templateforward" ${canEdit?'':'disabled'}>⬆<span>To Front</span></button><button class="template-ribbon-action" data-a="templateback" ${canEdit?'':'disabled'}>⬇<span>To Back</span></button><label class="template-grid-toggle"><input type="checkbox" data-template-grid checked> Show Grid</label></div>
+      <div class="template-ribbon-group template-object-tools"><b>Object Gallery</b>${[['field','Field Value'],['label','Label'],['line','Horizontal Line'],['vline','Vertical Line'],['image','Logo / Image'],['table','Data Table'],['summary','Payment Summary'],['tax','Tax Summary']].map(([type,label])=>`<button class="template-tool-button" data-a="templateadd:${type}" ${canEdit?'':'disabled'}>${label}</button>`).join('')}</div>
+      <div class="template-ribbon-group template-page-controls">${select('Paper','paperSize',config.paperSize,[['form','Auto'],['A4','A4'],['A5','A5'],['Letter','Letter']])}${select('Orientation','orientation',config.orientation,[['auto','Auto'],['portrait','Portrait'],['landscape','Landscape']])}${select('Margins','marginMm',config.marginMm==null?'':String(config.marginMm),[['','Auto'],...[5,8,10,12,15,20].map(size=>[String(size),`${size} mm`])])}${select('Font','fontFamily',config.fontFamily,[['system','System'],['inter','Inter'],['arial','Arial'],['khmer','Khmer']])}${select('Size','fontSizePt',config.fontSizePt==null?'':String(config.fontSizePt),[['','Auto'],...[8,9,10,11,12,14,16,18].map(size=>[String(size),`${size} pt`])])}</div>
+    </header>
+    <div class="template-workspace">
+      <div class="template-canvas-scroll"><div class="template-page ${config.orientation=='landscape'?'landscape':''} ${templateInspector=='grid'?'grid-hidden':''}" data-template-canvas data-grid="true" style="--template-paper-width:${config.orientation=='landscape'?`${297/210*100}%`:'100%'}">
+        <div class="template-page-heading"><div><b>${esc(c.name||'Clinic name')}</b><span>${esc(c.address||'Clinic address')}</span><span>${esc(c.phone||'Clinic phone')}</span></div><strong>INVOICE</strong></div>
+        <div class="template-page-header" data-template-zone="header">${nodes('header')}</div>
+        <div class="template-page-content">
+          <div class="template-page-meta"><span><b>Bill to</b><br>Patient name<br>Patient address</span><span><b>Document date</b><br>${new Date().toLocaleDateString()}<br>Document number</span></div>
+          <table class="template-example-table"><thead><tr>${TEMPLATE_COLUMNS.map(([,label])=>`<th>${label}</th>`).join('')}</tr></thead><tbody><tr><td>1</td><td>Form content</td><td>1</td><td>20.00</td><td>0.00</td><td>20.00</td></tr></tbody></table>
+          <div class="template-example-total"><span>Subtotal</span><b>20.00</b><span>Tax</span><b>0.00</b><strong>Total</strong><strong>20.00</strong></div>
+          <div class="template-content-caption">Live form content appears here on each printed document</div>
+        </div>
+        <div class="template-page-footer" data-template-zone="footer">${nodes('footer')}</div>
+      </div></div>
+      <aside class="template-inspector">
+        <div class="template-inspector-tabs"><button class="${templateInspector=='properties'?'active':''}" data-a="templatepanel:properties">Properties</button><button class="${templateInspector=='conditions'?'active':''}" data-a="templatepanel:conditions">Conditions</button></div>
+        ${templateInspector=='conditions'?conditionPanel:`
+          ${selected?`<div class="template-selected-title"><b>${selected.type=='field'?'Field Value':selected.type[0].toUpperCase()+selected.type.slice(1)}</b><span data-template-select-name>${esc(selected.text||templateFieldLabel(selected.field))}</span></div>${templateInspectorHtml(selected,canEdit)}`:`
+          <div class="template-page-settings"><b>Page setup</b>${select('Page size','paperSize',config.paperSize,[['form','Auto (form default)'],['A4','A4'],['A5','A5'],['Letter','Letter']])}${select('Orientation','orientation',config.orientation,[['auto','Auto (form default)'],['portrait','Portrait'],['landscape','Landscape']])}${select('Margins','marginMm',config.marginMm==null?'':String(config.marginMm),[['','Auto'],...[5,8,10,12,15,20].map(size=>[String(size),`${size} mm`])])}${select('Font','fontFamily',config.fontFamily,[['system','System default'],['inter','Inter'],['arial','Arial'],['khmer','Noto Sans Khmer']])}${select('Text size','fontSizePt',config.fontSizePt==null?'':String(config.fontSizePt),[['','Auto'],...[8,9,10,11,12,14,16,18].map(size=>[String(size),`${size} pt`])])}
+          <label class="template-property"><span>Shared header text</span><textarea class="in" rows="2" data-template-shared="print_header" ${canEdit?'':'disabled'}>${esc(c.print_header||'')}</textarea></label><label class="template-property"><span>Shared footer text</span><textarea class="in" rows="2" data-template-shared="print_footer" ${canEdit?'':'disabled'}>${esc(c.print_footer||'')}</textarea></label></div>`}
+        `}
+        <div class="template-editor-note">Changes are shared by all printed forms.</div>
+      </aside>
+    </div>
+  </section>`;
+},
 bill(){
   const {income,expenses}=reportEntries(),sum=items=>items.reduce((total,item)=>total+item.amount,0),patientTotal=sum(income.filter(item=>item.kind=='payment')),salesTotal=sum(income.filter(item=>item.kind=='sale')),expenseTotal=sum(expenses),totalIncome=patientTotal+salesTotal;
   const quick=(label,key)=>`<button class="btn report-quick ${reportRange==key?'active':''}" data-a="reportrange:${key}">${T(label)}</button>`;
   const rows=(items,expense)=>items.map(item=>`<tr><td>${esc(item.date)}</td><td>${esc(item.person)}</td><td>${esc(item.details)}</td><td class="report-amount">${K(item.amount)}</td><td>${item.canDelete?`<button class="btn report-delete" data-a="reportdelete:${item.kind}:${item.id}" aria-label="Delete ${esc(item.details)}">▣</button>`:''}</td></tr>`).join('')||`<tr><td class="report-empty" colspan="5">No ${expense?'expenses':'income'} found for this period.</td></tr>`;
   const dateInput=(label,id,value)=>`<label class="report-date-field">${label}<input id="${id}" type="date" class="in" value="${esc(value)}"></label>`;
-  const controls=`<div class="report-toolbar card"><div class="report-filter-line"><label class="report-search-field"><span>${T('Patient')}</span><input id="report-q" class="in" placeholder="${T('Search patient, details...')}" value="${esc(reportQuery)}"></label>${dateInput(T('From date'),'report-from',reportFrom)}${dateInput(T('To date'),'report-to',reportTo)}<button class="btn p" data-a="reportapply">⌕ ${T('Search')}</button><button class="btn p" data-a="reportexport">⇩ ${T('Export Excel')}</button><button class="btn p" data-a="reportexpense">＋ ${T('Add Expense')}</button></div><div class="report-action-line">${quick('Today','today')}${quick('Yesterday','yesterday')}${quick('This month','month')}<button class="btn" data-a="reportprint:summary">▣ ${T('Bill Summary')}</button><button class="btn" data-a="reportprint:cash">▣ ${T('CP')}</button><button class="btn" data-a="reportprint:payroll">▣ ${T('Payroll Report')}</button></div></div>`;
+  const controls=`<div class="report-toolbar card"><div class="report-filter-line"><label class="report-search-field"><span>${T('Patient')}</span><input id="report-q" class="in" placeholder="${T('Search patient, details...')}" value="${esc(reportQuery)}"></label>${dateInput(T('From date'),'report-from',reportFrom)}${dateInput(T('To date'),'report-to',reportTo)}<button class="btn p" data-a="reportapply">⌕ ${T('Search')}</button><button class="btn p" data-a="reportexport">⇩ ${T('Export Excel')}</button><button class="btn p" data-a="reportexpense">＋ ${T('Add Expense')}</button></div><div class="report-action-line">${quick('Today','today')}${quick('Yesterday','yesterday')}${quick('This month','month')}<button class="btn" data-a="reportprint:summary">${printerIcon()} ${T('Bill Summary')}</button><button class="btn" data-a="reportprint:cash">${printerIcon()} ${T('CP')}</button><button class="btn" data-a="reportprint:payroll">${printerIcon()} ${T('Payroll Report')}</button></div></div>`;
   const cards=[[T('Patient Payments'),patientTotal,''],[T('POS Sales'),salesTotal,''],[T('Total Income'),totalIncome,'income'],[T('Expenses'),expenseTotal,'expense']];
   const cashRows=`<section class="card report-ledger income-ledger"><h3><span>⊕</span> ${T('Income')}</h3><div class="report-ledger-scroll"><table><thead><tr><th>${T('Date')}</th><th>${T('Patient / Source')}</th><th>${T('Details')}</th><th>${T('Amount')}</th><th></th></tr></thead><tbody>${rows(income,false)}</tbody></table></div></section>`;
   const expenseRows=`<section class="card report-ledger expense-ledger"><h3><span>⊖</span> ${T('Expenses')}</h3><div class="report-ledger-scroll"><table><thead><tr><th>${T('Date')}</th><th>${T('Category')}</th><th>${T('Expense')}</th><th>${T('Amount')}</th><th></th></tr></thead><tbody>${rows(expenses,true)}</tbody></table></div></section>`;
@@ -388,13 +581,13 @@ med(){const rows=ft('med');return hd('Medicines','Manage your pharmacy list.',sr
 dx(){const rows=ft('dx');return hd('Diagnosis','Diagnoses available when writing a visit.',`<button class="btn diagnosis-secondary" data-a="go:sy">☰ Symptoms List</button><button class="btn diagnosis-icon" data-a="dximport" title="Import diagnoses">⇪</button><button class="btn diagnosis-icon" data-a="dxexport" title="Export diagnoses">⇩</button><button class="btn diagnosis-primary" data-a="add:dx" title="${T('New Diagnosis')}">＋ ${T('New Diagnosis')}</button><input id="dx-import-file" type="file" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" hidden>`)+`<div class="diagnosis-shell"><div class="diagnosis-search"><span class="diagnosis-search-icon">⌕</span><input id="q" class="diagnosis-input" placeholder="Search diagnoses..." value="${esc(q)}"></div><div class="diagnosis-list">${rows.length?rows.map(([r,i])=>`<div class="diagnosis-row"><span class="diagnosis-name">${esc(r.name)}</span><div class="diagnosis-actions"><button class="btn diagnosis-edit" data-a="edit:dx:${i}">Edit</button><button class="btn diagnosis-delete" data-a="del:dx:${i}" aria-label="Delete ${esc(r.name)}">🗑</button></div></div>`).join(''):`<div class="diagnosis-empty">Nothing here yet.</div>`}</div></div>`;},
 rx(){const rows=ft('rx');return hd('Prescription Template','',sr('Search by disease name...')+ex+`<button class="btn g" data-a="add:rx">＋ Add Template</button>`)+`<div class="card rx-template-list-wrap"><table class="rx-template-list"><thead><tr><th>Disease Name</th><th>Medicines</th><th>Actions</th></tr></thead><tbody>${rows.map(([template,index])=>`<tr><td><b>${esc(template.name)}</b></td><td>${esc(rxTemplateMeds(template.meds).map(medicine=>medicine.name).join(', '))}</td><td><button class="btn s" data-a="edit:rx:${index}" aria-label="Edit template">Edit</button> <button class="btn s r" data-a="del:rx:${index}" aria-label="Delete template">×</button></td></tr>`).join('')||'<tr><td colspan="3" class="emp">Nothing here yet.</td></tr>'}</tbody></table></div>`},
 set(){
-  const c=D.clinic||{},ck=(key,label,help)=>`<label class="clinic-settings-toggle"><input type="checkbox" name="${key}" ${c[key]?'checked':''}><span><b>${label}</b><small>${help}</small></span></label>`;
+  const c=D.clinic||{},footerMode=c.footer_banner_mode==='text'||(!c.footer_banner_mode&&c.footer_banner_text)?'text':'image',ck=(key,label,help)=>`<label class="clinic-settings-toggle"><input type="checkbox" name="${key}" ${c[key]?'checked':''}><span><b>${label}</b><small>${help}</small></span></label>`;
   const field=(label,key,icon='')=>`<label class="clinic-settings-field"><span>${icon?`<i aria-hidden="true">${icon}</i>`:''}${label}</span><input class="in" name="${key}" value="${esc(c[key]||'')}"></label>`;
   return `<section class="clinic-settings-page">
     <header class="clinic-settings-heading"><div><h1>ការកំណត់គ្លីនិក</h1><p>គ្រប់គ្រងព័ត៌មានមូលដ្ឋានរបស់គ្លីនិកអ្នក។</p></div>
       <div class="clinic-settings-actions"><button class="btn" data-a="pwd">♧ Change password</button><div class="tabs" translate="no"><button class="${lang=='en'?'on':''}" data-a="lang:en">English</button><button class="${lang=='km'?'on':''}" data-a="lang:km">ខ្មែរ</button></div><div class="tabs"><button data-a="th:light">Light</button><button data-a="th:dark">Dark</button></div></div>
     </header>
-    <div class="card clinic-settings-card"><div id="cf">
+    ${canAccess('clinic_settings','edit')?`<div class="card clinic-settings-card"><div id="cf">
       <div class="clinic-settings-assets">
         <section class="clinic-settings-asset"><b>Logo</b>${imgField('','logo',c.logo,'Delete image')}</section>
         <section class="clinic-settings-asset"><b>QRCODE Bank</b>${imgField('','qr',c.qr,'Delete image')}</section>
@@ -402,6 +595,7 @@ set(){
       </div>
       <div class="clinic-settings-section-title"><span aria-hidden="true">▣</span><b>ការកំណត់ការបោះពុម្ព</b></div>
       <section class="clinic-settings-banner"><div class="clinic-settings-banner-heading"><b>Clinic Banner</b><span>Recommended: 1300×200px</span></div>${imgField('','banner',c.banner,'Delete image')}</section>
+      <section class="clinic-settings-banner clinic-settings-footer-banner"><div class="clinic-settings-banner-heading"><b>Clinic Footer</b><span>Choose an image or text</span></div><div class="clinic-footer-options"><label><input type="radio" name="footer_banner_mode" value="image" ${footerMode==='image'?'checked':''}> Image</label><label><input type="radio" name="footer_banner_mode" value="text" ${footerMode==='text'?'checked':''}> Text</label></div><div data-footer-option="image" ${footerMode==='image'?'':'hidden'}><p class="mu">Recommended image size: 1300×200px</p>${imgField('','footer_banner',c.footer_banner,'Delete image')}</div><div data-footer-option="text" ${footerMode==='text'?'':'hidden'}><label class="clinic-settings-field"><span>Footer text</span><textarea class="in" name="footer_banner_text" rows="4" placeholder="Enter multiline footer text">${esc(c.footer_banner_text||'')}</textarea></label></div></section>
       <div class="clinic-settings-toggles">${ck('show_name','បង្ហាញឈ្មោះគ្លីនិក','Display clinic name on header')}${ck('show_address','បង្ហាញអាសយដ្ឋាន','Display address line')}${ck('show_phone','បង្ហាញលេខទូរស័ព្ទ','Display phone number')}</div>
       <section class="clinic-print-template-settings">
         <div><b>Print document template</b><p class="mu">These shared text fields are added to all printed documents and reports. Leave blank to omit either line.</p></div>
@@ -418,7 +612,8 @@ set(){
       </div>
       ${typeof cnfSettingsHtml=='function'?cnfSettingsHtml(c):''}
       <div class="clinic-settings-save"><button class="btn p" data-a="saveclinic">▣ រក្សាទុកការកំណត់</button></div>
-    </div></div>
+    </div></div>`:canAccess('clinic_settings')?`<div class="card"><h3>${esc(c.name||'Clinic settings')}</h3><p>${esc(c.specialty||'')}</p><p>${esc(c.address||'')}</p><p>${esc(c.phone||'')}</p></div>`:''}
+    ${userManagementHtml()}
   </section>`;
 },
 dash(){const ip=D.ipd.filter(r=>!r.out).length,ad={},adPatients={},ag={'0-10':0,'11-20':0,'21-30':0,'31-40':0,'41-50':0,'51+':0},agePatients={},inR=p=>{const d=(p.reg_date||p.created_at||'').slice(0,10);return(!dFrom||d>=dFrom)&&(!dTo||d<=dTo)},P2=D.pt.filter(inR);
@@ -433,7 +628,7 @@ return hd('Patients','',sr('Search name, phone…')+'<button class="btn g" data-
 dr(){if(doctorProfileId!=null)return doctorProfileHtml();return hd('Doctors List','',add('dr','Add Doctor'))+`<div class="gr doctor-grid">${D.dr.map((d,i)=>`<div class="card dc doctor-card"><button type="button" class="doctor-card-open" data-a="doctor:${d.id}" aria-label="Open ${esc(d.name)}"></button><div class="av">${d.photo?`<img src="${API_BASE}/uploads/${esc(d.photo)}" alt="">`:'👤'}</div><b><a class="doctor-card-link" href="#" data-a="doctor:${d.id}">${esc(d.name)}</a></b><br><span class="bd b">${esc(d.role)}</span><div class="doctor-card-info"><div>▣　ID: ${esc(d.code||'--')}</div><div>☎　${esc(d.phone||'--')}</div><div>▢　${esc(d.workdays||d.av||'Available')}</div></div><div class="doctor-card-actions"><button class="btn s" data-a="edit:dr:${i}">Edit</button><button type="button" class="doctor-history-button" data-a="doctorhistory:${d.id}" title="Doctor history" aria-label="Doctor history">◷</button><button class="btn s r" data-a="del:dr:${i}">✕</button></div></div>`).join('')||'<p class="emp">No doctors added yet.</p>'}</div>`},
 echo(){return echoPage()},
 pos(){const T=Object.entries(cart).reduce((s,[i,n])=>s+mi(i).price*n,0),L=ft('med');
-return hd('POS','',sr('Search medicines…')+add('med','Add item'))+`<div class="pos"><div class="pr">${L.map(([m,i])=>`<div class="card pc" data-a="cart:${m.id}">${m.photo?`<img class="ph" src="${API_BASE}/uploads/${esc(m.photo)}" alt="">`:'<div class="ph"></div>'}<b>${esc(m.name)}</b><br><span style="color:#2563eb">${K(m.price)}</span><br><span style="color:${m.stock>0?'#16a34a':'#dc2626'}">Stock: ${m.stock}</span></div>`).join('')}</div><div class="card" style="padding:16px;align-self:start"><b>🛒 POS</b>${Object.keys(cart).length?Object.entries(cart).map(([i,n])=>`<div class="cl"><span>${esc(mi(i).name)} × ${n}</span><span>${K(mi(i).price*n)} <a href="#" data-a="rm:${i}">✕</a></span></div>`).join(''):'<p class="mu" style="padding:20px 0;text-align:center">Cart is empty</p>'}<hr><div class="cl"><b>Total</b><b>${K(T)}</b></div><div class="tools" style="margin:8px 0"><button class="btn ${pay=='Cash'?'p':''}" data-a="pay:Cash">Cash</button><button class="btn ${pay=='Bank'?'p':''}" data-a="pay:Bank">Bank</button></div><div class="pos-checkout-actions"><button class="btn p" data-a="co">Checkout</button><button type="button" class="btn s pos-print-button" data-a="posprint" aria-label="Print total" title="Print total">🖨</button></div></div></div>`},
+return hd('POS','',sr('Search medicines…')+add('med','Add item'))+`<div class="pos"><div class="pr">${L.map(([m,i])=>`<div class="card pc" data-a="cart:${m.id}">${m.photo?`<img class="ph" src="${API_BASE}/uploads/${esc(m.photo)}" alt="">`:'<div class="ph"></div>'}<b>${esc(m.name)}</b><br><span style="color:#2563eb">${K(m.price)}</span><br><span style="color:${m.stock>0?'#16a34a':'#dc2626'}">Stock: ${m.stock}</span></div>`).join('')}</div><div class="card" style="padding:16px;align-self:start"><b>🛒 POS</b>${Object.keys(cart).length?Object.entries(cart).map(([i,n])=>`<div class="cl"><span>${esc(mi(i).name)} × ${n}</span><span>${K(mi(i).price*n)} <a href="#" data-a="rm:${i}">✕</a></span></div>`).join(''):'<p class="mu" style="padding:20px 0;text-align:center">Cart is empty</p>'}<hr><div class="cl"><b>Total</b><b>${K(T)}</b></div><div class="tools" style="margin:8px 0"><button class="btn ${pay=='Cash'?'p':''}" data-a="pay:Cash">Cash</button><button class="btn ${pay=='Bank'?'p':''}" data-a="pay:Bank">Bank</button></div><div class="pos-checkout-actions"><button class="btn p" data-a="co">Checkout</button><button type="button" class="btn s pos-print-button" data-a="posprint" aria-label="Print total" title="Print total">${printerIcon()}</button></div></div></div>`},
 posPrint(){
   const items=Object.entries(cart).filter(([,qty])=>Number(qty)>0);
   if(!items.length)return toast(T('Cart is empty'));
@@ -479,7 +674,7 @@ R.med=function(){
   return hd('Medicines','Manage your pharmacy list.',controls)+(medicineFormOpen?medicineFormHtml():'')+
     `<div class="card medicine-table-wrap"><table class="medicine-table"><thead><tr><th>Medicine</th><th>Sales units / Price</th><th>In stock</th><th>Expiration / Notification</th><th>Actions</th></tr></thead><tbody>${rows.map(([m])=>{const units=medicineUnits(m),today=new Date().toISOString().slice(0,10),alert=(m.expiration_date&&m.expiration_date<=today)||(m.notification_date&&m.notification_date<=today);return`<tr><td><div class="medicine-name">${m.photo?`<img class="medicine-thumb" src="${API_BASE}/uploads/${esc(m.photo)}" alt="">`:'<span class="medicine-thumb medicine-thumb-empty">💊</span>'}<div><b>${esc(m.name)}</b>${m.composition?`<small>${esc(m.composition)}</small>`:''}</div></div></td><td><div class="medicine-unit-list">${units.map(u=>`<span>${esc(u.name)}: <b>${K(u.price)}</b> <small>× ${u.qty}</small></span>`).join('')||'<span>—</span>'}</div></td><td><span class="bd ${m.stock>0?'':'x'}">${Number(m.stock)||0}</span></td><td><span class="${alert?'medicine-expired':''}">${m.expiration_date?`Expiry: ${esc(m.expiration_date)}`:'—'}</span>${m.notification_date?`<small class="medicine-notify ${m.notification_date<=today?'medicine-expired':''}">Notify: ${esc(m.notification_date)}</small>`:''}</td><td>${medicineActions(m)}</td></tr>`}).join('')||'<tr><td colspan="5" class="emp">Nothing here yet.</td></tr>'}</tbody></table></div>`;
 };
-const M={dash:'dash',pt:'pt',ap:'ap',fu:'fu',ipd:'ipd',cur:'cur',dr:'dr',ch:'ch',med:'med',sv:'sv',lab:'lab',echo:'echo',dx:'dx',rx:'rx',sy:'sy',pos:'pos',st:'st',ns:'ns',bill:'bill',mr:'mr',ad:'ad',sf:'sf',an:'an',da:'da'};
+const M={dash:'dash',pt:'pt',ap:'ap',fu:'fu',ipd:'ipd',cur:'cur',dr:'dr',leaves:'leaves',ch:'ch',med:'med',sv:'sv',lab:'lab',echo:'echo',dx:'dx',rx:'rx',sy:'sy',pos:'pos',st:'st',ns:'ns',bill:'bill',mr:'mr',ad:'ad',sf:'sf',an:'an',da:'da',ptpl:'ptpl'};
 const validPage=page=>Object.hasOwn(M,page)||page=='set'||page=='patient';
 function pageFromRoute(page){return page=='patient'?'pd':page}
 function restorePageState(){
@@ -512,12 +707,87 @@ function savePageState(){
   }catch(e){ /* keep the current page usable when storage is unavailable */ }
 }
 function restorePage(){try{const hash=decodeURIComponent(window.location.hash.slice(1));if(validPage(hash)){rt=pageFromRoute(hash);return}const saved=sessionStorage.getItem('currentPage');if(validPage(saved))rt=pageFromRoute(saved)}catch(e){}}
-function setPage(page){rt=page;const route=page=='pd'?'patient':page;try{sessionStorage.setItem('currentPage',route)}catch(e){}if(validPage(route)&&window.location.hash!='#'+route)window.location.hash='#'+route}
+function setPage(page){if(D.user.id&&!pageAllowed(page))page=firstAllowedPage();rt=page;const route=page=='pd'?'patient':page;try{sessionStorage.setItem('currentPage',route)}catch(e){}if(validPage(route)&&window.location.hash!='#'+route)window.location.hash='#'+route}
 restorePage();
 window.addEventListener('hashchange',()=>{try{const page=decodeURIComponent(window.location.hash.slice(1));if(validPage(page)){rt=pageFromRoute(page);sessionStorage.setItem('currentPage',page);if(rt=='pd'&&typeof restorePatientPage=='function')restorePatientPage().catch(e=>toast(e.message));else render()}}catch(e){}});
-const NV=[['Patient Care',[['dash','Dashboard','▦'],['pt','Patients','👥'],['ap','Appointments','📅'],['fu','Follow Up','↻'],['ipd','IPD','🛏'],['cur','Current IPD','⏱'],['dr','Doctors','🩺'],['ch','Chat','💬']]],['Clinical',[['med','Medicines','💊'],['sv','Services','🩺'],['lab','Lab Templates','🧪'],['echo','Echo Templates','♡'],['dx','Diagnosis','📋'],['rx','Prescription Template','📄'],['sy','Symptoms','〰']]],['Finance & POS',[['pos','POS','🛒'],['st','Store','🏪'],['ns','NSSF','🛡'],['bill','Report','📊'],['mr','Medicine Report','📄']]],['Administration',[['ad','Address','📍'],['sf','Sample file','📎'],['an','Analytics','〰'],['da','Doctor Analytics','📊']]]],cl={};
-function nav(){$('#nv').innerHTML=NV.map(([g,it])=>`<div class="gh" data-a="grp:${g}">${g}<span>${cl[g]?'›':'⌄'}</span></div>${cl[g]?'':it.map(([id,l,ic])=>`<div class="it ${id==(rt=='pd'?'pt':rt)?'on':''}" data-a="go:${id}"><i>${ic}</i>${l}</div>`).join('')}`).join('')}
-function render(){if(validPage(rt)||rt=='pd')setPage(rt);const f=document.activeElement&&document.activeElement.id=='q';const cl=D.clinic||{};$('#tt').textContent=cl.name||'Sovanvitou';$('#lgo').innerHTML=cl.logo?`<img src="${API_BASE}/uploads/${esc(cl.logo)}" alt="" style="max-height:34px;max-width:100%">`:'CLINIC SOVANVITOU';$('#v').classList.toggle('tight',rt=='pt');$('#v').innerHTML=`<div class="w">${(R[rt]||(()=>tp(rt)))()}</div>`;nav();savePageState();if(f){const e=$('#q');e.focus();e.setSelectionRange(99,99)}}
+const NV=[['Patient Care',[['dash','Dashboard','▦'],['pt','Patients','👥'],['ap','Appointments','📅'],['fu','Follow Up','↻'],['ipd','IPD','🛏'],['cur','Current IPD','⏱'],['dr','Doctors','🩺'],['ch','Chat','💬']]],['Clinical',[['med','Medicines','💊'],['sv','Services','🩺'],['lab','Lab Templates','🧪'],['echo','Echo Templates','♡'],['dx','Diagnosis','📋'],['rx','Prescription Template','📄'],['sy','Symptoms','〰']]],['Finance & POS',[['pos','POS','🛒'],['st','Store','🏪'],['ns','NSSF','🛡'],['bill','Report','📊'],['mr','Medicine Report','📄']]],['Administration',[['ptpl','Print Templates','▤'],['ad','Address','📍'],['sf','Sample file','📎'],['leaves','Leaves Form','🗓'],['an','Analytics','〰'],['da','Doctor Analytics','📊']]]],cl={};
+function nav(){$('#nv').innerHTML=NV.map(([g,it])=>{const visible=it.filter(([id])=>pageAllowed(id));return visible.length?`<div class="gh" data-a="grp:${g}">${g}<span>${cl[g]?'›':'⌄'}</span></div>${cl[g]?'':visible.map(([id,l,ic])=>`<div class="it ${id==(rt=='pd'?'pt':rt)?'on':''}" data-a="go:${id}"><i>${ic}</i>${l}</div>`).join('')}`:''}).join('')}
+const ACTION_RESOURCE_AREA={pt:'patients',ap:'appointments_ipd',ipd:'appointments_ipd',dr:'staff_payroll',payslips:'staff_payroll',leaves:'staff_payroll',expenses:'finance_reports',med:'pharmacy_services',sv:'pharmacy_services',lab:'templates_reference',labcategories:'templates_reference',echo:'templates_reference',dx:'templates_reference',rx:'templates_reference',sy:'templates_reference',ad:'templates_reference',sf:'templates_reference',ch:'appointments_ipd'};
+function actionAllowed(action,key){
+  const current=pageArea(rt=='pd'?'pt':rt);
+  if(action=='go')return pageAllowed(key);
+  if(action=='add'||action=='edit'||action=='del')return canAccess(ACTION_RESOURCE_AREA[key]||current,action=='del'?'delete':action=='add'?'create':'edit');
+  if(action=='saveclinic')return canAccess('clinic_settings','edit');
+  if(action=='saveprinttemplate')return canAccess('clinic_settings','edit');
+  if(action=='printtemplatepreview')return canAccess('clinic_settings','view');
+  if(action=='templatepanel')return canAccess('clinic_settings','view');
+  if(action=='templateclose')return canAccess('clinic_settings','view');
+  if(action.startsWith('template'))return canAccess('clinic_settings','edit');
+  if(action=='useradd')return canAccess('user_management','create');
+  if(action=='useredit')return canAccess('user_management','edit');
+  if(action=='userdelete')return canAccess('user_management','delete');
+  if(action=='out')return canAccess('appointments_ipd','edit');
+  if(action=='ptmore')return canAccess('appointments_ipd','create');
+  if(action=='ptapadd')return canAccess('appointments_ipd','create');
+  if(action=='leaveform')return canAccess('staff_payroll','create');
+  if(action=='leaveedit')return canAccess('staff_payroll','edit');
+  if(action=='co'||action=='cart')return canAccess('pharmacy_services','create');
+  if(action=='send')return canAccess('appointments_ipd','create');
+  if(action=='reportexpense')return canAccess('finance_reports','create');
+  if(action=='reportdelete')return canAccess('finance_reports','delete')||(!D.user.permissions_custom&&key=='payment');
+  if(action=='medreportdelete')return canAccess('pharmacy_services','delete');
+  if(action=='medadd')return canAccess('pharmacy_services','create');
+  if(['mededit','medstock','medimport'].includes(action))return canAccess('pharmacy_services',action=='medimport'?'create':'edit');
+  if(action=='labdel'||action=='echodel'||action=='samplefiledel')return canAccess('templates_reference','delete');
+  if(action=='labimport'||action=='dximport'||action=='echoimport'||action=='svimport'||action=='medimport')return canAccess(current,'create');
+  if(action.includes('print')||action.includes('export')||action=='csv'||action=='medqr'||action=='medbarcode'||action=='medqrbulk'||action=='medbarcodebulk')return canAccess(current,'print');
+  if(action=='rmpic')return canAccess(current,'edit');
+  if(action.endsWith('add')||action.endsWith('import'))return canAccess(current,'create');
+  if(action.endsWith('edit')||action.endsWith('save'))return canAccess(current,'edit')||canAccess(current,'create');
+  if(action.endsWith('del'))return canAccess(current,'delete');
+  return true;
+}
+function applyActionPermissions(){document.querySelectorAll('#v [data-a]').forEach(element=>{const [action,key]=element.dataset.a.split(':');if(!actionAllowed(action,key))element.hidden=true})}
+function render(){if(validPage(rt)||rt=='pd')setPage(rt);const f=document.activeElement&&document.activeElement.id=='q';const cl=D.clinic||{};$('#tt').textContent=cl.name||'Sovanvitou';$('#lgo').innerHTML=cl.logo?`<img src="${API_BASE}/uploads/${esc(cl.logo)}" alt="" style="max-height:34px;max-width:100%">`:'CLINIC SOVANVITOU';$('#v').classList.toggle('tight',rt=='pt');$('#v').innerHTML=`<div class="w">${(R[rt]||(()=>tp(rt)))()}</div>`;nav();applyActionPermissions();savePageState();if(f){const e=$('#q');e.focus();e.setSelectionRange(99,99)}}
+document.addEventListener('pointerdown',event=>{
+  const control=event.target.closest('[data-template-drag],[data-template-resize]');
+  if(!control||!canAccess('clinic_settings','edit'))return;
+  const node=control.closest('[data-template-id]'),zone=node&&node.parentElement,item=templateDraft&&templateDraft.elements.find(candidate=>candidate.id==node.dataset.templateId);
+  if(!item||!zone)return;
+  event.preventDefault();templateSelection=item.id;
+  const bounds=zone.getBoundingClientRect();
+  templateDrag={id:item.id,mode:control.hasAttribute('data-template-resize')?'resize':'move',startX:event.clientX,startY:event.clientY,startLeft:item.x,startTop:item.y,startWidth:item.width,startHeight:item.height,width:bounds.width,height:bounds.height};
+});
+document.addEventListener('pointermove',event=>{
+  if(!templateDrag||!templateDraft)return;
+  const item=templateDraft.elements.find(candidate=>candidate.id==templateDrag.id);if(!item)return;
+  const dx=(event.clientX-templateDrag.startX)/Math.max(1,templateDrag.width)*100,dy=(event.clientY-templateDrag.startY)/Math.max(1,templateDrag.height)*100;
+  if(templateDrag.mode=='move'){
+    item.x=Math.round(Math.max(0,Math.min(100-item.width,templateDrag.startLeft+dx)));
+    item.y=Math.round(Math.max(0,Math.min(100-item.height,templateDrag.startTop+dy)));
+  }else{
+    item.width=Math.round(Math.max(5,Math.min(100-templateDrag.startLeft,templateDrag.startWidth+dx)));
+    item.height=Math.round(Math.max(5,Math.min(100-templateDrag.startTop,templateDrag.startHeight+dy)));
+  }
+  const node=document.querySelector(`[data-template-id="${item.id}"]`);
+  if(node){node.style.left=`${item.x}%`;node.style.top=`${item.y}%`;node.style.width=`${item.width}%`;node.style.height=`${item.height}%`}
+});
+document.addEventListener('pointerup',()=>{templateDrag=null});
+document.addEventListener('change',event=>{
+  const target=event.target;
+  if(target.matches('[data-template-grid]')){const canvas=document.querySelector('[data-template-canvas]');if(canvas)canvas.classList.toggle('grid-hidden',!target.checked);return}
+  if(!target.matches('[data-template-setting],[data-template-shared],[data-template-property],[data-template-column]'))return;
+  if(target.hasAttribute('data-template-setting')||target.hasAttribute('data-template-shared'))printTemplateEditorValues();
+  else{
+    const item=templateDraft&&templateDraft.elements.find(candidate=>candidate.id==templateSelection);if(!item)return;
+    if(target.hasAttribute('data-template-column'))item.columns=target.checked?[...new Set([...item.columns,target.dataset.templateColumn])]:item.columns.filter(column=>column!=target.dataset.templateColumn);
+    else{
+      const key=target.dataset.templateProperty;
+      item[key]=target.type=='checkbox'?target.checked:['x','y','width','height','fontSize'].includes(key)?Number(target.value):target.value;
+    }
+  }
+  render();
+});
 function toast(m){const t=$('#ts');t.textContent=T(m);t.style.display='block';clearTimeout(nt);nt=setTimeout(()=>t.style.display='none',2200)}
 function modal(t,F,V,cb,opts={}){$('#mf').className=opts.className||'';$('#mf').innerHTML=`<h3 style="margin:0">${t}</h3>${F.map(([l,k,ty,o4,placeholder])=>ty=='img'?imgField(l,k,V[k]):ty=='ta'?`<label class="fl">${l}<textarea class="in" name="${k}" placeholder="${esc(placeholder||'')}">${esc(V[k]??'')}</textarea></label>`:ty=='number'?`<label class="fl">${l}<input class="in" type="number" name="${k}" min="0" step="1" value="${esc(V[k]??'')}" placeholder="${esc(placeholder||'')}"></label>`:ty&&ty!='pw'?fld(l,k,ty,V[k],o4):ty=='pw'?`<label>${l}<input class="in" type="password" name="${k}" required></label>`:`<label>${l}<input class="in" name="${k}" value="${esc(V[k]??'')}" placeholder="${esc(placeholder||'')}" ${k=='name'?'required':''}></label>`).join('')}<div class="tools" style="justify-content:flex-end"><button type="button" class="btn" data-a="close">Cancel</button><button class="btn p">${opts.submit||'Save'}</button></div>`;$('#md').classList.add('on');$('#mf').onsubmit=async e=>{e.preventDefault();const o=Object.fromEntries(new FormData(e.target));F.forEach(([l,k])=>{if(!isNaN(V[k])&&V[k]!=='')o[k]=+o[k]});try{await cb(o);await load();$('#md').classList.remove('on');render()}catch(er){toast(er.message)}}}
 function updateMedicineStock(index){const m=D.med[index];if(!m)return toast('Medicine not found');modal('Update Stock',[['In Stock','stock','number']],{stock:Number(m.stock)||0},async o=>{const stock=Number(o.stock);if(!Number.isInteger(stock)||stock<0)throw new Error('Stock must be a non-negative whole number');await api('PUT','medicines/'+m.id,{stock})},{submit:'Update Stock'});$('#mf [name="stock"]').required=true}
@@ -882,14 +1152,37 @@ function payrollPrint(id){
   if(typeof printDoc=='function')printDoc('Payslip',`<table class="pk">${rows.filter(([,v])=>v).map(([k,v])=>`<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')}</table>`);
 }
 let tok=null,needSetup=false;try{tok=localStorage.getItem('kt')}catch(e){}
-const RS={pt:'patients',ap:'appointments',ipd:'ipd',dr:'doctors',payslips:'payslips',expenses:'expenses',med:'medicines',sv:'services',lab:'labs',labcategories:'labcategories',echo:'echo',dx:'diagnoses',rx:'prescriptions',sy:'symptoms',ad:'addresses',sf:'files',ch:'chat'};
+const RS={pt:'patients',ap:'appointments',ipd:'ipd',dr:'doctors',payslips:'payslips',leaves:'leaves',expenses:'expenses',med:'medicines',sv:'services',lab:'labs',labcategories:'labcategories',echo:'echo',dx:'diagnoses',rx:'prescriptions',sy:'symptoms',ad:'addresses',sf:'files',ch:'chat'};
 async function api(m,u,b){const r=await fetch(API_BASE+'/api/'+u,{method:m,headers:{'Content-Type':'application/json',...(tok?{Authorization:'Bearer '+tok}:{})},body:b?JSON.stringify(b):undefined});let j=null;try{j=await r.json()}catch(e){}if(r.status==401&&tok&&u!='auth/login')logout();if(!r.ok)throw new Error(j&&j.error||'Request failed');return j}
-async function load(){const k=Object.keys(RS),[rows,dash,bill,cl,schedules,payments,investigations,labResults,sales,user,medicineSales]=await Promise.all([Promise.all(k.map(x=>api('GET',RS[x]+'?limit=5000'))),api('GET','dashboard'),api('GET','reports/daily?days=30'),api('GET','clinic'),api('GET','records?kind=schedule&limit=5000'),api('GET','records?kind=payment&limit=5000'),api('GET','records?kind=investigation&limit=5000'),api('GET','records?kind=lab&limit=5000'),api('GET','sales?limit=5000'),api('GET','auth/me'),api('GET','reports/medicine-sales?limit=5000')]);D.clinic=cl;D.user=user;k.forEach((x,i)=>D[x]=rows[i]);D.ch=D.ch.map(r=>r.msg);D.rev=dash.revenueToday;D.bill=bill;D.sales=sales;D.medicineSales=medicineSales;D.billing=[...schedules,...payments,...investigations,...labResults];Object.keys(cart).forEach(i=>{if(!D.med.some(m=>m.id==i))delete cart[i]})}
+async function load(){
+  D.user=await api('GET','auth/me');
+  const areas={pt:'patients',ap:'appointments_ipd',ipd:'appointments_ipd',dr:'staff_payroll',payslips:'staff_payroll',leaves:'staff_payroll',expenses:'finance_reports',med:'pharmacy_services',sv:'pharmacy_services',lab:'templates_reference',labcategories:'templates_reference',echo:'templates_reference',dx:'templates_reference',rx:'templates_reference',sy:'templates_reference',ad:'templates_reference',sf:'templates_reference',ch:'appointments_ipd'};
+  const resources=Object.keys(RS);
+  const [rows,dash,bill,cl,schedules,payments,investigations,labResults,prescriptions,dispenses,sales,medicineSales,users]=await Promise.all([
+    Promise.all(resources.map(async key=>canAccess(areas[key])?api('GET',RS[key]+'?limit=5000'):[])),
+    (D.user.role=='admin'||['patients','appointments_ipd','finance_reports'].some(area=>canAccess(area)))?api('GET','dashboard'):{revenueToday:0},
+    canAccess('finance_reports')?api('GET','reports/daily?days=30'):[],
+    canAccess('clinic_settings')?api('GET','clinic'):Object.keys(PERMISSION_AREAS).some(area=>canAccess(area,'print'))?api('GET','clinic/print'):{},
+    canAccess('appointments_ipd')?api('GET','records?kind=schedule&limit=5000'):[],
+    canAccess('finance_reports')?api('GET','records?kind=payment&limit=5000'):[],
+    canAccess('clinical')?api('GET','records?kind=investigation&limit=5000'):[],
+    canAccess('clinical')?api('GET','records?kind=lab&limit=5000'):[],
+    canAccess('clinical')?api('GET','records?kind=prescription&limit=5000'):[],
+    canAccess('pharmacy_services')||canAccess('finance_reports')?api('GET','records?kind=medlist&limit=5000'):[],
+    canAccess('pharmacy_services')||canAccess('finance_reports')?api('GET','sales?limit=5000'):[],
+    canAccess('pharmacy_services')?api('GET','reports/medicine-sales?limit=5000'):[],
+    canAccess('user_management')?api('GET','users'):[],
+  ]);
+  D.clinic=cl;resources.forEach((key,index)=>D[key]=rows[index]);D.ch=D.ch.map(record=>record.msg);
+  D.rev=dash.revenueToday;D.bill=bill;D.sales=sales;D.medicineSales=medicineSales;D.users=users;
+  D.billing=[...schedules,...payments,...investigations,...labResults,...prescriptions,...dispenses];
+  Object.keys(cart).forEach(id=>{if(!D.med.some(m=>m.id==id))delete cart[id]});
+}
 function logout(){tok=null;try{localStorage.removeItem('kt')}catch(e){}$('#lg').style.display='grid'}
 function setLoginLoading(loading){const overlay=$('#login-loading'),button=$('#login-submit');if(overlay)overlay.hidden=!loading;if(button)button.disabled=loading;const login=$('#lg');if(login)login.setAttribute('aria-busy',String(loading))}
 async function doLogin(){const email=$('#em').value.trim(),password=$('#pw').value;setLoginLoading(true);try{if(needSetup){await api('POST','auth/setup',{email,password});needSetup=false}const r=await api('POST','auth/login',{email,password});tok=r.token;try{localStorage.setItem('kt',tok)}catch(e){}await load();$('#lg').style.display='none';render()}catch(e){toast(e.message)}finally{setLoginLoading(false)}}
 const run=p=>p.then(()=>load()).then(render).catch(e=>toast(e.message));
-document.addEventListener('click',e=>{const el=e.target.closest('[data-a]');if(!el)return;e.preventDefault();const[a,x,y]=el.dataset.a.split(':');
+document.addEventListener('click',e=>{const el=e.target.closest('[data-a]');if(!el){const node=e.target.closest('[data-template-id]');if(node){templateSelection=node.dataset.templateId;templateInspector='properties';render()}else if(e.target.closest('[data-template-canvas]')){templateSelection=null;templateInspector='properties';render()}return}e.preventDefault();const[a,x,y]=el.dataset.a.split(':');if(!actionAllowed(a,x))return toast('You do not have permission to do that.');
 if(a=='login')doLogin();else if(a=='logout')logout();
 else if(a=='reportrange')reportSetRange(x);
 else if(a=='reportapply'){reportQuery=$('#report-q').value.trim();reportFrom=$('#report-from').value;reportTo=$('#report-to').value;reportRange='';if(reportFrom&&reportTo&&reportFrom>reportTo)return toast('From date must not be after To date');render()}
@@ -904,8 +1197,17 @@ else if(a=='analytics-period'){analyticsPeriod=x;render()}
 else if(a=='analytics-clear'){analyticsFrom='';analyticsTo='';analyticsPeriod='daily';render()}
 else if(a=='doctor-analytics-clear'){doctorAnalyticsFrom='';doctorAnalyticsTo='';doctorAnalyticsId='';render()}
 else if(a=='go'){setPage(x);q='';pg=1;doctorProfileId=null;medicineViewId=null;$('#sd').classList.remove('on');render()}else if(a=='grp'){cl[x]=!cl[x];nav()}else if(a=='menu'){if((window.innerWidth||0)>820){const on=document.body.classList.toggle('sbc');try{localStorage.setItem('sbc',on?'1':'0')}catch(e){}}else $('#sd').classList.toggle('on')}
-else if(a=='rmpic'){$('#pk_'+x).value='';$('#pv_'+x).hidden=true;$('#pf_'+x).value='';if(x=='photo'&&$('#doctor-photo-placeholder'))$('#doctor-photo-placeholder').hidden=false;if(x=='photo'&&$('#medicine-photo-placeholder'))$('#medicine-photo-placeholder').hidden=false}else if(a=='settings'){setPage('set');q='';$('#sd').classList.remove('on');render()}else if(a=='lang')setLang(x);else if(a=='th'){document.documentElement.dataset.theme=x;render()}else if(a=='pwd')modal('Change password',[['Current password','current','pw'],['New password','password','pw']],{},o=>api('POST','auth/password',o).then(()=>toast('Password changed')))
-else if(a=='saveclinic'){const o={};document.querySelectorAll('#cf [name]').forEach(e=>{o[e.name]=e.type=='checkbox'?(e.checked?1:0):e.value});o.rate=+o.rate;const ct={};Object.keys(o).forEach(k=>{if(k.startsWith('cnf_')){ct[k.slice(4)]=o[k];delete o[k]}});if(Object.keys(ct).length)o.cnf_text=ct;api('PUT','clinic',o).then(c=>{D.clinic=c;toast('Saved');render()}).catch(er=>toast(er.message))}
+else if(a=='rmpic'){$('#pk_'+x).value='';$('#pv_'+x).hidden=true;$('#pf_'+x).value='';if(x=='photo'&&$('#doctor-photo-placeholder'))$('#doctor-photo-placeholder').hidden=false;if(x=='photo'&&$('#medicine-photo-placeholder'))$('#medicine-photo-placeholder').hidden=false}else if(a=='settings'){setPage('set');q='';$('#sd').classList.remove('on');render()}else if(a=='useradd'){userEditId=null;userFormOpen=true;render()}else if(a=='useredit'){userEditId=+x;userFormOpen=true;render()}else if(a=='usercancel'){userFormOpen=false;userEditId=null;render()}else if(a=='userdelete'){if(confirm('Delete this user account?'))run(api('DELETE','users/'+x))}else if(a=='lang')setLang(x);else if(a=='th'){document.documentElement.dataset.theme=x;render()}else if(a=='pwd')modal('Change password',[['Current password','current','pw'],['New password','password','pw']],{},o=>api('POST','auth/password',o).then(()=>toast('Password changed')))
+else if(a=='saveprinttemplate')savePrintTemplate().catch(error=>toast(error.message));
+else if(a=='printtemplatepreview')previewPrintTemplate();
+else if(a=='templateadd'){beginPrintTemplateEditing();const item=templateNewItem(x=='tax'?'tax':x);templateDraft.elements.push(item);templateSelection=item.id;templateInspector='properties';render()}
+else if(a=='templatedelete'){beginPrintTemplateEditing();templateDraft.elements=templateDraft.elements.filter(item=>item.id!=x);templateSelection=null;render()}
+else if(a=='templatecopy'){const source=templateDraft&&templateDraft.elements.find(item=>item.id==templateSelection);if(source){const copy={...source,...templateNewItem(source.type),text:source.text?`${source.text} copy`:source.text,columns:[...source.columns]};templateDraft.elements.push(copy);templateSelection=copy.id;render()}}
+else if(a=='templaterename'){const item=templateDraft&&templateDraft.elements.find(candidate=>candidate.id==templateSelection);if(item){const name=window.prompt('Rename template item',item.text||'Template item');if(name!==null){item.text=name.slice(0,255);render()}}}
+else if(a=='templateforward'||a=='templateback'){const index=templateDraft&&templateDraft.elements.findIndex(item=>item.id==templateSelection),delta=a=='templateforward'?1:-1;if(index>=0&&index+delta>=0&&index+delta<templateDraft.elements.length){[templateDraft.elements[index],templateDraft.elements[index+delta]]=[templateDraft.elements[index+delta],templateDraft.elements[index]];render()}}
+else if(a=='templatepanel'){templateInspector=x;render()}
+else if(a=='templateclose'){templateDraft=null;templateSelection=null;setPage('set');render()}
+else if(a=='saveclinic'){const o={};document.querySelectorAll('#cf [name]').forEach(e=>{if(e.type=='radio'&&!e.checked)return;o[e.name]=e.type=='checkbox'?(e.checked?1:0):e.value});o.rate=+o.rate;const ct={};Object.keys(o).forEach(k=>{if(k.startsWith('cnf_')){ct[k.slice(4)]=o[k];delete o[k]}});if(Object.keys(ct).length)o.cnf_text=ct;api('PUT','clinic',o).then(c=>{D.clinic=c;toast('Saved');render()}).catch(er=>toast(er.message))}
 else if(a=='theme'){const r=document.documentElement;r.dataset.theme=(r.dataset.theme||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light'))=='dark'?'light':'dark'}
 else if(a=='toast')toast(x);else if(a=='close')$('#md').classList.remove('on');else if(a=='tab'){tab=x;pg=1;render()}else if(a=='pg'){pg=Math.max(1,+x);render()}
 else if(a=='doctor')openDoctorProfile(x);
@@ -920,6 +1222,8 @@ else if(a=='del'){if(confirm(T('Delete this record?'))){const r=D[x][+y];run(api
 else if(a=='out'){const r=D.ipd[+x];run(api('PUT','ipd/'+r.id,{out:1}).then(()=>syncOpd(r)))}
 else if(a=='add'){const k=x;if(k=='dr')return doctorForm();if(k=='sv')return serviceForm();if(k=='echo')return echoForm();if(k=='rx')return rxTemplateForm();if(k=='med'&&rt=='pos'){medicineEditIndex=null;medicineViewId=null;medicineFormOpen=true;medicineFormReturnPage='pos';rt='med';render();return}const F=FM[k]||P[k].f,d={...(df[k]||P[k]?.d||{})};modal('Add',F,d,o=>api('POST',RS[k],{...d,...o}))}
 else if(a=='edit'){if(x=='dr')return doctorForm(+y);if(x=='sv')return serviceForm(+y);if(x=='echo')return echoForm(+y);if(x=='rx')return rxTemplateForm(+y);const F=FM[x]||P[x].f,r=D[x][+y];modal('Edit',F,r,o=>api('PUT',RS[x]+'/'+r.id,o))}
+else if(a=='leaveform')leaveRequestForm();
+else if(a=='leaveedit')leaveRequestForm(+x);
 else if(a=='rxmedicine')toggleRxMedicine(x);
 else if(a=='medadd'){medicineEditIndex=null;medicineFormOpen=true;render()}
 else if(a=='mededit'){medicineViewId=null;medicineEditIndex=+x;medicineFormOpen=true;render()}
@@ -973,11 +1277,11 @@ else if(a=='cart'){const m=mi(x);if(m.stock<=(cart[x]||0))return toast('Not enou
 else if(a=='co'){const items=Object.entries(cart).map(([i,n])=>({medicine_id:+i,qty:n}));if(!items.length)return toast('Cart is empty');api('POST','sales',{items,method:pay}).then(s=>{cart={};toast('Paid '+K(s.total)+' by '+pay);return load()}).then(render).catch(er=>toast(er.message))}
 else if(a=='send'){const v=$('#cm').value.trim();if(v)run(api('POST','chat',{msg:v}))}else if(typeof pAct=='function')pAct(a,x,y,el)});
 async function pick(file,k){if(!file)return;if(!/^image\//.test(file.type))return toast('Use a JPG, PNG or WebP picture');toast('Uploading…');
-try{const bmp=await createImageBitmap(file),sc=Math.min(1,(k=='banner'?1300:480)/Math.max(bmp.width,bmp.height)),c=document.createElement('canvas');c.width=Math.max(1,Math.round(bmp.width*sc));c.height=Math.max(1,Math.round(bmp.height*sc));const g=c.getContext('2d');g.fillStyle='#fff';g.fillRect(0,0,c.width,c.height);g.drawImage(bmp,0,0,c.width,c.height);
+try{const bmp=await createImageBitmap(file),sc=Math.min(1,(['banner','footer_banner'].includes(k)?1300:480)/Math.max(bmp.width,bmp.height)),c=document.createElement('canvas');c.width=Math.max(1,Math.round(bmp.width*sc));c.height=Math.max(1,Math.round(bmp.height*sc));const g=c.getContext('2d');g.fillStyle='#fff';g.fillRect(0,0,c.width,c.height);g.drawImage(bmp,0,0,c.width,c.height);
 const blob=await new Promise(r=>c.toBlob(r,'image/jpeg',.85)),r=await fetch(API_BASE+'/api/uploads',{method:'POST',headers:{'Content-Type':'image/jpeg',Authorization:'Bearer '+tok},body:blob}),j=await r.json().catch(()=>({}));if(!r.ok)throw new Error(j.error||'Upload failed');
 $('#pk_'+k).value=j.photo;$('#pv_'+k).src=API_BASE+'/uploads/'+j.photo;$('#pv_'+k).hidden=false;if(k=='photo'&&$('#doctor-photo-placeholder'))$('#doctor-photo-placeholder').hidden=true;if(k=='photo'&&$('#medicine-photo-placeholder'))$('#medicine-photo-placeholder').hidden=true;$('#ts').style.display='none'}catch(e){toast(e.message)}}
-document.addEventListener('submit',e=>{if(e.target.id=='medicine-form')medicineSave(e)});
-document.addEventListener('change',e=>{const match=/^echo-image-file-(\d+)$/.exec(e.target.id||'');if(match)echoUploadImage(match[1],e.target.files[0]).finally(()=>{e.target.value=''})});
+document.addEventListener('submit',e=>{if(e.target.id=='medicine-form')medicineSave(e);else if(e.target.id=='user-form'){e.preventDefault();const form=e.target,fields=Object.fromEntries(new FormData(form)),permissions=blankPermissions();Object.keys(PERMISSION_AREAS).forEach(area=>PERMISSION_ACTIONS.forEach(action=>{permissions[area][action]=!!form.elements[`permission_${area}_${action}`].checked}));const body={name:fields.name,email:fields.email,permissions};if(fields.password)body.password=fields.password;const request=userEditId?api('PUT','users/'+userEditId,body):api('POST','users',body);request.then(()=>{userFormOpen=false;userEditId=null;return load()}).then(render).catch(error=>toast(error.message))}});
+document.addEventListener('change',e=>{if(e.target.name=='footer_banner_mode')document.querySelectorAll('[data-footer-option]').forEach(section=>{section.hidden=section.dataset.footerOption!=e.target.value});const match=/^echo-image-file-(\d+)$/.exec(e.target.id||'');if(match)echoUploadImage(match[1],e.target.files[0]).finally(()=>{e.target.value=''})});
 document.addEventListener('change',e=>{const i=e.target.id||'';if(i=='sv-import-file')return importServicesFile(e.target.files[0]).finally(()=>{e.target.value=''});if(i=='dx-import-file')return importDiagnosesFile(e.target.files[0]).finally(()=>{e.target.value=''});if(i=='med-import-file')return importMedicinesFile(e.target.files[0]).finally(()=>{e.target.value=''});if(i=='lab-import-file')return importLabsFile(e.target.files[0]).finally(()=>{e.target.value=''});if(i=='echo-import-file')return importEchoFile(e.target.files[0]).finally(()=>{e.target.value=''});if(e.target.dataset&&e.target.dataset.echoColor)return echoApplyColor(e.target);if(i=='echo-table-header-color')$('#echo-table-header-hex').value=e.target.value;if(i=='echo-table-border-color')$('#echo-table-border-hex').value=e.target.value;if(e.target.dataset&&e.target.dataset.echoCommand){const editor=$(`[data-echo-editor="${e.target.dataset.echoSection}"]`);if(editor){editor.focus();echoRestoreSelection(editor);if(typeof document.execCommand=='function')document.execCommand(e.target.dataset.echoCommand,false,e.target.value)}}if(i.startsWith('pf_'))pick(e.target.files[0],i.slice(3))});
 document.addEventListener('input',e=>{if(e.target.dataset&&e.target.dataset.echoEditor!=null){const hidden=e.target.closest('[data-echo-section]').querySelector('[data-echo-content]');hidden.value=e.target.innerHTML}else if(e.target.id=='echo-table-header-hex'&&/^#[0-9a-f]{6}$/i.test(e.target.value))$('#echo-table-header-color').value=e.target.value;else if(e.target.id=='echo-table-border-hex'&&/^#[0-9a-f]{6}$/i.test(e.target.value))$('#echo-table-border-color').value=e.target.value});
 document.addEventListener('mousedown',e=>{const button=e.target.closest&&e.target.closest('[data-a^="echoformat:"]'),color=e.target.closest&&e.target.closest('[data-echo-color]');if(button||color){const sectionId=button?button.dataset.a.split(':')[1]:color.dataset.echoSection,editor=$(`[data-echo-editor="${sectionId}"]`),selection=window.getSelection&&window.getSelection();if(editor&&selection&&selection.rangeCount&&editor.contains(selection.anchorNode)){echoToolbarSelection=selection.getRangeAt(0).cloneRange();echoTableSelection=echoToolbarSelection.cloneRange()}if(button)e.preventDefault()}});
@@ -989,7 +1293,7 @@ document.addEventListener('change',e=>{if(e.target.id=='doctor-analytics-from'||
 /*I18N*/
 let lang='en';try{lang=localStorage.getItem('kl')==='km'?'km':'en'}catch(e){}
 const L={'Sign in':'ចូលគណនី','Please sign in to your account.':'សូមចូលគណនីរបស់អ្នក។','Email':'អ៊ីមែល','Password':'ពាក្យសម្ងាត់','Remember me':'ចងចាំខ្ញុំ','Sign in with your clinic account.':'ចូលដោយប្រើគណនីគ្លីនិករបស់អ្នក។','First run: choose the admin email and a password (8+ characters).':'ការប្រើលើកដំបូង៖ សូមជ្រើសរើសអ៊ីមែលអ្នកគ្រប់គ្រង និងពាក្យសម្ងាត់ (យ៉ាងតិច ៨ តួអក្សរ)។',
-'Patient Care':'ការថែទាំអ្នកជំងឺ','Clinical':'គ្លីនិក','Finance & POS':'ហិរញ្ញវត្ថុ និង POS','Administration':'រដ្ឋបាល','Dashboard':'ផ្ទាំងគ្រប់គ្រង','Patients':'អ្នកជំងឺ','Appointments':'ការណាត់ជួប','Current IPD':'IPD បច្ចុប្បន្ន','Doctors':'គ្រូពេទ្យ','Chat':'ជជែក','Medicines':'ឱសថ','Services':'សេវាកម្ម','Lab Templates':'ទម្រង់ Lab','Echo Templates':'ទម្រង់អេកូ','Diagnosis':'រោគវិនិច្ឆ័យ','Prescription Template':'ទម្រង់វេជ្ជបញ្ជា','Prescription Templates':'ទម្រង់វេជ្ជបញ្ជា','Symptoms':'រោគសញ្ញា','Store':'ឃ្លាំង','NSSF':'ប.ស.ស','Report':'របាយការណ៍','Medicine Report':'របាយការណ៍ឱសថ','Address':'អាសយដ្ឋាន','Address Book':'សៀវភៅអាសយដ្ឋាន','Sample file':'ឯកសារគំរូ','Analytics':'ការវិភាគ','Doctor Analytics':'ការវិភាគគ្រូពេទ្យ','Settings':'ការកំណត់','Logout':'ចាកចេញ','Language':'ភាសា','Theme':'រូបរាង','Light':'ភ្លឺ','Dark':'ងងឹត','Close':'បិទ',
+'Patient Care':'ការថែទាំអ្នកជំងឺ','Clinical':'គ្លីនិក','Finance & POS':'ហិរញ្ញវត្ថុ និង POS','Administration':'រដ្ឋបាល','Dashboard':'ផ្ទាំងគ្រប់គ្រង','Patients':'អ្នកជំងឺ','Appointments':'ការណាត់ជួប','Current IPD':'IPD បច្ចុប្បន្ន','Doctors':'គ្រូពេទ្យ','Chat':'ជជែក','Medicines':'ឱសថ','Services':'សេវាកម្ម','Lab Templates':'ទម្រង់ Lab','Echo Templates':'ទម្រង់អេកូ','Diagnosis':'រោគវិនិច្ឆ័យ','Prescription Template':'ទម្រង់វេជ្ជបញ្ជា','Prescription Templates':'ទម្រង់វេជ្ជបញ្ជា','Symptoms':'រោគសញ្ញា','Store':'ឃ្លាំង','NSSF':'ប.ស.ស','Report':'របាយការណ៍','Medicine Report':'របាយការណ៍ឱសថ','Address':'អាសយដ្ឋាន','Address Book':'សៀវភៅអាសយដ្ឋាន','Sample file':'ឯកសារគំរូ','Leaves Form':'ទម្រង់ស្នើសុំច្បាប់ឈប់សម្រាក','Request Leaves':'ស្នើសុំច្បាប់ឈប់សម្រាក','Submit and manage staff leave requests.':'ដាក់ស្នើ និងគ្រប់គ្រងសំណើច្បាប់ឈប់សម្រាករបស់បុគ្គលិក។','Submit Request':'ដាក់ស្នើសំណើ','Leave Type':'ប្រភេទច្បាប់ឈប់សម្រាក','Employee':'បុគ្គលិក','Start Date':'ថ្ងៃចាប់ផ្តើម','End Date':'ថ្ងៃបញ្ចប់','Reason':'មូលហេតុ','Pending':'កំពុងរង់ចាំ','Approved':'បានអនុម័ត','Rejected':'បានបដិសេធ','Annual':'ប្រចាំឆ្នាំ','Sick':'ឈឺ','Personal':'ផ្ទាល់ខ្លួន','Maternity':'សម្រាលកូន','Other':'ផ្សេងៗ','No leave requests yet.':'មិនទាន់មានសំណើច្បាប់ឈប់សម្រាកទេ។','Leave request not found.':'រកមិនឃើញសំណើច្បាប់ឈប់សម្រាកទេ។','End date must not be before start date.':'ថ្ងៃបញ្ចប់មិនអាចមុនថ្ងៃចាប់ផ្តើមបានទេ។','Leave request updated.':'បានកែប្រែសំណើច្បាប់ឈប់សម្រាក។','Leave request submitted.':'បានដាក់ស្នើសំណើច្បាប់ឈប់សម្រាក។','Edit Leave Request':'កែប្រែសំណើច្បាប់ឈប់សម្រាក','Settings':'ការកំណត់','Logout':'ចាកចេញ','Language':'ភាសា','Theme':'រូបរាង','Light':'ភ្លឺ','Dark':'ងងឹត','Close':'បិទ',
 'Overview of your clinic':'ទិដ្ឋភាពទូទៅនៃគ្លីនិករបស់អ្នក','Total patients':'អ្នកជំងឺសរុប','Appointments today':'ការណាត់ជួបថ្ងៃនេះ','Daily revenue':'ចំណូលប្រចាំថ្ងៃ','Admitted patients':'អ្នកជំងឺសម្រាកពេទ្យ','Total Appointments':'ការណាត់ជួបសរុប','Patients by address':'អ្នកជំងឺតាមអាសយដ្ឋាន','Patients by age group':'អ្នកជំងឺតាមក្រុមអាយុ','Common complaints':'ពាក្យបណ្តឹងសុខភាពញឹកញាប់',
 'Appointment list':'បញ្ជីណាត់ជួប','Manage all patient appointments.':'គ្រប់គ្រងការណាត់ជួបអ្នកជំងឺទាំងអស់។','Inpatients (IPD)':'ផ្នែកអ្នកជំងឺក្នុង (IPD)','Manage all admitted patients.':'គ្រប់គ្រងអ្នកជំងឺដែលកំពុងសម្រាកពេទ្យទាំងអស់។','Current IPD patients':'អ្នកជំងឺ IPD បច្ចុប្បន្ន','Patients not yet discharged':'បញ្ជីអ្នកជំងឺដែលមិនទាន់ចាកចេញ','Manage your pharmacy list.':'គ្រប់គ្រងបញ្ជីឱសថស្ថានរបស់អ្នក។','Manage all clinic services.':'គ្រប់គ្រងសេវាកម្មគ្លីនិកទាំងអស់។','Manage lab test templates and prices.':'គ្រប់គ្រងទម្រង់ និងតម្លៃនៃការធ្វើតេស្ត Lab។','Diagnoses available when writing a visit.':'រោគវិនិច្ឆ័យដែលអាចជ្រើសរើសពេលកត់ត្រាការពិនិត្យ។','Default medicines per disease.':'ឱសថលំនាំដើមសម្រាប់ជំងឺនីមួយៗ។','Manage symptoms list for patient complaints':'គ្រប់គ្រងបញ្ជីរោគសញ្ញាសម្រាប់ពាក្យបណ្តឹងរបស់អ្នកជំងឺ','Daily visits and revenue.':'ចំនួនអ្នកមកពិនិត្យ និងចំណូលប្រចាំថ្ងៃ។','Stock status.':'ស្ថានភាពស្តុក។','Inventory value.':'តម្លៃសរុបនៃស្តុក។','Patients covered by NSSF.':'អ្នកជំងឺដែលមាន ប.ស.ស។','Stock and revenue overview':'ទិដ្ឋភាពស្តុក និងចំណូល','Appointments per doctor':'ការណាត់ជួបតាមគ្រូពេទ្យ','Stock by medicine':'ស្តុកតាមឱសថ','Revenue by day (KHR 1,000)':'ចំណូលតាមថ្ងៃ (KHR 1,000)','Doctors List':'បញ្ជីគ្រូពេទ្យ','Internal messages':'សារផ្ទៃក្នុង',
 'Add':'បន្ថែម','Add item':'បន្ថែមទំនិញ','Add Service':'បន្ថែមសេវាកម្ម','Edit Service':'កែប្រែសេវាកម្ម','Service name':'ឈ្មោះសេវាកម្ម','Description':'ការពិពណ៌នា','e.g. Facial treatment':'ឧ. សេវាថែរក្សាផ្ទៃមុខ','e.g. 60000':'ឧ. 60000','Enter service details':'បញ្ចូលព័ត៌មានលម្អិតអំពីសេវាកម្ម','Delete':'លុប','Service not found':'រកមិនឃើញសេវាកម្ម','Clinic Settings':'ការកំណត់គ្លីនិក','Manage your clinic information.':'គ្រប់គ្រងព័ត៌មានមូលដ្ឋានរបស់គ្លីនិកអ្នក។','Preferences':'ចំណូលចិត្ត','Logo':'និមិត្តសញ្ញា','Bank QR code':'កូដ QR ធនាគារ','Delete image':'លុបរូបភាព','Print settings':'ការកំណត់ការបោះពុម្ព','Clinic banner':'បដាគ្លីនិក','Recommended: 1300×200 px':'ទំហំណែនាំ៖ 1300×200 px','Show clinic name':'បង្ហាញឈ្មោះគ្លីនិក','Show address':'បង្ហាញអាសយដ្ឋាន','Show phone number':'បង្ហាញលេខទូរស័ព្ទ','Clinic name':'ឈ្មោះគ្លីនិក','Specialty':'ឯកទេស','Phone numbers':'លេខទូរស័ព្ទ','Currency':'រូបិយប័ណ្ណ','Exchange rate (KHR per $1)':'អត្រាប្តូរប្រាក់ (៛ ក្នុង $1)','Riel (KHR)':'រៀល (KHR)','US dollar (USD)':'ដុល្លារអាមេរិក (USD)','Doctor Settings':'ការកំណត់គ្រូពេទ្យ','Change password':'ប្តូរពាក្យសម្ងាត់','Current password':'ពាក្យសម្ងាត់បច្ចុប្បន្ន','New password':'ពាក្យសម្ងាត់ថ្មី','Saved':'បានរក្សាទុក','Password changed':'បានប្តូរពាក្យសម្ងាត់','Current password is wrong':'ពាក្យសម្ងាត់បច្ចុប្បន្នមិនត្រឹមត្រូវ','Photo':'រូបភាព','Remove picture':'លុបរូបភាព','Uploading…':'កំពុងផ្ទុកឡើង…','Use a JPG, PNG or WebP picture':'សូមប្រើរូបភាព JPG, PNG ឬ WebP','Picture is too large (max 2 MB)':'រូបភាពធំពេក (អតិបរមា 2 MB)','File is not a valid picture':'ឯកសារនេះមិនមែនជារូបភាពត្រឹមត្រូវទេ','Upload failed':'ផ្ទុកឡើងមិនបានសម្រេច','Add items and manage stock and prices.':'បន្ថែមទំនិញ និងគ្រប់គ្រងស្តុក និងតម្លៃ។','Add Patient':'បន្ថែមអ្នកជំងឺ','Add Doctor':'បន្ថែមគ្រូពេទ្យ','Create Template':'បង្កើតទម្រង់','Edit':'កែប្រែ','Save':'រក្សាទុក','Cancel':'បោះបង់','Export Excel':'នាំចេញ Excel','Discharge':'ឱ្យចេញពីមន្ទីរពេទ្យ','Discharged':'បានចេញពីមន្ទីរពេទ្យ','Previous':'មុន','Next':'បន្ទាប់','Checkout':'គិតលុយ','Cash':'សាច់ប្រាក់','Bank':'ធនាគារ','Total':'សរុប','Send':'ផ្ញើ',
