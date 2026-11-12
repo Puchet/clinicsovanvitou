@@ -7352,7 +7352,13 @@ body.sbc aside {
 .patient-table-wrap {
   width: 100%;
   min-width: 0;
-  overflow-x: hidden;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.patient-list-primary-tools,
+.patient-list-actions {
+  display: contents;
 }
 table.ptb {
   width: 100%;
@@ -7463,6 +7469,89 @@ table.ptb .pn {
 }
 table.ptb .pn > div {
   min-width: 70px;
+}
+@media (max-width: 820px) {
+  .patient-list-primary-tools,
+  .patient-list-actions {
+    display: flex;
+    flex: 1 0 100%;
+    min-width: 0;
+    gap: 8px;
+  }
+  .patient-list-primary-tools {
+    align-items: stretch;
+  }
+  .patient-list-primary-tools #q {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .patient-list-primary-tools > .btn {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+  .patient-list-toolbar > .tabs {
+    flex: 1 0 100%;
+    min-width: 0;
+    justify-content: flex-start;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    scrollbar-width: thin;
+  }
+  .patient-list-toolbar > .tabs button {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+  .patient-list-actions {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    padding-bottom: 2px;
+    scrollbar-width: thin;
+  }
+  .patient-list-actions > .btn {
+    flex: 0 0 auto;
+    min-height: 40px;
+    white-space: nowrap;
+  }
+  .patient-table-wrap {
+    max-width: 100%;
+  }
+  table.ptb {
+    width: 1320px;
+    min-width: 1320px;
+    table-layout: fixed;
+  }
+  table.ptb th {
+    min-width: 64px;
+    overflow-wrap: normal;
+    white-space: nowrap;
+  }
+  table.ptb td {
+    min-width: 64px;
+    overflow-wrap: anywhere;
+    word-break: normal;
+  }
+  table.ptb .pt-col-date {
+    min-width: 78px;
+  }
+  table.ptb .pt-col-name {
+    min-width: 145px;
+  }
+  table.ptb .pt-col-type,
+  table.ptb .pt-col-mr {
+    min-width: 82px;
+  }
+  table.ptb .pt-col-followup {
+    min-width: 130px;
+  }
+  table.ptb .pt-col-pay {
+    min-width: 132px;
+  }
+  table.ptb .pt-col-phone {
+    min-width: 104px;
+  }
+  table.ptb .pt-col-act {
+    min-width: 110px;
+  }
 }
 .pl {
   display: none;
