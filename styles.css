@@ -164,6 +164,51 @@ main {
   height: 34px;
   cursor: pointer;
 }
+.language-picker {
+  position: relative;
+  flex: none;
+}
+.top .language-picker-trigger {
+  font-size: 17px;
+}
+.language-picker-menu {
+  position: absolute;
+  z-index: 20;
+  top: calc(100% + 8px);
+  right: 0;
+  display: grid;
+  min-width: 170px;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid var(--bd);
+  border-radius: 10px;
+  background: var(--cd);
+  box-shadow: 0 8px 24px #0002;
+}
+.language-picker-menu[hidden] {
+  display: none;
+}
+.top .language-picker-menu button {
+  width: 100%;
+  height: auto;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  text-align: left;
+  font-size: 13px;
+}
+.top .language-picker-menu button:hover,
+.top .language-picker-menu button[aria-pressed="true"] {
+  background: var(--hv);
+  color: var(--tx);
+}
+@media (max-width: 560px) {
+  .top {
+    gap: 8px;
+    padding: 0 10px;
+  }
+}
 #v {
   flex: 1;
   overflow: auto;
@@ -6788,6 +6833,58 @@ table.pk th {
 table.pk.full {
   width: 100%;
 }
+#pa .income-print-period {
+  margin: 0 0 4mm;
+  text-align: center;
+  font-size: 9pt;
+}
+#pa .income-print-totals {
+  display: flex;
+  justify-content: space-between;
+  gap: 8mm;
+  margin-bottom: 3mm;
+  font-size: 10pt;
+  font-weight: 600;
+}
+#pa .income-print-table {
+  width: 100%;
+  border-collapse: collapse;
+  color: #000;
+  font-size: 9pt;
+}
+#pa .income-print-table thead {
+  display: table-header-group;
+}
+#pa .income-print-table tr {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+#pa .income-print-table th:first-child,
+#pa .income-print-table td:first-child {
+  width: 24mm;
+  white-space: nowrap;
+}
+#pa .income-print-table th:nth-child(4),
+#pa .income-print-table td:nth-child(4) {
+  width: 18mm;
+  white-space: nowrap;
+}
+#pa .income-print-table th,
+#pa .income-print-table td {
+  border: 0.25mm solid #555;
+  padding: 1.5mm 1mm;
+}
+#pa .income-print-table th {
+  background: #f0f3f8;
+  color: #000 !important;
+  font-weight: 700;
+  text-align: left;
+  print-color-adjust: exact;
+}
+#pa .income-print-table .income-print-money {
+  text-align: right;
+  white-space: nowrap;
+}
 @media print {
   body > *:not(#pa) {
     display: none !important;
@@ -7179,6 +7276,29 @@ table.ptb td {
   cursor: pointer;
   text-decoration: none;
 }
+.patient-unpaid-cell {
+  display: grid;
+  justify-items: center;
+  gap: 3px;
+}
+.patient-unpaid-remark {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+  max-width: 180px;
+  font-size: 11px;
+  text-align: left;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.patient-unpaid-remark-edit {
+  flex: 0 0 auto;
+  border: 0;
+  padding: 0 2px;
+  background: transparent;
+  color: #2563eb;
+  cursor: pointer;
+}
 .paid {
   color: #16a34a;
   font-weight: 600;
@@ -7272,6 +7392,7 @@ table.ptb .pt-col-nat {
   width: 5%;
 }
 table.ptb .pt-col-type,
+table.ptb .pt-col-roomBed,
 table.ptb .pt-col-age,
 table.ptb .pt-col-sex,
 table.ptb .pt-col-mr {
@@ -10291,6 +10412,14 @@ table.ipdt td {
   text-align: right;
   white-space: nowrap;
   font-weight: 600;
+}
+.income-ledger th:nth-child(5),
+.income-ledger td:nth-child(5) {
+  text-align: center;
+}
+.income-ledger th:nth-child(4),
+.income-ledger td:nth-child(4) {
+  text-align: center;
 }
 .report-delete {
   min-width: 28px;

@@ -55,7 +55,14 @@
             </div>
         </aside>
         <main>
-            <div class="top"><button class="bg" data-a="menu">☰</button><span id="tt"></span><button data-a="theme"
+            <div class="top"><button class="bg" data-a="menu">☰</button><span id="tt"></span><div class="language-picker"
+                    translate="no"><button type="button" class="language-picker-trigger" data-a="langmenu"
+                        aria-label="Select language" title="Select language" aria-haspopup="true"
+                        aria-expanded="false">🌐</button><div class="language-picker-menu" role="group"
+                        aria-label="Select language" hidden><button type="button" data-a="lang:en"
+                            aria-pressed="false">English</button><button type="button" data-a="lang:km"
+                            aria-pressed="false">ខ្មែរ</button><button type="button" data-a="lang:both"
+                            aria-pressed="false">ខ្មែរ + English</button></div></div><button data-a="theme"
                     title="Theme">◐</button></div>
             <div id="v"></div>
         </main>
@@ -67,7 +74,8 @@
     <script>
         const privateIPv4 = /^(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})$/.test(location.hostname);
         const localHost = location.hostname === 'localhost' || location.hostname === '127.0.0.1' || location.hostname.endsWith('.local') || privateIPv4;
-        window.API_BASE = localHost ? '' : 'https://clinicsovanvitou-backend-67e0.onrender.com';
+        const sameOriginApi = localHost || location.hostname.endsWith('.synology.me');
+        window.API_BASE = sameOriginApi ? '' : 'https://clinicsovanvitou-backend-67e0.onrender.com';
     </script>
     <script src="app.js"></script>
     <script src="patient.js"></script>

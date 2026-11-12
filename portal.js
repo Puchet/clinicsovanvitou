@@ -5,6 +5,7 @@
   const token = location.hash.slice(1);
   const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
   const display = (value) => value === '' || value == null ? 'N/A' : String(value);
+  const privateDataKey = /(^id$|image|photo|signature|token|password|created_by)/i;
   const recordKinds = {
     medical: 'Medical record', mdhistory: 'Medical history', beu: 'Before / after',
     schedule: 'Treatment schedule', treatment: 'Treatment follow-up', consultation: 'Consultation',
@@ -14,15 +15,37 @@
     allergy: 'Allergy', vaccination: 'Vaccination', referral: 'Referral', diagnosis_history: 'Diagnosis',
     laborder: 'Lab order', imagingorder: 'Imaging order', vitals: 'Vitals'
   };
+  const structuredValue = (value) => {
+    if (typeof value !== 'string') return value;
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === 'object' ? parsed : value;
+    } catch (error) {
+      return value;
+    }
+  };
+  const valueHtml = (value) => {
+    value = structuredValue(value);
+    if (Array.isArray(value)) {
+      return `<ul class="portal-value-list">${value.map((item) => `<li>${valueHtml(item)}</li>`).join('')}</ul>`;
+    }
+    if (value && typeof value === 'object') {
+      const fields = Object.entries(value).filter(([key]) => !privateDataKey.test(key));
+      return fields.length
+        ? `<div class="portal-value-object">${fields.map(([key, item]) => `<div class="portal-value-field"><b>${esc(key.replace(/[_-]+/g, ' '))}:</b><span>${valueHtml(item)}</span></div>`).join('')}</div>`
+        : 'N/A';
+    }
+    return esc(display(value));
+  };
   const safeData = (data) => Object.entries(data && typeof data === 'object' && !Array.isArray(data) ? data : {})
-    .filter(([key]) => !/(^id$|image|photo|signature|token|password|created_by)/i.test(key))
-    .map(([key, value]) => [key.replace(/[_-]+/g, ' '), typeof value === 'object' ? JSON.stringify(value) : display(value)])
-    .filter(([, value]) => value !== 'N/A');
+    .filter(([key]) => !privateDataKey.test(key))
+    .map(([key, value]) => [key.replace(/[_-]+/g, ' '), structuredValue(value)])
+    .filter(([, value]) => value !== null && value !== undefined && value !== '' && value !== 'N/A');
   const itemCard = (item, kind) => {
     const data = item.data || {};
     const title = item.title || data.test_name || data.dx || data.diagnosis || recordKinds[kind] || kind;
     const meta = safeData(data);
-    return `<article class="portal-item"><h3>${esc(title)}</h3><time>${esc(String(item.date || '').replace('T', ' '))} · ${esc(recordKinds[kind] || kind)}</time>${item.notes ? `<p>${esc(item.notes)}</p>` : ''}${meta.length ? `<dl>${meta.map(([key, value]) => `<dt>${esc(key)}</dt><dd>${esc(value)}</dd>`).join('')}</dl>` : ''}</article>`;
+    return `<article class="portal-item"><h3>${esc(title)}</h3><time>${esc(String(item.date || '').replace('T', ' '))} · ${esc(recordKinds[kind] || kind)}</time>${item.notes ? `<p>${esc(item.notes)}</p>` : ''}${meta.length ? `<dl>${meta.map(([key, value]) => `<dt>${esc(key)}</dt><dd>${valueHtml(value)}</dd>`).join('')}</dl>` : ''}</article>`;
   };
   const listSection = (items, kind) => items.length
     ? `<div class="portal-list">${items.map((item) => itemCard(item, kind || item.kind)).join('')}</div>`
@@ -35,7 +58,7 @@
     const vitals = records.filter((record) => record.kind === 'vitals');
     const latestVitals = vitals[0] && vitals[0].data || {};
     const allergyRecords = records.filter((record) => record.kind === 'allergy');
-    const allergySummary = allergyRecords.length ? allergyRecords.map((record) => record.title || record.data?.allergy || record.notes || safeData(record.data).map(([, value]) => value).join(', ')).filter(Boolean).join(', ') : 'No known allergies recorded';
+    const allergySummary = allergyRecords.length ? allergyRecords.map((record) => record.title || record.data?.allergy || record.notes || safeData(record.data).map(([, value]) => typeof value === 'object' ? JSON.stringify(value) : display(value)).join(', ')).filter(Boolean).join(', ') : 'No known allergies recorded';
     const general = `<div class="portal-grid">
       <section class="portal-card"><h2>Personal Information</h2><div class="portal-info">
         <div><span>Full Name</span><b>${esc(display(patient.name))}</b></div><div><span>Nationality</span><b>${patient.khmer ? 'Cambodian' : 'N/A'}</b></div>

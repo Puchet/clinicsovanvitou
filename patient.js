@@ -6,9 +6,15 @@ const ageYears = (p) => { const a = +p.age || 0; return p.age_unit == 'M' ? a / 
 function fmtAge(p) {
   let a = +p.age || 0, u = p.age_unit || 'Y';
   if (p.dob) { const d = new Date(p.dob); if (!isNaN(d)) { const n = new Date(); let m = (n.getFullYear() - d.getFullYear()) * 12 + n.getMonth() - d.getMonth(); if (n.getDate() < d.getDate()) m--; if (m >= 0) { if (m < 12) { a = m; u = 'M'; } else { a = Math.floor(m / 12); u = 'Y'; } } } }
-  const km = lang == 'km';
-  if (u == 'M' && a >= 12) return Math.floor(a / 12) + (km ? ' ឆ្នាំ' : ' y') + (a % 12 ? ' ' + a % 12 + (km ? ' ខែ' : ' m') : '');
-  return a + ' ' + (u == 'M' ? (km ? 'ខែ' : 'm') : u == 'D' ? (km ? 'ថ្ងៃ' : 'd') : (km ? 'ឆ្នាំ' : 'y'));
+  const km = lang != 'en', both = lang == 'both';
+  if (u == 'M' && a >= 12) {
+    const years = Math.floor(a / 12), months = a % 12;
+    const khmer = years + ' ឆ្នាំ' + (months ? ' ' + months + ' ខែ' : '');
+    const english = years + ' y' + (months ? ' ' + months + ' m' : '');
+    return both ? `${khmer} (${english})` : km ? khmer : english;
+  }
+  const unit = u == 'M' ? ['ខែ', 'm'] : u == 'D' ? ['ថ្ងៃ', 'd'] : ['ឆ្នាំ', 'y'];
+  return both ? `${a} ${unit[0]} (${a} ${unit[1]})` : `${a} ${unit[km ? 0 : 1]}`;
 }
 const fmtSex = (s) => (s == 'M' ? 'Male' : s == 'F' ? 'Female' : s || '');
 
@@ -111,8 +117,19 @@ function printDoc(title, html, options = {}) {
   const printTemplateFooter = footerElements ? `<div class="print-template-elements print-template-elements-footer">${footerElements}</div>` : '';
   let pa = $('#pa'); if (!pa) { pa = document.createElement('div'); pa.id = 'pa'; document.body.appendChild(pa); }
   pa.innerHTML = `<div class="print-document">${head || ''}${customHeader}${printTemplateHeader}${title ? `<h3>${esc(title)}</h3>` : ''}<main class="print-document-content">${html}</main>${footer}${printTemplateFooter}${footerContent}</div>${templateStyles}`;
-  if (options.printImmediately) window.print();
-  else setTimeout(() => window.print(), 60);
+  const startPrint = () => {
+    const qr = pa.querySelector('.rx-print-portal img');
+    const decoding = qr && typeof qr.decode == 'function' ? qr.decode() : null;
+    if (decoding && typeof decoding.then == 'function') {
+      decoding.then(() => window.print()).catch((error) => {
+        console.error('Could not decode the patient portal QR before printing', error);
+        toast('Patient portal QR could not be prepared for printing');
+        window.print();
+      });
+    } else window.print();
+  };
+  if (options.printImmediately) startPrint();
+  else setTimeout(startPrint, 60);
 }
 const kv = (rows) => `<table class="pk">${rows.filter((r) => r[1] !== '' && r[1] != null).map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')}</table>`;
 const ptBlock = (p) => kv([['Name', p.name], ['Latin name', p.latin_name], ['ID', p.id], ['Age', fmtAge(p)], ['Sex', fmtSex(p.sex)], ['Phone', p.phone], ['Address', p.addr], ['NSSF ID', p.nssf_id], ['National ID', p.national_id]]);
@@ -210,7 +227,7 @@ const CARE_MODULES = {
 };
 const VSF = [['t', 'Temperature (°C)'], ['hr', 'Heart rate (bpm)'], ['rr', 'Respiratory rate (bpm)'], ['bp', 'Blood pressure (mmHg)'], ['spo2', 'SpO2 (%)'], ['p', 'Pulse (P)'], ['w', 'Weight (kg)'], ['h', 'Height (cm)']];
 const COLORS = ['#e5e7eb', '#ef4444', '#f97316', '#f59e0b', '#22c55e', '#3b82f6', '#6366f1', '#a855f7', '#ec4899'];
-let pdId = null, ptab = 'vitals', recs = [], pdDate = '', investigationQuery = '', investigationSelection = new Set(), paidHistoryView = 'table', labPickerQuery = '', labPickerSelection = new Set(), labSubtab = 'results', echoSubtab = 'reports', echoPageSize = 'A4', echoTemplateId = '', echoPreviewZoom = 81, documentTypeMenuOpen = false, documentTypeKey = '';
+let pdId = null, ptab = 'vitals', recs = [], pdDate = '', investigationQuery = '', investigationSelection = new Set(), paidHistoryView = 'table', labPickerQuery = '', labPickerSelection = new Set(), labResultDraft = null, labSubtab = 'results', echoSubtab = 'reports', echoPageSize = 'A4', echoTemplateId = '', echoPreviewZoom = 81, documentTypeMenuOpen = false, documentTypeKey = '';
 let rxEntryRows = [], rxEntrySearch = '', rxEntrySearchOpen = false, rxTemplatePickerOpen = false;
 let medlistItems = [], medlistTab = 'medicines', medlistQuery = '';
 let medlistDispenseItems = [], medlistDispenseQuery = '';
@@ -223,8 +240,8 @@ const curPt = () => D.pt.find((x) => x.id == pdId);
 const jd = (r) => { try { return JSON.parse(r.data || '{}'); } catch { return {}; } };
 async function loadRecs() {
   recs = await api('GET', 'records?patient_id=' + pdId + '&limit=5000');
-  D.billing = D.billing.filter((r) => String(r.patient_id) != String(pdId) || !['schedule', 'payment', 'investigation', 'prescription', 'medlist'].includes(r.kind))
-    .concat(recs.filter((r) => ['schedule', 'payment', 'investigation', 'prescription', 'medlist'].includes(r.kind)));
+  D.billing = D.billing.filter((r) => String(r.patient_id) != String(pdId) || !['schedule', 'payment', 'investigation', 'lab', 'prescription', 'medlist'].includes(r.kind))
+    .concat(recs.filter((r) => ['schedule', 'payment', 'investigation', 'lab', 'prescription', 'medlist'].includes(r.kind)));
 }
 async function openPatient(id) { pdId = id; ptab = 'vitals'; pdDate = ''; investigationQuery = ''; investigationSelection.clear(); rt = 'pd'; try { sessionStorage.setItem('currentPatientId', String(id)); sessionStorage.setItem('currentPatientTab', ptab); } catch (e) { /* retain the current view */ } await loadRecs(); render(); }
 async function restorePatientPage() {
@@ -259,7 +276,7 @@ R.pd = function () {
   return top + ctl + head + body;
 };
 function recCard(r) {
-  const d = jd(r), act = r.kind == 'investigation' ? `<div class="ra"><button class="btn s r" data-a="rdel:${r.id}" title="Delete request">✕</button></div>` : `<div class="ra">${r.kind == 'laborder' ? `<button class="btn s" data-a="contractprint:${r.id}" title="${esc(T('Print'))}" aria-label="${esc(T('Print'))}">${printerIcon()}</button>` : ''}${r.kind == 'vaccination' ? `<button class="btn s" data-a="vaxprint:${r.id}" title="${esc(T('Print'))}" aria-label="${esc(T('Print'))}">${printerIcon()}</button>` : ''}${r.kind == 'prescription' ? `<button class="btn s" data-a="rxprint:${r.id}" title="បោះពុម្ព / Print" aria-label="បោះពុម្ព / Print">${printerIcon()}</button>` : ''}${r.kind == 'documents' && ['referral', 'referral-letter'].includes(d.document_type) ? `<button class="btn s" data-a="patient-referral-print:${r.id}" title="${esc(T('Print'))}" aria-label="${esc(T('Print'))}">${printerIcon()}</button>` : ''}${r.kind == 'documents' && d.document_type == 'hospital' ? `<button class="btn s" data-a="patient-hospital-print:${r.id}" title="${esc(T('Print'))}" aria-label="${esc(T('Print'))}">${printerIcon()}</button>` : ''}${r.kind == 'documents' && d.document_type == 'treatment' ? `<button class="btn s" data-a="patient-treatment-print:${r.id}" title="${esc(T('Print'))}" aria-label="${esc(T('Print'))}">${printerIcon()}</button>` : ''}${r.kind == 'documents' && d.document_type == 'health' ? `<button class="btn s" data-a="patient-health-print:${r.id}" title="${esc(T('Print'))}" aria-label="${esc(T('Print'))}">${printerIcon()}</button>` : ''}${r.kind == 'documents' && d.document_type == 'birth' ? `<button class="btn s" data-a="patient-birth-print:${r.id}" title="${esc(T('Print'))}" aria-label="${esc(T('Print'))}">${printerIcon()}</button>` : ''}${r.kind == 'documents' && d.document_type == 'medical-rest-a' ? `<button class="btn s" data-a="patient-medical-rest-a-print:${r.id}" title="${esc(T('Print'))}" aria-label="${esc(T('Print'))}">${printerIcon()}</button>` : ''}${r.kind == 'documents' && d.document_type == 'prescription-note' ? `<button class="btn s" data-a="patient-prescription-note-print:${r.id}" title="${esc(T('Print'))}" aria-label="${esc(T('Print'))}">${printerIcon()}</button>` : ''}${r.kind == 'consultation' && d.consultation_mode == 'center' ? `<button class="btn s" data-a="centerprint-record:${r.id}" title="បោះពុម្ព" aria-label="បោះពុម្ព">${printerIcon()}</button>` : ''}<button class="btn s" data-a="redit:${r.id}">Edit</button><button class="btn s r" data-a="rdel:${r.id}">✕</button></div>`, when = esc((r.date || '').replace('T', ' '));
+  const d = jd(r), attachment = d.attachment, act = r.kind == 'investigation' ? `<div class="ra"><button class="btn s r" data-a="rdel:${r.id}" title="Delete request">✕</button></div>` : `<div class="ra">${attachment ? `<button class="btn s" data-a="patient-document-view:${r.id}" title="${esc(T('View document'))}" aria-label="${esc(T('View document'))}">👁 ${esc(T('View'))}</button><button class="btn s" data-a="patient-document-download:${r.id}" title="${esc(attachment.name || 'Download document')}" aria-label="Download ${esc(attachment.name || 'document')}">↓ ${esc(attachment.name || 'Download')}</button>` : ''}${r.kind == 'laborder' ? `<button class="btn s" data-a="contractprint:${r.id}" title="${esc(T('Print'))}" aria-label="${esc(T('Print'))}">${printerIcon()}</button>` : ''}${r.kind == 'vaccination' ? `<button class="btn s" data-a="vaxprint:${r.id}" title="${esc(T('Print'))}" aria-label="${esc(T('Print'))}">${printerIcon()}</button>` : ''}${r.kind == 'prescription' ? `<button class="btn s" data-a="rxprint:${r.id}" title="បោះពុម្ព / Print" aria-label="បោះពុម្ព / Print">${printerIcon()}</button>` : ''}${r.kind == 'documents' && ['referral', 'referral-letter'].includes(d.document_type) ? `<button class="btn s" data-a="patient-referral-print:${r.id}" title="${esc(T('Print'))}" aria-label="${esc(T('Print'))}">${printerIcon()}</button>` : ''}${r.kind == 'documents' && d.document_type == 'hospital' ? `<button class="btn s" data-a="patient-hospital-print:${r.id}" title="${esc(T('Print'))}" aria-label="${esc(T('Print'))}">${printerIcon()}</button>` : ''}${r.kind == 'documents' && d.document_type == 'treatment' ? `<button class="btn s" data-a="patient-treatment-print:${r.id}" title="${esc(T('Print'))}" aria-label="${esc(T('Print'))}">${printerIcon()}</button>` : ''}${r.kind == 'documents' && d.document_type == 'health' ? `<button class="btn s" data-a="patient-health-print:${r.id}" title="${esc(T('Print'))}" aria-label="${esc(T('Print'))}">${printerIcon()}</button>` : ''}${r.kind == 'documents' && d.document_type == 'birth' ? `<button class="btn s" data-a="patient-birth-print:${r.id}" title="${esc(T('Print'))}" aria-label="${esc(T('Print'))}">${printerIcon()}</button>` : ''}${r.kind == 'documents' && d.document_type == 'medical-rest-a' ? `<button class="btn s" data-a="patient-medical-rest-a-print:${r.id}" title="${esc(T('Print'))}" aria-label="${esc(T('Print'))}">${printerIcon()}</button>` : ''}${r.kind == 'documents' && d.document_type == 'prescription-note' ? `<button class="btn s" data-a="patient-prescription-note-print:${r.id}" title="${esc(T('Print'))}" aria-label="${esc(T('Print'))}">${printerIcon()}</button>` : ''}${r.kind == 'consultation' && d.consultation_mode == 'center' ? `<button class="btn s" data-a="centerprint-record:${r.id}" title="បោះពុម្ព" aria-label="បោះពុម្ព">${printerIcon()}</button>` : ''}<button class="btn s" data-a="redit:${r.id}">Edit</button><button class="btn s r" data-a="rdel:${r.id}">✕</button></div>`, when = esc((r.date || '').replace('T', ' '));
   if (r.kind == 'prescription' && Array.isArray(d.medicines)) return `<article class="rc rx-record">${act}<div class="mu">${esc((r.date || '').slice(0, 10))}</div><b>${esc(d.diagnosis || r.title || 'វេជ្ជបញ្ជា')}</b>${d.doctor ? `<div class="mu">វេជ្ជបណ្ឌិត៖ ${esc(d.doctor)}</div>` : ''}<div class="rx-record-medicines">${d.medicines.map((medicine) => `<div><span><b>${esc(medicine.name)}</b><small>${esc([medicine.morning && `ព្រឹក៖ ${medicine.morning}`, medicine.noon && `ថ្ងៃត្រង់៖ ${medicine.noon}`, medicine.evening && `ល្ងាច៖ ${medicine.evening}`, medicine.night && `យប់៖ ${medicine.night}`, medicine.duration && `រយៈពេល៖ ${medicine.duration}`, medicine.instruction].filter(Boolean).join(' · '))}</small></span><span>${K((+medicine.price || 0) * (+medicine.quantity || 0))}${+medicine.quantity ? `<small>ចំនួន៖ ${esc(medicine.quantity)}</small>` : ''}</span></div>`).join('')}</div>${r.notes ? `<div class="mu">${esc(r.notes)}</div>` : ''}</article>`;
   if (r.kind == 'medlist' && Array.isArray(d.items)) {
     const total = d.items.reduce((sum, item) => sum + (Number(item.price) || 0) * (Number(item.quantity) || 1), 0);
@@ -484,7 +501,7 @@ function patientDocumentsPanel(records) {
   const menu = documentTypeMenuOpen
     ? `<div class="patient-documents-type-menu" role="menu">${PATIENT_DOCUMENT_TYPES.map(([key, label, icon]) => `<button type="button" class="patient-documents-type-option" role="menuitem" data-a="patient-doctype:${key}"><span aria-hidden="true">${icon}</span>${esc(label)}</button>`).join('')}</div>`
     : '';
-  return `<section class="patient-documents"><header class="patient-documents-header"><div><h2>ឯកសារ/Documents</h2></div><div class="patient-documents-actions"><div class="patient-documents-type"><button type="button" class="btn patient-documents-type-button" data-a="patient-doctype-menu" aria-haspopup="menu" aria-expanded="${documentTypeMenuOpen}">${esc(selectedType ? selectedType[1] : 'ឯកសារមានប្រភេទ')}<span aria-hidden="true">⌄</span></button></div><button type="button" class="btn p patient-documents-upload" data-a="patient-document-upload"><span aria-hidden="true">↥</span> បញ្ចូល</button>${menu}</div></header><div class="patient-documents-list">${records.map(recCard).join('') || `<p class="emp">${T('Nothing here yet.')}</p>`}</section>`;
+  return `<section class="patient-documents"><header class="patient-documents-header"><div><h2>ឯកសារ/Documents</h2></div><div class="patient-documents-actions"><div class="patient-documents-type"><button type="button" class="btn patient-documents-type-button" data-a="patient-doctype-menu" aria-haspopup="menu" aria-expanded="${documentTypeMenuOpen}">${esc(selectedType ? selectedType[1] : 'ឯកសារមានប្រភេទ')}<span aria-hidden="true">⌄</span></button></div><button type="button" class="btn p patient-documents-upload" data-a="patient-document-upload"><span aria-hidden="true">↥</span> បញ្ចូល</button>${menu}</div><input type="file" id="patient-document-file" hidden aria-label="Choose a patient document"></header><div class="patient-documents-list">${records.map(recCard).join('') || `<p class="emp">${T('Nothing here yet.')}</p>`}</section>`;
 }
 const consultationSymptoms = [
   ['fever', 'គ្រុនក្តៅ'], ['cough', 'ក្អក'], ['headache', 'ឈឺក្បាល'], ['abdominal_pain', 'ឈឺពោះ'],
@@ -1839,18 +1856,76 @@ function patientTreatmentPrint(data, date = ymd(new Date())) {
   </style><article class="treatment-discharge-print"><img class="treatment-discharge-template" src="/assets/treatment-discharge-form-template-v2.png" alt="">${values}</article>`;
   printDoc('', html, { omitClinicBranding: true });
 }
-function patientDocumentUploadForm() {
-  const selectedType = PATIENT_DOCUMENT_TYPES.find(([key]) => key == documentTypeKey);
-  const title = selectedType ? selectedType[1] : '';
-  openForm(T('Upload Document'), `<div class="g2">${fIn(T('Document name'), 'title', title, 'text', 'required')}${fIn(T('Date'), 'date', ymd(new Date()), 'date')}</div>${fTa(T('Notes'), 'notes', '', 3)}${imgField(T('Document image'), 'image', '', T('Remove picture'))}`, async (form) => {
-    const data = new FormData(form), image = data.get('image');
-    if (!image) throw new Error(T('Select a document image'));
-    await api('POST', 'records', { patient_id: pdId, kind: 'documents', title: data.get('title'), date: data.get('date'), notes: data.get('notes'), image, data: selectedType ? { document_type: selectedType[0] } : {} });
-    await loadRecs();
-    render();
-    toast(T('Saved'));
-  }, { cls: 'wide lab-upload-form', ok: T('Save') });
-  $('#mf [name="title"]').required = true;
+async function uploadPatientDocument(file) {
+  if (!file || !pdId) return;
+  const headers = {
+    'Content-Type': 'application/octet-stream',
+    'X-Patient-Document-Patient': String(pdId),
+    'X-Patient-Document-Name': encodeURIComponent(file.name),
+    'X-Patient-Document-Date': ymd(new Date()),
+    'X-Patient-Document-Type': documentTypeKey || '',
+    ...(tok ? { Authorization: 'Bearer ' + tok } : {}),
+  };
+  const response = await fetch(API_BASE + '/api/document-uploads', { method: 'POST', headers, body: file });
+  let result = null;
+  try { result = await response.json(); } catch (error) { /* non-JSON error response */ }
+  if (response.status == 401 && tok) logout();
+  if (response.status == 404) throw new Error(T('Patient document upload API not found. Restart or redeploy the backend, then try again.'));
+  if (!response.ok) throw new Error(result && result.error || T('Request failed'));
+  await loadRecs();
+  render();
+  toast(T('Saved'));
+}
+async function downloadPatientDocument(recordId) {
+  const record = recs.find((item) => String(item.id) == String(recordId)), attachment = record && jd(record).attachment;
+  if (!attachment || !attachment.id) return toast(T('Document not found'));
+  const response = await fetch(API_BASE + '/api/document-uploads/' + encodeURIComponent(attachment.id) + '?download=1', { headers: tok ? { Authorization: 'Bearer ' + tok } : {} });
+  if (!response.ok) {
+    let result = null;
+    try { result = await response.json(); } catch (error) { /* non-JSON error response */ }
+    if (response.status == 401 && tok) logout();
+    throw new Error(result && result.error || T('Request failed'));
+  }
+  const objectUrl = URL.createObjectURL(await response.blob()), link = document.createElement('a');
+  link.href = objectUrl;
+  link.download = attachment.name || 'document';
+  link.style.display = 'none';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+}
+async function viewPatientDocument(recordId) {
+  const record = recs.find((item) => String(item.id) == String(recordId)), attachment = record && jd(record).attachment;
+  if (!attachment || !attachment.id) return toast(T('Document not found'));
+  const preview = window.open('', '_blank');
+  if (!preview) throw new Error(T('Allow pop-ups to preview this document'));
+  preview.opener = null;
+  preview.document.title = T('Loading document');
+  preview.document.body.textContent = T('Loading document');
+  try {
+    const response = await fetch(API_BASE + '/api/document-uploads/' + encodeURIComponent(attachment.id) + '?view=1', { headers: tok ? { Authorization: 'Bearer ' + tok } : {} });
+    if (!response.ok) {
+      let result = null;
+      try { result = await response.json(); } catch (error) { /* non-JSON error response */ }
+      if (response.status == 401 && tok) logout();
+      throw new Error(result && result.error || T('Request failed'));
+    }
+    const responseMime = (response.headers.get('content-type') || '').split(';')[0].toLowerCase();
+    const extension = (attachment.name || '').split('.').pop().toLowerCase();
+    const inferredMime = { pdf: 'application/pdf', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif' }[extension];
+    const mime = responseMime === 'application/octet-stream' ? inferredMime : responseMime;
+    if (mime !== 'application/pdf' && !/^image\/(png|jpeg|webp|gif)$/.test(mime || '')) {
+      preview.close();
+      return downloadPatientDocument(recordId);
+    }
+    const url = URL.createObjectURL(new Blob([await response.arrayBuffer()], { type: mime }));
+    preview.addEventListener('beforeunload', () => URL.revokeObjectURL(url), { once: true });
+    preview.location.replace(url);
+  } catch (error) {
+    preview.close();
+    throw error;
+  }
 }
 function labUploadForm() {
   openForm(T('Upload Document'), `<div class="g2">${fIn(T('Document name'), 'title', '', 'text', 'required')}${fIn(T('Date'), 'date', ymd(new Date()), 'date')}</div>${fTa(T('Notes'), 'notes', '', 3)}${imgField(T('Document image'), 'image', '', T('Remove picture'))}`, async (form) => {
@@ -1938,6 +2013,9 @@ function echoReportDraftSnapshot() {
     }
   };
 }
+function echoReportTemplateContent(content, font) {
+  return echoTemplateContent(content, font);
+}
 function echoReportChooseTemplate(record, template, snapshot) {
   const currentFields = new Map(snapshot.draft.sections.flatMap((section) => section.values || []).map((field) => [field.name, field.value]));
   let templateSections;
@@ -1954,7 +2032,7 @@ function echoReportChooseTemplate(record, template, snapshot) {
       values: fields.map((name) => ({ name, value: currentFields.get(name) || '' }))
     };
   });
-  const templateContent = sections.map((section) => `${section.title ? `<h3>${esc(section.title)}</h3>` : ''}${section.content || ''}`).join('');
+  const templateContent = sections.map((section) => `${section.title ? `<h3>${esc(section.title)}</h3>` : ''}${echoReportTemplateContent(section.content, template.font)}`).join('');
   const notes = snapshot.draft.report_notes.map((note, index) => index == 0 ? { ...note, content: templateContent } : note);
   const draft = { ...snapshot.draft, report_notes: notes, report_content: notes.map((note) => note.content).join(''), sections };
   echoTemplateId = String(template.id);
@@ -1979,17 +2057,21 @@ function echoReportForm(record = null, options = {}) {
   const currentServiceId = String(existing.service_id || '');
   const currentServiceName = existing.service_name || '';
   const reportImages = Array.isArray(existing.images) ? existing.images.filter((image) => image && image.photo) : record?.image ? [{ photo: record.image, name: record.image }] : [];
-  const initialContent = existing.report_content || sections.map((section) => {
+  const initialContent = existing.report_content
+    ? echoReportTemplateContent(existing.report_content, template.font)
+    : sections.map((section) => {
     const title = section.title ? `<h3>${esc(section.title)}</h3>` : '';
-    return `${title}${section.content || ''}`;
+    return `${title}${echoReportTemplateContent(section.content, template.font)}`;
   }).join('');
   const reportNotes = Array.isArray(existing.report_notes) && existing.report_notes.length
     ? existing.report_notes
     : [{ title: 'កំណត់ហេតុ (1)', content: initialContent }];
   const initialFieldPreview = sections.flatMap((section) => Array.isArray(section.values) ? section.values : []).filter((field) => field.value).map((field) => `<p><b>${esc(field.name)}:</b> ${esc(field.value)}</p>`).join('');
   const serviceMatches = currentServiceName ? D.sv.filter((service) => String(service.name || '').toLocaleLowerCase().includes(String(currentServiceName).toLocaleLowerCase())) : [];
+  const reportFonts = ['Arial', 'Times New Roman', 'Khmer OS', 'Khmer OS Battambang', 'Moul', 'Koulen'];
+  const reportFont = template.font == 'Battambang' ? 'Khmer OS Battambang' : reportFonts.includes(template.font) ? template.font : 'Moul';
   const editorToolbar = `<div class="echo-rich-toolbar" role="toolbar" aria-label="${T('Report formatting')}">
-    <select class="in echo-font-select" data-echo-command="fontName" data-echo-section="patient-report" aria-label="${T('Font')}"><option>Arial</option><option>Times New Roman</option><option>Khmer OS</option><option>Khmer OS Battambang</option><option>Moul</option><option>Koulen</option></select>
+    <select class="in echo-font-select" data-echo-command="fontName" data-echo-section="patient-report" aria-label="${T('Font')}">${reportFonts.map((font) => `<option ${reportFont == font ? 'selected' : ''}>${font}</option>`).join('')}</select>
     <select class="in echo-size-select" data-echo-command="fontSize" data-echo-section="patient-report" aria-label="${T('Text size')}"><option value="2">${T('Normal')}</option><option value="3">${T('Medium')}</option><option value="5">${T('Large')}</option></select>
     ${[['bold','B'],['italic','I'],['underline','U'],['justifyLeft','≡'],['justifyCenter','☰'],['justifyRight','≡'],['insertUnorderedList','☷'],['insertOrderedList','1.'],['createLink','↗'],['insertTable','▦'],['undo','↶'],['redo','↷'],['removeFormat','Tx']].map(([command,label]) => `<button type="button" class="btn s echo-tool echo-tool-${command}" data-a="echoformat:patient-report:${command}" aria-label="${esc(command)}" title="${esc(command)}">${label}</button>`).join('')}
     ${[['foreColor','#000000'],['hiliteColor','#ffff00']].map(([command,color]) => `<label class="echo-color-tool" title="${command == 'foreColor' ? T('Text Color') : T('Highlight Color')}"><span class="echo-tool echo-tool-${command}">${command == 'foreColor' ? 'A' : '▨'}</span><input type="color" data-echo-color="${command}" data-echo-section="patient-report" value="${color}" aria-label="${esc(command)}"></label>`).join('')}
@@ -1998,7 +2080,8 @@ function echoReportForm(record = null, options = {}) {
     const sectionId = index ? `patient-report-${index + 1}` : 'patient-report';
     const toolbar = editorToolbar.replaceAll('patient-report', sectionId);
     const actions = `<div class="echo-report-quick-actions">${index == 0 ? `<button type="button" class="btn" data-a="patient-echo-twin" aria-label="បន្ថែមកំណត់ហេតុទី 2" title="បន្ថែមកំណត់ហេតុទី 2"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="8" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13" y="4" width="8" height="16" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M7 9h2m-2 4h2m8-4h2m-2 4h2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg><span>ភ្លោះ</span></button>` : ''}<button type="button" class="btn" data-a="echoformat:${sectionId}:insertTable"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M3 9h18M9 9v11m6-11v11" fill="none" stroke="currentColor" stroke-width="1.8"/></svg><span>បញ្ចូលតារាង</span></button>${index == 0 ? `<button type="button" class="btn" data-a="patient-echo-report-template">▤ ប្លង់គំរូ</button>` : ''}</div>`;
-    return `<section class="echo-report-note-panel" data-echo-note="${index + 1}"><div class="echo-report-pane-heading"><h4>កំណត់ហេតុ (${index + 1})</h4><div class="echo-report-heading-tools">${actions}</div></div>${toolbar}<input id="echo-image-file-${sectionId}" type="file" accept="image/jpeg,image/png,image/webp" hidden><section class="echo-report-editor-section" data-echo-section="${sectionId}"><div id="echo-report-editor${index ? `-${index + 1}` : ''}" class="echo-rich-editor echo-report-editor" contenteditable="true" role="textbox" aria-label="${T('Echo report content')} ${index + 1}" aria-multiline="true" data-echo-editor="${sectionId}">${content || ''}</div><input type="hidden" name="echo_report_content${index ? `_${index + 1}` : ''}" data-echo-content value="${esc(content || '')}"></section></section>`;
+    const reportContent = echoReportTemplateContent(content, template.font);
+    return `<section class="echo-report-note-panel" data-echo-note="${index + 1}"><div class="echo-report-pane-heading"><h4>កំណត់ហេតុ (${index + 1})</h4><div class="echo-report-heading-tools">${actions}</div></div>${toolbar}<input id="echo-image-file-${sectionId}" type="file" accept="image/jpeg,image/png,image/webp" hidden><section class="echo-report-editor-section" data-echo-section="${sectionId}"><div id="echo-report-editor${index ? `-${index + 1}` : ''}" class="echo-rich-editor echo-report-editor" style="font-family:${esc(echoFontFamily(template.font))}" contenteditable="true" role="textbox" aria-label="${T('Echo report content')} ${index + 1}" aria-multiline="true" data-echo-editor="${sectionId}">${reportContent}</div><input type="hidden" name="echo_report_content${index ? `_${index + 1}` : ''}" data-echo-content value="${esc(reportContent)}"></section></section>`;
   };
   const body = `<div class="echo-report-composer-meta">
     <div class="echo-report-date-group"><label class="echo-report-label" for="echo-report-date">កាលបរិច្ឆេទ</label><input id="echo-report-date" class="in" type="date" name="echo_report_date" value="${esc(date)}">
@@ -2019,7 +2102,7 @@ function echoReportForm(record = null, options = {}) {
         }).join('')}</div>`;
       }).join('')}</details>
     </section>
-    <aside class="echo-report-preview-pane"><div class="echo-report-pane-heading"><h4>របាយការណ៍</h4><span>${esc(echoPageSize)}</span></div><div id="echo-report-preview" class="echo-report-preview">${echoReportDocumentHtml(curPt(), date, initialContent + initialFieldPreview, reportImages, true, currentDoctor)}</div>
+    <aside class="echo-report-preview-pane"><div class="echo-report-pane-heading"><h4>របាយការណ៍</h4><span>${esc(echoPageSize)}</span></div><div id="echo-report-preview" class="echo-report-preview">${echoReportDocumentHtml(curPt(), date, initialContent + initialFieldPreview, reportImages, true, currentDoctor, '', template.font)}</div>
       <section class="echo-report-attachments" aria-label="បញ្ចូលរូបភាព"><label class="echo-report-label">រូបភាព</label><div id="echo-report-image-list" class="echo-report-image-list">${echoReportImageRows(reportImages)}</div><label class="echo-report-upload" for="echo-report-upload"><span aria-hidden="true">⇧</span><span>បញ្ចូលរូបភាព</span><input id="echo-report-upload" type="file" accept="image/jpeg,image/png,image/webp" multiple hidden></label><small class="echo-report-attachment-hint">${T('JPG, PNG or WebP (max 10 MB)')}</small></section>
     </aside>
   </div>
@@ -2030,6 +2113,7 @@ function echoReportForm(record = null, options = {}) {
   form.dataset.echoReportImages = JSON.stringify(reportImages);
   form.dataset.echoReportRecordId = record ? String(record.id) : '';
   form.dataset.echoReportTemplateId = String(template.id);
+  form.dataset.echoReportTemplateFont = template.font || 'Moul';
   $('#md').classList.add('on');
   form.onsubmit = async (event) => {
     event.preventDefault();
@@ -2058,7 +2142,7 @@ function echoReportForm(record = null, options = {}) {
       const serviceId = String(values.get('echo_report_service_id') || '').trim(), serviceName = String(values.get('echo_report_service_name') || '').trim();
       const doctor = String(values.get('echo_report_doctor_new') || values.get('echo_report_doctor') || '').trim();
       const images = JSON.parse(form.dataset.echoReportImages || '[]');
-      const data = { template_id: template.id, template_name: template.name, doctor, service_id: serviceId, service_name: serviceName, report_content: reportContent, report_notes: notes, sections: dataSections, images, page_size: echoPageSize };
+      const data = { template_id: template.id, template_name: template.name, template_font: template.font || 'Moul', doctor, service_id: serviceId, service_name: serviceName, report_content: reportContent, report_notes: notes, sections: dataSections, images, page_size: echoPageSize };
       const payload = { patient_id: pdId, kind: 'echo', title: 'Echo Report', date: values.get('echo_report_date'), image: images[0]?.photo || '', data };
       if (record) await api('PUT', 'records/' + record.id, payload);
       else await api('POST', 'records', payload);
@@ -2091,7 +2175,7 @@ function echoReportPreviewUpdate() {
   const content = notes.length > 1
     ? notes.map((editor, index) => `<h3>កំណត់ហេតុ (${index + 1})</h3>${editor.innerHTML}`).join('')
     : notes[0]?.innerHTML || '';
-  preview.innerHTML = echoReportDocumentHtml(curPt(), $('#echo-report-date')?.value || '', content + fields, echoReportImages(), true, doctor);
+  preview.innerHTML = echoReportDocumentHtml(curPt(), $('#echo-report-date')?.value || '', content + fields, echoReportImages(), true, doctor, '', form.dataset.echoReportTemplateFont || 'Moul');
 }
 function echoReportAddTwin() {
   const notes = $('#echo-report-notes'), first = notes?.querySelector('.echo-report-note-panel');
@@ -2186,12 +2270,12 @@ function echoReportClinicHeaderHtml() {
     ? `<img class="echo-report-clinic-banner" src="${API_BASE}/uploads/${esc(clinic.banner)}" alt="">`
     : `${clinic.logo ? `<img class="echo-report-clinic-logo" src="${API_BASE}/uploads/${esc(clinic.logo)}" alt="">` : ''}${clinic.show_name && clinic.name ? `<strong>${esc(clinic.name)}</strong>` : ''}${clinic.specialty ? `<span>${esc(clinic.specialty)}</span>` : ''}${clinic.show_address && clinic.address ? `<span>${esc(clinic.address)}</span>` : ''}${clinic.show_phone && clinic.phone ? `<span>${esc(clinic.phone)}</span>` : ''}`}</div>`;
 }
-function echoReportDocumentHtml(patient, date, content, images = [], preview = false, doctor = '', format = '') {
+function echoReportDocumentHtml(patient, date, content, images = [], preview = false, doctor = '', format = '', font = 'Moul') {
   const sex = patient?.sex == 'M' ? 'ប្រុស' : patient?.sex == 'F' ? 'ស្រី' : fmtSex(patient?.sex);
   const dateText = String(date || '').slice(0, 10).split('-').reverse().join('/');
   const attachments = images.filter((image) => image && image.photo).map((image) => `<figure class="echo-report-document-image"><img src="${esc(API_BASE + '/uploads/' + encodeURIComponent(image.photo))}" alt=""></figure>`).join('');
   const title = format == 'PT' ? 'ECHO REPORT' : 'របាយការណ៍អេកូ (ECHO REPORT)';
-  return `<article class="echo-report-document${preview ? ' echo-report-document-preview' : ''}">${preview ? echoReportClinicHeaderHtml() : ''}<div class="echo-report-patient-meta"><div><b>Name:</b><span>${esc(patient?.name || '')}</span></div><div><b>ID:</b><span>${esc(patient?.id || '')}</span></div><div><b>Age/Sex:</b><span>${esc(fmtAge(patient || {}))} / ${esc(sex || 'N/A')}</span></div><div><b>Date:</b><span>${esc(dateText)}</span></div></div><h2 class="echo-report-document-title">${title}</h2><div class="echo-report-document-columns${attachments ? ' has-images' : ''}"><section class="echo-report-document-result"><h3>Result :</h3><div class="echo-report-document-content">${content || ''}</div></section>${attachments ? `<section class="echo-report-document-images">${attachments}</section>` : ''}</div>${doctor ? `<footer class="echo-report-document-signature"><span>វេជ្ជបណ្ឌិត / Doctor</span><b>${esc(doctor)}</b></footer>` : ''}</article>`;
+  return `<article class="echo-report-document${preview ? ' echo-report-document-preview' : ''}">${preview ? echoReportClinicHeaderHtml() : ''}<div class="echo-report-patient-meta"><div><b>Name:</b><span>${esc(patient?.name || '')}</span></div><div><b>ID:</b><span>${esc(patient?.id || '')}</span></div><div><b>Age/Sex:</b><span>${esc(fmtAge(patient || {}))} / ${esc(sex || 'N/A')}</span></div><div><b>Date:</b><span>${esc(dateText)}</span></div></div><h2 class="echo-report-document-title">${title}</h2><div class="echo-report-document-columns${attachments ? ' has-images' : ''}"><section class="echo-report-document-result"><h3>Result :</h3><div class="echo-report-document-content" style="font-family:${esc(echoFontFamily(font))}">${content || ''}</div></section>${attachments ? `<section class="echo-report-document-images">${attachments}</section>` : ''}</div>${doctor ? `<footer class="echo-report-document-signature"><span>វេជ្ជបណ្ឌិត / Doctor</span><b>${esc(doctor)}</b></footer>` : ''}</article>`;
 }
 function echoReportContent(record, preview = false, format = '') {
   const data = jd(record);
@@ -2203,7 +2287,8 @@ function echoReportContent(record, preview = false, format = '') {
       ? `${data.report_content}${fields}`
       : sections.map((section) => `${section.title ? `<h3>${esc(section.title)}</h3>` : ''}${section.content || ''}${(section.values || []).map((field) => `<p><b>${esc(field.name)}:</b> ${esc(field.value || '')}</p>`).join('')}`).join('');
   const images = Array.isArray(data.images) && data.images.length ? data.images : record.image ? [{ photo: record.image }] : [];
-  return echoReportDocumentHtml(curPt(), record.date, report, images, preview, data.doctor || '', format);
+  const template = D.echo.find((item) => String(item.id) == String(data.template_id));
+  return echoReportDocumentHtml(curPt(), record.date, report, images, preview, data.doctor || '', format, data.template_font || template?.font || 'Moul');
 }
 function echoReportView(record) {
   echoPreviewZoom = 81;
@@ -2284,7 +2369,10 @@ function labPickerCards() {
 }
 function labResultPicker(preserveSelection = false) {
   labPickerQuery = '';
-  if (!preserveSelection) labPickerSelection = new Set();
+  if (!preserveSelection) {
+    labPickerSelection = new Set();
+    labResultDraft = null;
+  }
   const form = $('#mf');
   form.className = 'xl lab-result-picker';
   form.innerHTML = `<div class="operation-form-heading"><h3>${T('Add Lab Result')}</h3><button type="button" class="btn s" data-a="close" aria-label="${T('Close')}">×</button></div><label class="lab-picker-search"><span aria-hidden="true">⌕</span><input class="in" id="lab-result-search" type="search" placeholder="${esc(T('Search lab tests…'))}"></label><div class="lab-picker-list" id="lab-result-list">${labPickerCards()}</div><div class="tools fb lab-picker-footer"><span>${labPickerSelection.size} ${T('selected')}</span><button type="button" class="btn" data-a="close">${T('Cancel')}</button><button type="button" class="btn p" data-a="labcontinue" ${labPickerSelection.size ? '' : 'disabled'}>${T('Next')} →</button></div>`;
@@ -2350,18 +2438,25 @@ function labSavedResultPrint(id, format = '') {
     : [{ id: data.template_id, name: data.test_name || record.title || T('Lab result'), category: data.category }];
   labResultPrint((record.date || '').slice(0, 10), tests, data.lab_technician || '', data.requested_by || '', Array.isArray(data.fields) ? data.fields : [], format);
 }
-function labResultForm(templates, record = null) {
+function labResultForm(templates, record = null, draft = null) {
   const existing = record ? jd(record) : {};
   const selectedTemplates = Array.isArray(templates) ? templates : [templates];
   if (!selectedTemplates.length || selectedTemplates.some((template) => !template)) return toast(T('Lab template not found'));
   const savedTests = Array.isArray(existing.tests) ? existing.tests : null;
-  const tests = savedTests
+  const tests = draft
+    ? selectedTemplates
+    : savedTests
     ? savedTests.map((test) => {
       const template = selectedTemplates.find((item) => String(item.id) == String(test.template_id));
-      return { ...(template || {}), id: test.template_id, name: test.name || template?.name, cat: test.category || template?.cat, price: test.price ?? template?.price };
+      return { ...(template || {}), id: test.template_id, name: test.name || template?.name, cat: test.category || template?.cat, price: test.price ?? template?.price, quantity: Math.max(0, test.quantity == null ? 1 : Number(test.quantity) || 0) };
     })
     : selectedTemplates;
-  const fields = savedTests
+  const fields = draft
+    ? tests.flatMap((template) => {
+      const templateFields = labFieldValues(template);
+      return (templateFields.length ? templateFields : [{ name: template.name }]).map((field) => ({ ...field, template_id: template.id, category: template.cat || '', test_name: template.name }));
+    })
+    : savedTests
     ? savedTests.flatMap((test) => (test.fields || []).map((field) => ({ ...field, template_id: test.template_id, category: test.category, test_name: test.name })))
     : selectedTemplates.flatMap((template) => {
       const templateFields = labFieldValues(template);
@@ -2370,10 +2465,13 @@ function labResultForm(templates, record = null) {
   if (!fields.length) fields.push({ name: T('Result'), template_id: tests[0].id, category: tests[0].cat || '', test_name: tests[0].name });
   const values = new Map((existing.fields || []).map((field, index) => [`${field.template_id ?? ''}:${field.name}:${index}`, field.result || '']));
   const existingValues = (existing.fields || []).map((field) => field.result || '');
-  const total = tests.reduce((sum, test) => sum + (Number(test.price) || 0), 0);
+  const total = tests.reduce((sum, test) => sum + (Number(test.price) || 0) * Math.max(0, test.quantity == null ? 1 : Number(test.quantity) || 0), 0);
   const title = tests.map((test) => test.name).join(', ');
   const renderFieldRow = (field, index) => {
-    const value = existingValues[index] || values.get(`${field.template_id}:${field.name}:${index}`) || '';
+    const draftKey = `${field.template_id}:${field.name}`;
+    const value = draft
+      ? Object.hasOwn(draft.results, draftKey) ? draft.results[draftKey] : ''
+      : existingValues[index] || values.get(`${field.template_id}:${field.name}:${index}`) || '';
     return `<div class="lab-entry-row"><span class="lab-entry-name">${esc(field.name)}</span><input class="in" name="lab_result_${index}" value="${esc(value)}" aria-label="${esc(field.name)} ${esc(T('Result'))}"><span class="lab-entry-range">${esc(field.normal_range || '')}</span><span class="lab-entry-unit">${esc(field.unit || '')}</span></div>`;
   };
   const categories = [...new Set(tests.map((test) => test.cat || test.name))];
@@ -2381,7 +2479,8 @@ function labResultForm(templates, record = null) {
     const rows = fields.map((field, index) => String(field.template_id) == String(test.id) ? renderFieldRow(field, index) : '').join('');
     return `${tests.length > 1 ? `<h5>${esc(test.name)}</h5>` : ''}<div class="lab-entry-columns"><span>${T('Test')}</span><span>${T('Result')}</span><span>${T('Normal Range')}</span><span>${T('Unit')}</span></div><div class="lab-entry-grid">${rows}</div>`;
   }).join('')}</section>`).join('');
-  const body = `<div class="lab-result-header-fields"><label class="fl">${T('Date')}<input class="in" name="date" type="date" value="${esc((record?.date || ymd(new Date())).slice(0, 10))}"></label>${fIn(T('Requested by'), 'requested_by', existing.requested_by || '')}${fIn(T('Lab technician'), 'lab_technician', existing.lab_technician || '')}<div class="lab-entry-total"><span>${T('Total')}</span><b>${K(total)}</b></div></div><div class="lab-entry-sections">${sections}</div>${fTa('Notes', 'notes', record?.notes || '', 2)}`;
+  const date = draft ? draft.date : (record?.date || ymd(new Date())).slice(0, 10);
+  const body = `<div class="lab-result-header-fields"><label class="fl">${T('Date')}<input class="in" name="date" type="date" value="${esc(date)}"></label>${fIn(T('Requested by'), 'requested_by', draft?.requested_by ?? existing.requested_by ?? '')}${fIn(T('Lab technician'), 'lab_technician', draft?.lab_technician ?? existing.lab_technician ?? '')}<div class="lab-entry-total"><span>${T('Total')}</span><b>${K(total)}</b></div></div><div class="lab-entry-sections">${sections}</div>${fTa('Notes', 'notes', draft?.notes ?? record?.notes ?? '', 2)}`;
   openForm(`${record ? T('Edit Lab Result') : T('Add Lab Result')} — ${esc(title)}`, body, async (form) => {
     const data = new FormData(form);
     const resultFields = fields.map((field, index) => ({ ...field, result: String(data.get(`lab_result_${index}`) || '').trim() }));
@@ -2390,20 +2489,42 @@ function labResultForm(templates, record = null) {
       name: test.name,
       category: test.cat || '',
       price: Number(test.price) || 0,
+      quantity: Math.max(0, test.quantity == null ? 1 : Number(test.quantity) || 0),
       fields: resultFields.filter((field) => String(field.template_id) == String(test.id)).map(({ template_id, category, test_name, ...field }) => field)
     }));
     const body = { patient_id: pdId, kind: 'lab', title, date: data.get('date'), notes: data.get('notes'), data: { template_id: tests.length == 1 ? tests[0].id : null, test_name: title, category: tests.length == 1 ? tests[0].cat || '' : '', price: total, requested_by: data.get('requested_by'), lab_technician: data.get('lab_technician'), tests: testsData, fields: resultFields } };
     if (record) await api('PUT', 'records/' + record.id, body);
     else await api('POST', 'records', body);
+    labResultDraft = null;
+    labPickerSelection = new Set();
     labSubtab = 'results'; await loadRecs(); render(); toast('Saved');
   }, { cls: 'xl lab-result-form', ok: T('Save'), hideCancel: true, extra: `<button type="button" class="btn" data-a="labresultprint">${T('Print')}</button><button type="button" class="btn" data-a="labresultback">${T('Back')}</button>` });
   $('#mf').dataset.labPrintTests = JSON.stringify(tests);
   $('#mf').dataset.labPrintFields = JSON.stringify(fields);
+  $('#mf').dataset.labRecordId = record?.id || '';
 }
 function labResultSelectionNext() {
   const templates = [...labPickerSelection].map((id) => D.lab.find((lab) => String(lab.id) == String(id))).filter(Boolean);
   if (!templates.length) return toast(T('Select a lab test'));
-  labResultForm(templates);
+  labResultForm(templates, labResultDraft?.record || null, labResultDraft);
+}
+function labResultBackToPicker() {
+  const form = $('#mf');
+  const tests = JSON.parse(form.dataset.labPrintTests || '[]');
+  const fields = JSON.parse(form.dataset.labPrintFields || '[]');
+  const values = new FormData(form);
+  const results = {};
+  fields.forEach((field, index) => { results[`${field.template_id}:${field.name}`] = String(values.get(`lab_result_${index}`) || ''); });
+  labResultDraft = {
+    record: recs.find((item) => item.kind == 'lab' && String(item.id) == String(form.dataset.labRecordId)) || null,
+    date: String(values.get('date') || ''),
+    requested_by: String(values.get('requested_by') || ''),
+    lab_technician: String(values.get('lab_technician') || ''),
+    notes: String(values.get('notes') || ''),
+    results
+  };
+  labPickerSelection = new Set(tests.map((test) => String(test.id)));
+  labResultPicker(true);
 }
 function labResultPrintFromForm() {
   const form = $('#mf'), tests = JSON.parse(form.dataset.labPrintTests || '[]'), fields = JSON.parse(form.dataset.labPrintFields || '[]');
@@ -3421,10 +3542,10 @@ const CNF_KM_BILINGUAL = new Set([
   'Responsibility', 'Other Notices', 'Payment Policy'
 ]);
 const CNF_KM_BILINGUAL_OPTIONS = new Set(['prob', 'skin', 'react', 'level', 'heal']);
-const cnText = (s) => lang == 'km' && CNF_KM[s]
-  ? CNF_KM[s] + (CNF_KM_BILINGUAL.has(s) ? ` (${s})` : '')
+const cnText = (s) => lang != 'en' && CNF_KM[s]
+  ? CNF_KM[s] + (lang == 'both' || CNF_KM_BILINGUAL.has(s) ? ` (${s})` : '')
   : s;
-const cnOptionText = (k, s) => lang == 'km' && CNF_KM_BILINGUAL_OPTIONS.has(k) && CNF_KM[s]
+const cnOptionText = (k, s) => lang != 'en' && (lang == 'both' || CNF_KM_BILINGUAL_OPTIONS.has(k)) && CNF_KM[s]
   ? `${CNF_KM[s]} (${s})`
   : cnText(s);
 const cnQuestionText = (k, l) => k == 'react' && lang == 'km'
@@ -3432,9 +3553,11 @@ const cnQuestionText = (k, l) => k == 'react' && lang == 'km'
   : cnText(l);
 const cnfTexts = () => {
   let t = {}; try { t = JSON.parse((D.clinic || {}).cnf_text || '{}'); } catch (e) { /* defaults */ }
-  return Object.fromEntries(CNF_AG.map(([k]) => [k, lang == 'km'
-    ? t[k + '_km'] ?? (t[k] != null && t[k] != CNF_DEF[k] ? t[k] : CNF_DEF_KM[k])
-    : t[k] ?? CNF_DEF[k]]));
+  return Object.fromEntries(CNF_AG.map(([k]) => {
+    const english = t[k] ?? CNF_DEF[k];
+    const khmer = t[k + '_km'] ?? (t[k] != null && t[k] != CNF_DEF[k] ? t[k] : CNF_DEF_KM[k]);
+    return [k, lang == 'both' && khmer != english ? `${khmer} (${english})` : lang == 'km' || lang == 'both' ? khmer : english];
+  }));
 };
 const cnfSettingsHtml = (c) => {
   let t = {}; try { t = JSON.parse(c.cnf_text || '{}'); } catch (e) { /* defaults */ }
@@ -3481,7 +3604,7 @@ function cnHtml(S, d) {
     if (t == 'box') { [t, k, l, o, x] = it.slice(1); o = o; return `<div class="sec cnb">${cnQ(k, l, o, x, d)}</div>`; }
     if (t == 'g2') return `<div class="sec"><div class="g2">${k.map(([kk, ll]) => fIn(cnText(ll), 'cn_' + kk, d[kk])).join('')}</div></div>`;
     if (t == 'H') return `<h4 class="${S == CNP ? 'cn-plan-heading' : 'cnH'}">${cnText(k)}</h4>`; if (t == 'T') return `<h3 class="cnT">${cnText(k)}</h3>`; if (t == 'h') {
-      if (S == CN && lang == 'km' && k == '3. History of reactions') return '';
+      if (S == CN && lang != 'en' && k == '3. History of reactions') return '';
       return `<h5 class="cnh">${cnText(k)}</h5>`;
     }
     if (t == 'q') return S == CNP ? `<div class="cn-plan-question"><b>${esc(l)}</b><div class="cn-plan-options">${o.map((v) => fCb(v, 'cnc_' + k, (d[k] || []).includes(v), v)).join('')}</div></div>` : cnQ(k, l, o, x, d);
@@ -3506,7 +3629,7 @@ function cnCollect(f, S) {
 function cnPrintHtml(d) {
   const sec = (S) => S.map((it) => { let [t, k, l, o, x] = it; if (t == 'box') { [t, k, l, o, x] = it.slice(1); }
     if (t == 'g2') return kv(k.map(([kk, ll]) => [cnText(ll), d[kk]]));
-    if (t == 'H') return `<h4>${cnText(k)}</h4>`; if (t == 'T') return `<h3>${cnText(k)}</h3>`; if (t == 'h') { if (S == CN && lang == 'km' && k == '3. History of reactions') return ''; return `<h5>${cnText(k)}</h5>`; }
+    if (t == 'H') return `<h4>${cnText(k)}</h4>`; if (t == 'T') return `<h3>${cnText(k)}</h3>`; if (t == 'h') { if (S == CN && lang != 'en' && k == '3. History of reactions') return ''; return `<h5>${cnText(k)}</h5>`; }
     if (t == 'q') { const v = [...(d[k] || []).map((value) => cnOptionText(k, value)), ...(d[k + '_o'] ? [cnText(x || 'Other') + ': ' + d[k + '_o']] : [])]; return v.length ? `<p><b>${cnQuestionText(k, l)}:</b> ${v.map(esc).join(', ')}</p>` : ''; }
     if (t == 'a' || t == 'i') return d[k] ? `<p><b>${cnText(l)}:</b> ${esc(d[k]).replace(/\n/g, '<br>')}</p>` : '';
     if (t == 'ag') return CNF_AG.map(([kk, ll]) => `<p><b>${cnText(ll)}:</b> ${esc(d['ag_' + kk] ?? cnfTexts()[kk]).replace(/\n/g, '<br>')}</p>`).join('');
@@ -3516,7 +3639,7 @@ function cnPrintHtml(d) {
 }
 function cnfForm(r) {
   const e = !!r, d = r ? jd(r) : {}, hist = recs.filter((x) => x.kind == 'cnf');
-  const khmer = lang == 'km';
+  const khmer = lang != 'en';
   openForm(khmer ? 'ទម្រង់ពិគ្រោះគ្លីនិក (Clinic Form - CNF)' : 'Consultation Form (CNF)', `<div class="consultation-form-scroll"><div class="cnfw"><div class="cnfl"><div class="tabs cnft"><button type="button" class="on" data-a="cnftab:gen">${khmer ? 'ទម្រង់ទូទៅ (General Form)' : 'General Form'}</button><button type="button" data-a="cnftab:plan">${khmer ? 'ការវាយតម្លៃ និងផែនការ (Assessment & Plan)' : 'Assessment & Plan'}</button></div>
 <div id="cn-gen">${cnHtml(CN, d)}</div><div id="cn-plan" hidden>${cnHtml(CNP, d)}</div></div>
 <div class="cnfh"><div class="tools" style="justify-content:space-between"><b>${khmer ? 'ប្រវត្តិទម្រង់ (Form History)' : 'Form History'}</b><button type="button" class="btn s" data-a="cnfnew" title="${khmer ? 'ទម្រង់ថ្មី' : 'New form'}">+</button></div>${hist.map((x) => `<div class="rc ${e && x.id == r.id ? 'sel' : ''}" data-a="cnfload:${x.id}" style="cursor:pointer"><b>${esc((x.date || '').replace('T', ' '))}</b><div class="mu">${esc(jd(x).as_ass || jd(x).as_dx || (jd(x).prob || []).slice(0, 3).join(', '))}</div></div>`).join('') || `<p class="mu" style="font-size:12px">${khmer ? 'មិនទាន់មានប្រវត្តិទម្រង់ទេ។' : 'No history records yet.'}</p>`}</div></div></div>`, async (f) => {
@@ -3528,9 +3651,11 @@ function cnfForm(r) {
 // ---------- appointments: calendar (month / week / day) with list toggle ----------
 let cal = { mode: 'month', d: new Date(), list: false };
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-const apRows = () => D.ap.filter((a) => !q || JSON.stringify(a).toLowerCase().includes(q.toLowerCase()));
+const isFollowUpAppointment = (appointment) => appointment.type === 'Follow Up';
+P.ap.fl = (appointment) => !isFollowUpAppointment(appointment);
+const apRows = () => D.ap.filter((a) => !isFollowUpAppointment(a) && (!q || JSON.stringify(a).toLowerCase().includes(q.toLowerCase())));
 function calHtml() {
-  const d = cal.d, loc = lang == 'km' ? 'km-KH' : 'en-US', by = {}, today = ymd(new Date());
+  const d = cal.d, loc = lang != 'en' ? 'km-KH' : 'en-US', by = {}, today = ymd(new Date());
   apRows().forEach((a) => { (by[a.date] = by[a.date] || []).push(a); }); Object.values(by).forEach((l) => l.sort((x, y) => (x.time || '').localeCompare(y.time || '')));
   const chip = (a) => `<div class="ev ${a.st == 'Cancelled' ? 'x' : a.st == 'Waiting' ? 'w' : ''}" data-a="apedit:${a.id}" title="${esc(a.svc || '')}">${a.time ? esc(a.time) + ' ' : ''}${esc(a.name)}</div>`;
   const fmt = (o, dt = d) => new Intl.DateTimeFormat(loc, o).format(dt);
@@ -3713,6 +3838,7 @@ function patientFollowupScheduleForm(patientId) {
       reminder_status: 'Pending',
       notes: `មកពិនិត្យឡើងវិញក្រោយ ${days} ថ្ងៃ`
     });
+    await api('PUT', `patients/${patient.id}`, { reg_date: ymd(new Date()) });
     await load();
     render();
     toast('បានរក្សាទុក');
@@ -3799,6 +3925,7 @@ async function importPatientsFile(file) {
   } catch (error) { toast(error.message); }
 }
 document.addEventListener('change', (event) => {
+  if (event.target.id == 'patient-document-file') return uploadPatientDocument(event.target.files[0]).catch((error) => toast(error.message)).finally(() => { event.target.value = ''; });
   if (event.target.id == 'pt-import-file') return importPatientsFile(event.target.files[0]).finally(() => { event.target.value = ''; });
 });
 
@@ -3809,7 +3936,9 @@ function pAct(a, x, y, el) {
   else if (a == 'ptimport') $('#pt-import-file').click();
   else if (a == 'patient-doctype-menu') { documentTypeMenuOpen = !documentTypeMenuOpen; render(); }
   else if (a == 'patient-doctype') { if (PATIENT_DOCUMENT_TYPES.some(([key]) => key == x)) { documentTypeKey = x; documentTypeMenuOpen = false; render(); if (x == 'referral') legacyPatientReferralForm(); else if (x == 'referral-letter') patientReferralForm(); else if (x == 'hospital') patientHospitalForm(); else if (x == 'treatment') patientTreatmentForm(); else if (x == 'medical-card') patientMedicalCardList(); else if (x == 'health') patientHealthForm(); else if (x == 'birth') patientBirthForm(); else if (x == 'medical-rest-a') patientMedicalRestAForm(); else if (x == 'prescription-note') patientPrescriptionNoteForm(); } }
-  else if (a == 'patient-document-upload') { documentTypeKey == 'referral' ? legacyPatientReferralForm() : documentTypeKey == 'referral-letter' ? patientReferralForm() : documentTypeKey == 'hospital' ? patientHospitalForm() : documentTypeKey == 'treatment' ? patientTreatmentForm() : documentTypeKey == 'medical-card' ? patientMedicalCardList() : documentTypeKey == 'health' ? patientHealthForm() : documentTypeKey == 'birth' ? patientBirthForm() : documentTypeKey == 'medical-rest-a' ? patientMedicalRestAForm() : documentTypeKey == 'prescription-note' ? patientPrescriptionNoteForm() : patientDocumentUploadForm(); }
+  else if (a == 'patient-document-upload') $('#patient-document-file').click();
+  else if (a == 'patient-document-view') viewPatientDocument(x).catch((error) => toast(error.message));
+  else if (a == 'patient-document-download') downloadPatientDocument(x).catch((error) => toast(error.message));
   else if (a == 'patient-medical-card-new') patientMedicalCardForm();
   else if (a == 'patient-medical-card-print-draft') patientMedicalCardPrint(Object.fromEntries(new FormData($('#mf'))), $('#mf [name="medical_card_date"]').value);
   else if (a == 'patient-medical-card-print') { const record = rec(); if (record) patientMedicalCardPrint(jd(record), record.date); }
@@ -3932,7 +4061,7 @@ function pAct(a, x, y, el) {
   else if (a == 'labprint') labHistoryPrint(recs.filter((record) => record.kind == 'lab' && (!pdDate || (record.date || '').startsWith(pdDate))).sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id));
   else if (a == 'labresultprint') labResultPrintFromForm();
   else if (a == 'labrecordprint') labSavedResultPrint(x, y == 'sl' ? 'S+L' : y == 'cl' ? 'CL' : '');
-  else if (a == 'labresultback') labResultPicker(true);
+  else if (a == 'labresultback') labResultBackToPicker();
   else if (a == 'consult-medical') consultationForm('standard');
   else if (a == 'consult-documents') { ptab = 'documents'; render(); }
   else if (a == 'consult-cnf') consultationForm('md');
@@ -3956,6 +4085,8 @@ function pAct(a, x, y, el) {
   else if (a == 'centerprint-record') { const r = rec(); if (r) centerPrint(jd(r).rows || []); }
   else if (a == 'investigation-request') requestInvestigationServices().catch((e) => toast(e.message));
   else if (a == 'svcplus' || a == 'svcminus') changeInvestigationQuantity(x, Number(y), a == 'svcplus' ? 1 : -1).catch((e) => toast(e.message));
+  else if (a == 'labqtyplus' || a == 'labqtyminus') changeLabQuantity(x, Number(y), a == 'labqtyplus' ? 1 : -1).catch((e) => toast(e.message));
+  else if (a == 'pharmqtyplus' || a == 'pharmqtyminus') changePharmacyQuantity(x, Number(y), a == 'pharmqtyplus' ? 1 : -1).catch((e) => toast(e.message));
   else if (a == 'redit') { const r = rec(); r.kind == 'documents' && jd(r).document_type == 'hospital' ? patientHospitalForm(r) : r.kind == 'documents' && jd(r).document_type == 'treatment' ? patientTreatmentForm(r) : r.kind == 'documents' && jd(r).document_type == 'health' ? patientHealthForm(r) : r.kind == 'documents' && jd(r).document_type == 'birth' ? patientBirthForm(r) : r.kind == 'documents' && jd(r).document_type == 'medical-rest-a' ? patientMedicalRestAForm(r) : r.kind == 'documents' && jd(r).document_type == 'prescription-note' ? patientPrescriptionNoteForm(r) : r.kind == 'documents' && jd(r).document_type == 'medical-card' ? patientMedicalCardForm(r) : r.kind == 'documents' && jd(r).document_type == 'referral' ? legacyPatientReferralForm(r) : r.kind == 'documents' && jd(r).document_type == 'referral-letter' ? patientReferralForm(r) : r.kind == 'prescription' ? prescriptionForm(r) : r.kind == 'medlist' ? medlistForm(r) : r.kind == 'vitals' ? vsForm(r) : r.kind == 'medical' ? mrForm(r) : r.kind == 'schedule' ? schForm(r) : r.kind == 'mrd' ? mrdForm(r) : r.kind == 'lab' && jd(r).lab_attachment ? genForm(r) : r.kind == 'lab' ? labResultForm(D.lab.find((lab) => String(lab.id) == String(jd(r).template_id)) || { id: jd(r).template_id, name: jd(r).test_name || r.title, cat: jd(r).category, price: jd(r).price, fields: JSON.stringify(jd(r).fields || []) }, r) : r.kind == 'cnf' ? cnfForm(r) : r.kind == 'consultation' && jd(r).consultation_mode == 'center' ? centerForm(r) : r.kind == 'consultation' && jd(r).consultation_mode ? consultationForm(jd(r).consultation_mode, r) : genForm(r); }
   else if (a == 'rdel') { if (confirm(T('Delete this record?'))) api('DELETE', 'records/' + x).then(loadRecs).then(render).catch((e) => toast(e.message)); }
   else if (a == 'rprint') { const r = rec(); printDoc('Medical Record', ptBlock(curPt()) + `<p>${esc((r.date || '').replace('T', ' '))}</p>` + mrPrintHtml(jd(r))); }
@@ -3984,6 +4115,7 @@ function pAct(a, x, y, el) {
   else if (a == 'pttreat') treatmentFollowup(+x).catch((e) => toast(e.message));
   else if (a == 'ptdx') patientDiagnosisForm(+x);
   else if (a == 'ptdxnewdx') newDiagnosisForm(+x);
+  else if (a == 'ptremark') patientUnpaidRemarkForm(+x);
   else if (a == 'ptpay') payForm(+x, true); else if (a == 'ptinv') invoicePrint(+x).catch((e) => toast(e.message));
   else if (a == 'payall') return payForm(pdId, true);
   else if (a == 'payreceipt') paymentReceipt(+x);
@@ -4004,9 +4136,10 @@ function pAct(a, x, y, el) {
   else if (a == 'tfadd') { tfRows = tfDraftRows(); tfRows.push(tfNewRow()); tfRender(); }
   else if (a == 'tfremove') { tfRows = tfDraftRows(); tfRows.splice(+x, 1); tfRender(); }
   else if (a == 'tfhistory') { tfRows = tfDraftRows(); tfShowHistory = !tfShowHistory; tfRender(); }
-  else if (a == 'tfedit') { const r = tfHistory.find((q) => q.id == x); if (r) { tfRows = [tfRowFromRecord(r)]; tfShowHistory = false; tfRender(); } }
+  else if (a == 'tfedit') { const r = tfHistory.find((q) => q.id == x); if (r) { tfRows = tfRowsFromRecord(r); tfShowHistory = false; tfRender(); } }
   else if (a == 'tfdelete') tfDeleteRecord(+x).catch((e) => toast(e.message));
   else if (a == 'tfprint') tfPrintAll();
+  else if (a == 'tfprint-record') tfPrintRecord(x);
   else if (a == 'labpick') { const id = String(x); labPickerSelection.has(id) ? labPickerSelection.delete(id) : labPickerSelection.add(id); const list = $('#lab-result-list'); if (list) list.innerHTML = labPickerCards(); const next = document.querySelector('[data-a="labcontinue"]'); if (next) next.disabled = !labPickerSelection.size; const count = document.querySelector('.lab-picker-footer span'); if (count) count.textContent = `${labPickerSelection.size} ${T('selected')}`; }
   else if (a == 'labcontinue') labResultSelectionNext();
   else if (a == 'pdctl') { pdCtl = !pdCtl; render(); } else if (a == 'pdlay') { pdLay = pdLay == 'grid' ? 'list' : 'grid'; savePd(); render(); }
@@ -4051,7 +4184,8 @@ document.addEventListener('change', async (e) => {
 });
 document.addEventListener('input', (e) => {
   if (['payall_discount_input', 'payall_discount_currency'].includes(e.target.name)) payAllDiscountRefresh();
-  else if (['received', 'all_discount'].includes(e.target.name) && $('#mf').classList.contains('payall-dialog')) payAllRefresh();
+  else if (e.target.name == 'received' && $('#mf').classList.contains('payall-dialog')) { payAllContext.receivedManuallySet = true; payAllRefresh(); }
+  else if (e.target.name == 'all_discount' && $('#mf').classList.contains('payall-dialog')) payAllRefresh();
   else if (e.target.id == 'rx-entry-search') {
     rxEntrySearch = e.target.value;
     const list = $('#rx-entry-medicine-list');
@@ -4121,12 +4255,12 @@ const PFN = {
   name: (r, v) => has(r.name, v), latin: (r, v) => has(r.latin_name, v), nssf: (r, v) => has(r.nssf_id, v), nat: (r, v) => has(r.national_id, v),
   followup: (r, v) => { const appointment = followUpFor(r.id); return has(appointment ? [appointment.date, appointment.st, appointment.svc, appointment.reminder_date].join(' ') : r.follow_up ? 'Follow Up' : 'No follow-up', v); },
   type: (r, v) => v == 'IPD' ? r.type == 'IPD' : r.type != 'IPD', treat: (r, v) => has(r.treatment, v), dx: (r, v) => has(r.diagnosis || r.last_dx, v),
-  mr: (r, v) => v == 'yes' ? r.mr_count > 0 : !(r.mr_count > 0),   age: ageOk, sex: (r, v) => r.sex == v, pay: (r, v) => v == 'unpaid' ? patientDue(r.id) > 0 : !(patientDue(r.id) > 0),
+  mr: (r, v) => v == 'yes' ? r.mr_count > 0 : !(r.mr_count > 0),   age: ageOk, sex: (r, v) => r.sex == v, pay: (r, v) => { const paid = patientPaymentStatus(r.id).status == 'paid'; return v == 'unpaid' ? !paid : paid; },
   phone: (r, v) => lc(r.phone).replace(/\s/g, '').includes(lc(v).replace(/\s/g, '')), addr: (r, v) => has(r.addr, v),
   comp: (r, v) => has(r.complaints, v), hist: (r, v) => has(r.history, v), regd: (r, v) => has(r.reg_date, v) };
 const SEL = { type: [['', 'All'], ['OPD', 'OPD'], ['IPD', 'IPD']], mr: [['', 'All'], ['yes', 'With record'], ['no', 'No record']], sex: [['', 'All'], ['M', 'Male'], ['F', 'Female']], pay: [['', 'All'], ['unpaid', 'Unpaid'], ['paid', 'Paid']] };
 const pfActive = () => Object.entries(pf).filter(([, v]) => v !== '' && v != null);
-const tabOk = (r) => tab == 'IPD' ? r.type == 'IPD' : tab == 'Unpaid' ? patientDue(r.id) > 0 : tab == 'NSSF' ? r.nssf : tab == 'Follow Up' ? !!r.follow_up || !!followUpFor(r.id) : tab == 'Details' ? true : r.type != 'IPD';
+const tabOk = (r) => tab == 'IPD' ? r.type == 'IPD' : tab == 'Unpaid' ? patientPaymentStatus(r.id).status != 'paid' : tab == 'NSSF' ? r.nssf : tab == 'Follow Up' ? !!r.follow_up || !!followUpFor(r.id) : tab == 'Details' ? true : r.type != 'IPD';
 const colOk = (r) => pfActive().every(([k, v]) => PFN[k] ? PFN[k](r, String(v)) : true);
 const ptRows = () => {
   const priority = new Map();
@@ -4142,13 +4276,13 @@ const fCell = (k) => !k ? '<th class="fr"><button class="btn s" data-a="pfclear"
   : `<th class="fr ${k == 'latin' ? 'c-latin' : ''}"><input class="in" data-pf="${k}" value="${esc(pf[k] || '')}" placeholder="${k == 'age' ? '20-40' : '🔍'}"></th>`;
 // ---- rows ----
 // ---- columns: each one can be shown or hidden (saved in this browser) ----
-const COLF = [['id', 'ID'], ['date', 'Date'], ['name', 'Name'], ['latin', 'Latin name'], ['nssf', 'NSSF ID'], ['nat', 'National ID'], ['type', 'IPD/OPD'], ['treat', 'Treatment'], ['dx', 'Diagnosis'], ['followup', 'Follow Up'], ['mr', 'Medical Record'], ['age', 'Age'], ['sex', 'Gender'], ['pay', 'Unpaid'], ['phone', 'Phone'], ['addr', 'Address'], ['act', 'Actions']];
+const COLF = [['id', 'ID'], ['date', 'Date'], ['name', 'Name'], ['latin', 'Latin name'], ['nssf', 'NSSF ID'], ['nat', 'National ID'], ['type', 'IPD/OPD'], ['roomBed', 'Room/Bed'], ['treat', 'Treatment'], ['dx', 'Diagnosis'], ['followup', 'Follow Up'], ['mr', 'Medical Record'], ['age', 'Age'], ['sex', 'Gender'], ['pay', 'Unpaid'], ['phone', 'Phone'], ['addr', 'Address'], ['act', 'Actions']];
 const COLD = [['id', 'ID'], ['name', 'Name'], ['latin', 'Latin name'], ['phone', 'Phone'], ['addr', 'Address'], ['followup', 'Follow Up'], ['comp', 'Complaints'], ['hist', 'Past medical history'], ['regd', 'Registration date'], ['nssf', 'NSSF ID'], ['nat', 'National ID'], ['act', 'Actions']];
 let ptHide = { full: new Set(), det: new Set() }, ptColsOpen = false, ptFilt = false;
 try { const h = JSON.parse(localStorage.getItem('ptHide') || '{}'); ptHide = { full: new Set(h.full || []), det: new Set(h.det || []) }; ptFilt = localStorage.getItem('ptFilt') == '1'; } catch (e) { /* defaults */ }
 const savePt = () => { try { localStorage.setItem('ptHide', JSON.stringify({ full: [...ptHide.full], det: [...ptHide.det] })); localStorage.setItem('ptFilt', ptFilt ? '1' : '0'); } catch (e) { /* ignore */ } };
 const ptMode = () => (tab == 'Details' ? 'det' : 'full');
-const ptDefs = () => (tab == 'Details' ? COLD : COLF);
+const ptDefs = () => (tab == 'Details' ? COLD : tab == 'IPD' ? COLF : COLF.filter(([key]) => key != 'roomBed'));
 const ptShown = () => ptDefs().filter(([k]) => !ptHide[ptMode()].has(k));
 const followUpFor = (patientId) => {
   const today = ymd(new Date());
@@ -4173,15 +4307,37 @@ const patientFollowUpAction = (patient) => tab == 'Follow Up'
   : patient.type != 'IPD' && !patient.follow_up
     ? `<a href="#" class="pill opd clk" data-a="bedfollowup:${patient.id}" title="${T('Follow Up')}">${T('FUP')}</a>`
     : '';
+const patientPaymentCell = (patient) => {
+  const payment = patientPaymentStatus(patient.id);
+  if (payment.status == 'unpaid') return `<td><div class="patient-unpaid-cell"><div class="due" data-a="ptpay:${patient.id}" title="Record payment"><b>KHR ${payment.due.toLocaleString('en-US')}</b><br>${usd(payment.due)}</div><div class="patient-unpaid-remark"><span>${patient.unpaid_remark ? esc(patient.unpaid_remark) : `<span class="mu">${T('No remark')}</span>`}</span><button type="button" class="patient-unpaid-remark-edit" data-a="ptremark:${patient.id}" title="${esc(T('Edit remark'))}" aria-label="${esc(T('Edit remark'))}">✎</button></div></div></td>`;
+  if (payment.status == 'new') return `<td><span class="bd b">${T('New')}</span></td>`;
+  return `<td><span class="paid">✔ Paid</span> <a href="#" data-a="ptinv:${patient.id}" title="Invoice">🧾</a></td>`;
+};
+function patientUnpaidRemarkForm(patientId) {
+  const patient = ptById(patientId);
+  if (!patient) return toast(T('Patient not found.'));
+  openForm(T('Edit unpaid remark'), fTa(T('Remark'), 'unpaid_remark', patient.unpaid_remark || '', 3), async (form) => {
+    const unpaid_remark = String(new FormData(form).get('unpaid_remark') || '').trim();
+    await api('PUT', `patients/${patient.id}`, { unpaid_remark });
+    await load();
+    render();
+    toast(T('Saved'));
+  });
+}
+const ipdRoomBed = (patient) => {
+  const admission = (D.ipd || []).find((record) => String(record.code) == String(patient.id) && !record.out);
+  return admission ? [admission.room, admission.bed].filter(Boolean).join(' / ') || '—' : '—';
+};
 const cellsFull = (r, i, sm) => ({
   id: `<td>${r.id}</td>`, date: `<td>${fmtD(r.reg_date || r.created_at)}</td>`, name: `<td>${ptNm(r, sm)}</td>`, latin: `<td class="c-latin">${esc(r.latin_name || '')}</td>`,
   nssf: `<td>${esc(r.nssf_id || 'N/A')}</td>`, nat: `<td>${esc(r.national_id || 'N/A')}</td>`, type: `<td><span class="pill ${r.type == 'IPD' ? 'ipd' : 'opd'} clk" data-a="ptadmit:${r.id}" title="${r.type == 'IPD' ? 'Discharge to OPD' : 'Admit to IPD'}">${r.type == 'IPD' ? 'IPD' : 'OPD'}</span> ${patientFollowUpAction(r)}</td>`,
+  roomBed: `<td>${esc(ipdRoomBed(r))} <a href="#" class="ed" data-a="ptbed:${r.id}" title="Edit room and bed">✎</a></td>`,
   treat: `<td title="${esc(r.treatment || '')}">${esc(trunc(r.treatment, 14))} <a href="#" class="ed" data-a="pttreat:${r.id}" title="Edit treatment">✎</a></td>`,
   dx: `<td title="${esc(r.diagnosis || r.last_dx || '')}">${esc(trunc(r.diagnosis || r.last_dx || 'N/A', 14))} <a href="#" class="ed" data-a="ptdx:${r.id}" title="Edit diagnosis">✎</a></td>`,
   followup: followUpCell(r),
   mr: `<td><button class="mrb" data-a="ptmr:${r.id}" title="New medical record">✎</button></td>`, age: `<td>${fmtAge(r)}</td>`,
   sex: `<td>${r.sex ? `<span class="pill ${r.sex == 'F' ? 'f' : 'm'}">${fmtSex(r.sex)}</span>` : ''}</td>`,
-  pay: `<td>${patientDue(r.id) > 0 ? `<div class="due" data-a="ptpay:${r.id}" title="Record payment"><b>KHR ${patientDue(r.id).toLocaleString('en-US')}</b><br>${usd(patientDue(r.id))}</div>` : `<span class="paid">✔ Paid</span> <a href="#" data-a="ptinv:${r.id}" title="Invoice">🧾</a>`}</td>`,
+  pay: patientPaymentCell(r),
   phone: `<td>${r.phone ? '📞 ' + esc(r.phone) : '<span class="mu">📞</span>'}</td>`, addr: `<td title="${esc(r.addr || '')}">${esc(trunc(r.addr || 'N/A', 14))}</td>`, act: `<td style="white-space:nowrap">${act(r, i)}</td>` });
 const cellsDet = (r, i) => ({
   id: `<td>${r.id}</td>`, name: `<td>${ptNm(r, false)}</td>`, latin: `<td>${esc(r.latin_name || '')}</td>`, phone: `<td>${esc(r.phone || '')}</td>`, addr: `<td>${esc(r.addr || '')}</td>`,
@@ -4289,9 +4445,16 @@ function ptCard(id) {
 let tfPatientId = null, tfRows = [], tfHistory = [], tfShowHistory = false;
 const TF_VITALS_TEMPLATE = ['សម្ពាធឈាម:', 'ជីពចរ:', 'ចង្វាក់បេះដូង:', 'ចង្វាក់ដង្ហើម:', 'សីតុណ្ហភាព:', 'អុកស៊ីសែន:', 'ជាតិស្ករ:'].join('\n');
 const tfNewRow = () => ({ date: nowLocal(), vitals: TF_VITALS_TEMPLATE, diagnosis: '', notes: '' });
-const tfRowFromRecord = (r) => {
+const tfRowsFromRecord = (r) => {
   const d = jd(r);
-  return { id: r.id, date: r.date || nowLocal(), vitals: d.vitals || TF_VITALS_TEMPLATE, diagnosis: d.diagnosis || '', notes: r.notes || '' };
+  const rows = Array.isArray(d.rows) ? d.rows : [d];
+  return rows.map((row) => ({
+    id: r.id,
+    date: row.date || r.date || nowLocal(),
+    vitals: row.vitals ?? TF_VITALS_TEMPLATE,
+    diagnosis: row.diagnosis || '',
+    notes: row.notes ?? r.notes ?? ''
+  }));
 };
 function tfDraftRows() {
   const f = $('#mf');
@@ -4313,8 +4476,9 @@ function tfRender() {
 <textarea class="in" name="tf-notes-${i}" placeholder="${T('Prescribed medication, treatment plan, or notes...')}">${esc(r.notes || '')}</textarea>
 <div class="tf-actions"><button type="button" class="btn s r" data-a="tfremove:${i}" title="${T('Remove row')}">✕</button></div></div>`).join('');
   const history = tfShowHistory ? `<div class="tf-history"><h4>${T('Treatment History')}</h4>${tfHistory.map((r) => {
-    const d = jd(r);
-    return `<div class="tf-history-row"><div><b>${esc((r.date || '').replace('T', ' '))}</b><div>${esc(d.diagnosis || '')}</div><div class="mu">${esc(r.notes || '')}</div></div><div class="tools"><button type="button" class="btn s" data-a="tfedit:${r.id}">${T('Edit')}</button><button type="button" class="btn s r" data-a="tfdelete:${r.id}" title="${T('Delete this record?')}">✕</button></div></div>`;
+    const savedRows = tfRowsFromRecord(r);
+    const summary = savedRows.map((row) => row.diagnosis || row.notes).filter(Boolean).join(' · ');
+    return `<div class="tf-history-row"><div><b>${esc((r.date || '').replace('T', ' '))}</b><div>${savedRows.length} ${T('Treatment rows')}</div><div>${esc(summary)}</div></div><div class="tools"><button type="button" class="btn s" data-a="tfedit:${r.id}">${T('Edit')}</button><button type="button" class="btn s" data-a="tfprint-record:${r.id}">${T('Print Record')}</button><button type="button" class="btn s r" data-a="tfdelete:${r.id}" title="${T('Delete this record?')}">✕</button></div></div>`;
   }).join('') || `<p class="emp">${T('No history records yet.')}</p>`}</div>` : '';
   openForm(`${T('Treatment Follow-up')} — ${esc(p.name)}`, `<div class="tf-patient">${T('Patient')}: ${esc(p.name)} &nbsp;|&nbsp; ${T('Age')}: ${esc(fmtAge(p))} &nbsp;|&nbsp; ${T('Sex')}: ${esc(fmtSex(p.sex) || 'N/A')}</div>
 <div class="tf-toolbar"><button type="button" class="btn" data-a="tfhistory">${tfShowHistory ? T('Hide History') : T('View History')}</button><button type="button" class="btn g" data-a="tfadd">+ ${T('Add New Treatment Row')}</button><label class="tf-print-date-picker"><input class="in" id="tf-print-date" type="date" aria-label="កាលបរិច្ឆេទ / Date" value="${esc(printDate)}"></label><button type="button" class="btn" data-a="tfprint">Print All Records</button></div>
@@ -4323,14 +4487,24 @@ function tfRender() {
     const draftRows = tfDraftRows();
     const savedRows = draftRows.filter((r) => r.date && (r.vitals.trim() || r.diagnosis.trim() || r.notes.trim()));
     if (!savedRows.length) throw new Error(T('Enter treatment details before saving'));
-    for (const r of savedRows) {
-      const body = { patient_id: tfPatientId, kind: 'treatment', title: 'Treatment Follow-up', date: r.date, notes: r.notes, data: { vitals: r.vitals, diagnosis: r.diagnosis } };
-      if (r.id) await api('PUT', 'records/' + r.id, body);
-      else {
-        const created = await api('POST', 'records', body);
-        r.id = created.id;
+    const recordId = savedRows.find((r) => r.id)?.id;
+    const firstRow = savedRows[0];
+    const body = {
+      patient_id: tfPatientId,
+      kind: 'treatment',
+      title: 'Treatment Follow-up',
+      date: nowLocal(),
+      notes: savedRows.map((r) => r.notes).filter(Boolean).join('\n'),
+      data: {
+        vitals: firstRow.vitals,
+        diagnosis: firstRow.diagnosis,
+        rows: savedRows.map(({ date, vitals, diagnosis, notes }) => ({ date, vitals, diagnosis, notes }))
       }
-    }
+    };
+    const record = recordId
+      ? await api('PUT', 'records/' + recordId, body)
+      : await api('POST', 'records', body);
+    for (const row of draftRows) row.id = record.id;
     await load();
     tfHistory = (await api('GET', 'records?patient_id=' + tfPatientId + '&kind=treatment&limit=5000')).sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
     if (pdId == tfPatientId) await loadRecs();
@@ -4347,24 +4521,33 @@ async function treatmentFollowup(pid) {
   const p = ptById(pid); if (!p) return toast('Patient not found.');
   tfPatientId = pid;
   tfHistory = (await api('GET', 'records?patient_id=' + pid + '&kind=treatment&limit=5000')).sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
-  tfRows = [tfNewRow()];
+  tfRows = tfHistory.length ? tfRowsFromRecord(tfHistory[0]) : [tfNewRow()];
   tfShowHistory = false;
   tfRender();
 }
-function tfPrintAll(selectedDate = $('#tf-print-date').value) {
+function tfPrintAll(selectedDate = $('#tf-print-date').value, recordId = null) {
   const p = ptById(tfPatientId);
   if (!p) return toast('Patient not found.');
   if (!selectedDate) return toast('Select a date before printing.');
-  const history = tfHistory.filter((r) => {
-    const d = jd(r);
-    return [d.vitals, d.diagnosis, r.notes || d.notes].some((value) => String(value || '').trim());
-  }).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const history = tfHistory
+    .filter((r) => recordId == null || String(r.id) == String(recordId))
+    .flatMap((record) => {
+      const data = jd(record), savedRows = Array.isArray(data.rows) ? data.rows : [data];
+      return savedRows
+        .filter((row) => [row.vitals, row.diagnosis, row.notes ?? record.notes].some((value) => String(value || '').trim()))
+        .map((row) => ({
+          date: row.date || record.date || nowLocal(),
+          vitals: row.vitals || '',
+          diagnosis: row.diagnosis || '',
+          notes: row.notes ?? record.notes ?? ''
+        }));
+    })
+    .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
   const rows = history.map((r) => {
-    const d = jd(r);
     const [date, time] = String(r.date || '').replace('T', ' ').split(/\s+/, 2);
     const dateTime = `${fmtD(date)}${time ? ` ${esc(time.slice(0, 5))}` : ''}`;
     const cell = (value) => esc(value || '').replace(/\r?\n/g, '<br>');
-    return `<tr><td><div class="tf-print-date">${dateTime}</div><div class="tf-print-text">${cell(d.vitals)}</div></td><td class="tf-print-text">${cell(d.diagnosis)}</td><td class="tf-print-text">${cell(r.notes || d.notes)}</td></tr>`;
+    return `<tr><td><div class="tf-print-date">${dateTime}</div><div class="tf-print-text">${cell(r.vitals)}</div></td><td class="tf-print-text">${cell(r.diagnosis)}</td><td class="tf-print-text">${cell(r.notes)}</td></tr>`;
   }).join('');
   const printDate = fmtD(selectedDate);
   const body = `<section class="tf-print">
@@ -4379,12 +4562,21 @@ function tfPrintAll(selectedDate = $('#tf-print-date').value) {
 <div class="tf-print-signature"><span>ហត្ថលេខាគ្រូពេទ្យព្យាបាល</span><div></div><small>Doctor's Signature</small></div></section>`;
   printDoc('', body);
 }
+function tfPrintRecord(id) {
+  if (!tfHistory.some((r) => String(r.id) == String(id))) return toast('Treatment record not found.');
+  tfPrintAll(undefined, id);
+}
 async function tfDeleteRecord(id) {
   if (!confirm(T('Delete this record?'))) return;
   const draftRows = tfDraftRows();
   await api('DELETE', 'records/' + id);
   tfHistory = (await api('GET', 'records?patient_id=' + tfPatientId + '&kind=treatment&limit=5000')).sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
-  tfRows = draftRows;
+  tfRows = draftRows.map((row) => {
+    if (String(row.id) != String(id)) return row;
+    const unsavedRow = { ...row };
+    delete unsavedRow.id;
+    return unsavedRow;
+  });
   if (pdId == tfPatientId) await loadRecs();
   tfRender();
   toast('Deleted');
@@ -4394,7 +4586,7 @@ let payAllContext = null;
 const payAllLabel = (khmer, english) => `${khmer} / ${english}`;
 async function payForm(pid, payAll = false) {
   const p = ptById(pid); if (!p) return;
-  const targetPid = Number(pdId || pid);
+  const targetPid = Number(pid);
   const list = await api('GET', 'records?patient_id=' + targetPid + '&limit=5000'), due = billTotals(list).bal;
   if (!(due > 0)) return toast('Paid');
   if (!payAll) {
@@ -4403,7 +4595,7 @@ async function payForm(pid, payAll = false) {
       const rawMethod = readFormValue(f, 'method', 'payment_method', 'pay_method');
       const amt = Math.round(Number(rawAmount) || 0);
       const method = String(rawMethod || 'Cash');
-      const livePid = Number(pdId || targetPid || pid);
+      const livePid = targetPid;
       const liveList = await api('GET', 'records?patient_id=' + livePid + '&limit=5000');
       const liveDue = billTotals(liveList).bal;
       if (amt < 1) throw new Error('Enter an amount');
@@ -4420,7 +4612,7 @@ async function payForm(pid, payAll = false) {
   const outstandingItems = billingOutstandingItems(liveList);
   const itemRows = outstandingItems.map((item, index) => `<tr><td>${index + 1}</td><td>${esc(item.name)}</td><td>${item.quantity || 1}</td><td>${K(item.price)}</td></tr>`).join('');
   const methodOptions = [['Cash', payAllLabel('សាច់ប្រាក់', 'Cash')], ['Bank', payAllLabel('ធនាគារ', 'Bank')]];
-  payAllContext = { pid: targetPid, list: liveList, due: liveDue, items: outstandingItems, selectedIndexes: [], discountInput: 0, discountCurrency: 'KHR', allDiscountInput: 0, allDiscountCurrency: 'KHR' };
+  payAllContext = { pid: targetPid, list: liveList, due: liveDue, items: outstandingItems, selectedIndexes: [], discountInput: 0, discountCurrency: 'KHR', allDiscountInput: 0, allDiscountCurrency: 'KHR', receivedManuallySet: false };
   const body = `<section class="payall-patient"><div><small>${payAllLabel('អ្នកជំងឺ', 'Patient')}</small><b>${esc(p.name)}</b></div><div><small>${payAllLabel('សេវាមិនទាន់បង់', 'Unpaid services')}</small><b>${outstandingItems.length}</b></div></section>
     <div class="payall-items-wrap"><table class="payall-items"><thead><tr><th>${payAllLabel('ល.រ', 'No.')}</th><th>${payAllLabel('សេវាកម្ម / បរិយាយ', 'Service / Description')}</th><th>${payAllLabel('ចំនួន', 'Qty')}</th><th>${payAllLabel('ទឹកប្រាក់', 'Amount')}</th></tr></thead><tbody>${itemRows || `<tr><td colspan="4">${payAllLabel('មិនមានសេវាមិនទាន់បង់', 'No unpaid services')}</td></tr>`}</tbody></table></div>
     <section class="payall-summary"><div><span>${payAllLabel('តម្លៃសរុប', 'Total price')}</span><b>${K(due)}</b></div>
@@ -4433,7 +4625,7 @@ async function payForm(pid, payAll = false) {
     <div class="payall-shortcuts" aria-label="${payAllLabel('ប៊ូតុងទូទាត់រហ័ស', 'Payment shortcuts')}"><button type="button" class="btn" data-a="payall-print" aria-label="${payAllLabel('បោះពុម្ពវិក្កយបត្រ', 'Print payment invoice')}" title="${payAllLabel('បោះពុម្ពវិក្កយបត្រ', 'Print payment invoice')}">${printerIcon()}</button><button type="button" class="btn" data-a="payall-shortcut:exact" title="${payAllLabel('ទទួលប្រាក់ត្រឹមត្រូវតាមតម្លៃត្រូវបង់', 'Receive the exact final total')}">S-B</button><button type="button" class="btn" data-a="payall-shortcut:1000" title="${payAllLabel('បន្ថែម 1,000 KHR ទៅប្រាក់ទទួល', 'Add 1,000 KHR to money received')}">S</button><button type="button" class="btn" data-a="payall-shortcut:10000" title="${payAllLabel('បន្ថែម 10,000 KHR ទៅប្រាក់ទទួល', 'Add 10,000 KHR to money received')}">D</button><button type="button" class="btn" data-a="payall-shortcut:100000" title="${payAllLabel('បន្ថែម 100,000 KHR ទៅប្រាក់ទទួល', 'Add 100,000 KHR to money received')}">A</button></div>
     <div class="payall-shortcuts payall-more-actions"><button type="button" class="btn" data-a="payall-print:compact" aria-label="${payAllLabel('បោះពុម្ពបង្កាន់ដៃសង្ខេប', 'Print compact payment slip')}" title="${payAllLabel('បោះពុម្ពបង្កាន់ដៃសង្ខេប', 'Print compact payment slip')}">${printerIcon()}</button><button type="button" class="btn" data-a="payall-shortcut:exact" title="${payAllLabel('កំណត់ប្រាក់ទទួលឱ្យស្មើនឹងតម្លៃត្រូវបង់', 'Set money received to the exact final total')}">SV</button><button type="button" class="btn" data-a="payall-qr" title="${payAllLabel('បង្ហាញ QR ធនាគារ', 'Show configured bank QR')}">QR</button></div>`;
   openForm(`${payAllLabel('ទូទាត់ប្រាក់', 'Pay All')} — ${esc(p.name)}`, body, async (f) => {
-    const livePid = Number(pdId || pid || targetPid);
+    const livePid = targetPid;
     const liveList = await api('GET', 'records?patient_id=' + livePid + '&limit=5000');
     const liveDue = billTotals(liveList).bal;
     const liveOutstandingItems = billingOutstandingItems(liveList);
@@ -4475,6 +4667,7 @@ async function payForm(pid, payAll = false) {
     await load(); if (rt == 'pd' && pdId == livePid) await loadRecs(); render(); toast('Saved');
   }, { cls: 'wide payall-dialog', ok: payAllLabel('បញ្ជាក់ការទូទាត់', 'Confirm payment'), close: true, closeLabel: payAllLabel('បិទ', 'Close') });
   $('#mf').dataset.payallDue = String(liveDue);
+  payAllRefresh();
 }
 function payAllCalculation(due, discount, currency) {
   const rate = Number(D.clinic.rate) || 4000;
@@ -4569,6 +4762,7 @@ function payAllRefresh() {
   context.allDiscountInput = Number(allDiscountInput ? allDiscountInput.value : 0) || 0;
   context.allDiscountCurrency = allDiscountCurrency ? allDiscountCurrency.value : 'KHR';
   const calculation = payAllDiscountCalculation(context.items, context.selectedIndexes, context.discountInput, context.discountCurrency, context.allDiscountInput, context.allDiscountCurrency);
+  if (receivedInput && !context.receivedManuallySet) receivedInput.value = calculation.finalTotal;
   const received = Number(receivedInput ? receivedInput.value : 0) || 0;
   const remaining = Number.isFinite(received) && received >= calculation.finalTotal ? 0 : Math.max(0, context.due - (Number.isFinite(received) ? received : 0));
   $('#payall-final-total').textContent = K(calculation.finalTotal);
@@ -4579,6 +4773,7 @@ function payAllShortcut(kind) {
   const form = $('#mf'), received = form.querySelector('[name="received"]'), context = payAllContext;
   payAllRefresh();
   const finalTotal = payAllDiscountCalculation(context.items, context.selectedIndexes, context.discountInput, context.discountCurrency, context.allDiscountInput, context.allDiscountCurrency).finalTotal;
+  context.receivedManuallySet = true;
   received.value = kind == 'exact' ? finalTotal : finalTotal + Number(kind);
   payAllRefresh();
 }
@@ -4603,26 +4798,35 @@ function billingLineItems(list) {
     const d = jd(r);
     if (r.kind == 'schedule' && schBillable(r)) return [{ category: 'Treatment Charges', name: [d.selection, d.treatment_type, d.diagnosis || d.dx, r.notes].filter(Boolean).join(' — ') || r.title || 'Treatment charge', price: +d.amount || 0 }];
     if (r.kind == 'lab') {
-      if (Array.isArray(d.tests) && d.tests.length) return d.tests.map((test) => ({ category: 'Lab Charges', name: test.name || d.test_name || r.title || T('Lab result'), price: +test.price || 0 }));
-      return +d.price > 0 ? [{ category: 'Lab Charges', name: d.test_name || r.title || T('Lab result'), price: +d.price }] : [];
+      if (Array.isArray(d.tests) && d.tests.length) return d.tests.flatMap((test, itemIndex) => {
+        const quantity = Math.max(0, test.quantity == null ? 1 : Number(test.quantity) || 0), unitPrice = +test.price || 0;
+        if (!quantity) return [];
+        return [{ category: 'Lab Charges', name: test.name || d.test_name || r.title || T('Lab result'), price: unitPrice * quantity, quantity, unitPrice, recordId: r.id, itemIndex }];
+      });
+      const quantity = Math.max(0, d.quantity == null ? 1 : Number(d.quantity) || 0), unitPrice = Number(d.unit_price ?? d.price) || 0;
+      return unitPrice > 0 ? [{ category: 'Lab Charges', name: d.test_name || r.title || T('Lab result'), price: unitPrice * quantity, quantity, unitPrice, recordId: r.id, itemIndex: 0 }] : [];
     }
     if (r.kind == 'investigation' && Array.isArray(d.items)) return d.items.map((item, itemIndex) => {
       const quantity = Math.max(1, +item.quantity || 1), unitPrice = +item.unit_price || +item.price || 0;
       return { category: 'Service Charges', name: item.name || 'Service', price: unitPrice * quantity, quantity, unitPrice, recordId: r.id, itemIndex };
     });
     if (r.kind == 'prescription' && Array.isArray(d.medicines)) return d.medicines.map((item, itemIndex) => {
-      const quantity = Math.max(0, +item.quantity || 0), unitPrice = +item.price || 0;
+      const quantity = Math.max(0, item.billing_quantity == null ? Number(item.quantity) || 0 : Number(item.billing_quantity) || 0), unitPrice = +item.price || 0;
       return quantity && unitPrice ? { category: 'Pharmacy Charges', name: item.name || T('Prescription'), price: unitPrice * quantity, quantity, unitPrice, recordId: r.id, itemIndex } : null;
     }).filter(Boolean);
     if (r.kind == 'medlist' && (d.dispensed === true || r.title == 'Dispensed medicines') && Array.isArray(d.items)) return d.items.map((item, itemIndex) => {
-      const quantity = Math.max(1, +item.quantity || 1), unitPrice = +item.price || 0;
-      return unitPrice ? { category: 'Pharmacy Charges', name: [item.name, item.unit_name && `(${item.unit_name})`].filter(Boolean).join(' '), price: unitPrice * quantity, quantity, unitPrice, recordId: r.id, itemIndex } : null;
+      const quantity = Math.max(0, item.billing_quantity == null ? Math.max(1, Number(item.quantity) || 1) : Number(item.billing_quantity) || 0), unitPrice = +item.price || 0;
+      return quantity && unitPrice ? { category: 'Pharmacy Charges', name: [item.name, item.unit_name && `(${item.unit_name})`].filter(Boolean).join(' '), price: unitPrice * quantity, quantity, unitPrice, recordId: r.id, itemIndex } : null;
     }).filter(Boolean);
     return [];
   });
 }
 const paymentAmount = (data) => {
   const amount = Number(data.applied_amount ?? data.amount ?? data.received ?? data.paid_amount ?? 0);
+  return Number.isFinite(amount) ? amount : 0;
+};
+const paymentGrandTotal = (data) => {
+  const amount = Number(data.final_total ?? data.applied_amount ?? data.amount ?? data.received ?? data.paid_amount ?? 0);
   return Number.isFinite(amount) ? amount : 0;
 };
 function billingOutstandingItems(list) {
@@ -4639,13 +4843,13 @@ function paidHistoryDate(record, data) {
   return `<span class="bill-payment-date"><span>${esc(record.date || paidAt.slice(0, 10) || '')}</span><small>${esc(time || '—')}</small></span>`;
 }
 function paidHistoryTable(payments, records) {
-  const total = payments.reduce((sum, r) => sum + paymentAmount(jd(r)), 0);
+  const total = payments.reduce((sum, r) => sum + paymentGrandTotal(jd(r)), 0);
   const rows = payments.map((r) => {
-    const d = jd(r), amount = paymentAmount(d), count = Number.isFinite(+d.item_count) ? +d.item_count : Array.isArray(d.items) ? d.items.length : billingLineItems(records).length;
+    const d = jd(r), amount = paymentGrandTotal(d), count = Number.isFinite(+d.item_count) ? +d.item_count : Array.isArray(d.items) ? d.items.length : billingLineItems(records).length;
     return `<tr><td>${paidHistoryDate(r, d)}</td><td>PAY-${esc(r.id)}</td><td>${esc(d.method || '—')}</td><td>${count}</td><td><b>${K(amount)}</b></td><td><button type="button" class="btn s" data-a="payreceipt:${r.id}">${T('Receipt')}</button></td></tr>`;
   }).join('');
   const cards = payments.map((r) => {
-    const d = jd(r), amount = paymentAmount(d), count = Number.isFinite(+d.item_count) ? +d.item_count : Array.isArray(d.items) ? d.items.length : billingLineItems(records).length;
+    const d = jd(r), amount = paymentGrandTotal(d), count = Number.isFinite(+d.item_count) ? +d.item_count : Array.isArray(d.items) ? d.items.length : billingLineItems(records).length;
     return `<article class="bill-payment-card"><div class="bill-payment-card-head"><b>${paidHistoryDate(r, d)}</b><button type="button" class="btn s" data-a="payreceipt:${r.id}">▣ ${T('Receipt')}</button></div><div class="mu">PAY-${esc(r.id)}</div><div class="bill-payment-card-details"><span>${T('Method')}</span><b>${esc(d.method || '—')}</b><span>${T('Items')}</span><b>${count}</b><span>${T('Total Paid')}</span><b>${K(amount)}</b></div></article>`;
   }).join('');
   const html = paidHistoryView == 'table'
@@ -4658,12 +4862,17 @@ function paidHistoryPanelInner(payments, records) {
   const icon = paidHistoryView == 'table' ? '▦' : '☷';
   return `<h4><span>◇ ${T('Paid History')}</span><span class="paid-history-controls">${payments.length ? `<span class="billing-total-badge paid-total-badge">${T('Total Paid')}: ${K(history.total)}</span>` : ''}<button type="button" class="btn s paid-view-toggle" data-a="paidview" title="${T('Switch to ' + nextView + ' view')}" aria-label="${T('Switch to ' + nextView + ' view')}">${icon}</button></span></h4>${payments.length ? history.html : `<p class="emp">${T('No paid bills found.')}</p>`}`;
 }
+function billQuantityControl(item) {
+  if (!['Service Charges', 'Lab Charges', 'Pharmacy Charges'].includes(item.category)) return '';
+  const action = item.category == 'Lab Charges' ? 'labqty' : item.category == 'Pharmacy Charges' ? 'pharmqty' : 'svc';
+  return `<div class="bill-quantity"><button type="button" class="btn s" data-a="${action}minus:${item.recordId}:${item.itemIndex}" title="${T('Remove one')}" ${item.category != 'Service Charges' && item.quantity <= 0 ? 'disabled' : ''}>−</button><span>${item.quantity}</span><button type="button" class="btn s" data-a="${action}plus:${item.recordId}:${item.itemIndex}" title="${T('Add one')}">+</button></div>`;
+}
 function billPanel() {
   const t = billTotals(recs), items = billingOutstandingItems(recs), pays = recs.filter((r) => r.kind == 'payment').sort((a, b) => (b.date || '').localeCompare(a.date || '') || b.id - a.id);
   const categories = [...new Set(items.map((item) => item.category))];
   const unpaidItems = categories.map((category) => {
     const group = items.filter((item) => item.category == category), total = group.reduce((sum, item) => sum + item.price, 0);
-    return `<div class="bill-charge-group"><div class="bill-charge-heading"><b>◇ ${T(category)}</b><b>${K(total)}</b></div>${group.map((item) => `<div class="bill-charge-item"><div>${esc(item.name)}<small>${K(item.unitPrice ?? item.price)}${item.quantity > 1 ? ` × ${item.quantity}` : ''}</small></div><div class="bill-charge-right"><b>${K(item.price)}</b>${item.category == 'Service Charges' ? `<div class="bill-quantity"><button type="button" class="btn s" data-a="svcminus:${item.recordId}:${item.itemIndex}" title="${T('Remove one')}">−</button><span>${item.quantity}</span><button type="button" class="btn s" data-a="svcplus:${item.recordId}:${item.itemIndex}" title="${T('Add one')}">+</button></div>` : ''}</div></div>`).join('')}</div>`;
+    return `<div class="bill-charge-group"><div class="bill-charge-heading"><b>◇ ${T(category)}</b><b>${K(total)}</b></div>${group.map((item) => `<div class="bill-charge-item"><div>${esc(item.name)}${item.quantity > 1 ? `<small>${K(item.unitPrice ?? item.price)} × ${item.quantity}</small>` : ''}</div><div class="bill-charge-right"><b>${K(item.price)}</b>${billQuantityControl(item)}</div></div>`).join('')}</div>`;
   }).join('');
   return `<div class="billing-page"><div class="billing-toolbar"><h2 class="rh">▱ ${T('Billing history')}</h2><div class="tools"><button class="btn" data-a="schinv">${T('Invoice')}</button><button class="btn" data-a="recpay" ${t.bal ? '' : 'disabled'}>+ ${T('Record payment')}</button><button class="btn g billing-payall" data-a="payall" ${t.bal ? '' : 'disabled'}>$ ${T('Pay All')}: ${K(t.bal)}</button></div></div>
 <div class="billing-columns"><section class="billing-panel"><h4><span>◇ ${T('Unpaid')}</span><span class="billing-total-badge">${T('Total')}: ${K(t.bal)}</span></h4>${t.bal ? unpaidItems : `<p class="emp">${T('No unpaid bills found.')}</p>`}<div class="bill-total"><b>${T('Total Unpaid Amount')}:</b><b>${K(t.bal)}</b></div></section>
@@ -4682,6 +4891,40 @@ async function changeInvestigationQuantity(recordId, itemIndex, delta) {
   }
   if (!d.items.length) await api('DELETE', 'records/' + r.id);
   else await api('PUT', 'records/' + r.id, { data: d });
+  await loadRecs();
+  await load();
+  render();
+}
+async function changeLabQuantity(recordId, itemIndex, delta) {
+  const record = recs.find((item) => String(item.id) == String(recordId) && item.kind == 'lab');
+  if (!record) throw new Error(T('Lab result not found'));
+  const data = jd(record);
+  if (Array.isArray(data.tests) && data.tests.length) {
+    const test = data.tests[itemIndex];
+    if (!test) throw new Error(T('Lab charge item not found'));
+    test.quantity = Math.max(0, (test.quantity == null ? 1 : Number(test.quantity) || 0) + delta);
+    data.price = data.tests.reduce((sum, item) => sum + (Number(item.price) || 0) * Math.max(0, item.quantity == null ? 1 : Number(item.quantity) || 0), 0);
+  } else {
+    if (itemIndex != 0 || !(Number(data.price) > 0)) throw new Error(T('Lab charge item not found'));
+    const unitPrice = Number(data.unit_price ?? data.price) || 0;
+    data.quantity = Math.max(0, (data.quantity == null ? 1 : Number(data.quantity) || 0) + delta);
+    data.unit_price = unitPrice;
+    data.price = unitPrice * data.quantity;
+  }
+  await api('PUT', 'records/' + record.id, { data });
+  await loadRecs();
+  await load();
+  render();
+}
+async function changePharmacyQuantity(recordId, itemIndex, delta) {
+  const record = recs.find((item) => String(item.id) == String(recordId) && ['prescription', 'medlist'].includes(item.kind));
+  if (!record) throw new Error(T('Pharmacy charge not found'));
+  const data = jd(record), items = record.kind == 'prescription' ? data.medicines : data.items;
+  if (!Array.isArray(items) || !items[itemIndex]) throw new Error(T('Pharmacy charge item not found'));
+  const item = items[itemIndex], originalQuantity = Math.max(0, Number(item.quantity) || 0);
+  const currentQuantity = Math.max(0, item.billing_quantity == null ? (record.kind == 'medlist' ? Math.max(1, originalQuantity) : originalQuantity) : Number(item.billing_quantity) || 0);
+  item.billing_quantity = Math.max(0, currentQuantity + delta);
+  await api('PUT', 'records/' + record.id, { data });
   await loadRecs();
   await load();
   render();
@@ -4720,7 +4963,7 @@ async function openIpdBilling(pid) {
   const categories = [...new Set(outstanding.map((item) => item.category))];
   const unpaidItems = categories.map((category) => {
     const group = outstanding.filter((item) => item.category == category), total = group.reduce((sum, item) => sum + item.price, 0);
-    return `<div class="bill-charge-group"><div class="bill-charge-heading"><b>◇ ${T(category)}</b><b>${K(total)}</b></div>${group.map((item) => `<div class="bill-charge-item"><div>${esc(item.name)}${item.quantity > 1 ? `<small>${K(item.unitPrice)} × ${item.quantity}</small>` : ''}</div><b>${K(item.price)}</b></div>`).join('')}</div>`;
+    return `<div class="bill-charge-group"><div class="bill-charge-heading"><b>◇ ${T(category)}</b><b>${K(total)}</b></div>${group.map((item) => `<div class="bill-charge-item"><div>${esc(item.name)}<small>${K(item.unitPrice ?? item.price)}${item.quantity > 1 ? ` × ${item.quantity}` : ''}</small></div><div class="bill-charge-right"><b>${K(item.price)}</b>${billQuantityControl(item)}</div></div>`).join('')}</div>`;
   }).join('');
   const f = $('#mf');
   f.className = 'xl billing-dialog';
@@ -4741,7 +4984,7 @@ async function invoicePrint(pid) {
 }
 RX.push([/^Showing (\d+) to (\d+) of (\d+) records$/, 'បង្ហាញ $1 ដល់ $2 នៃ $3 កំណត់ត្រា']);
 Object.assign(L, { 'IPD/OPD': 'IPD/OPD', 'Treatment': 'ការព្យាបាល', 'Medical Record': 'Medical Record', 'Complaints': 'ពាក្យបណ្តឹង', 'Registration date': 'កាលបរិច្ឆេទចុះឈ្មោះ', 'Details': 'ព័ត៌មានលម្អិត', 'Search Name, Phone, NSSF, National ID…': 'ស្វែងរកឈ្មោះ លេខទូរស័ព្ទ NSSF អត្តសញ្ញាណប័ណ្ណ…', 'Billing history': 'ប្រវត្តិគិតលុយ', 'Record payment': 'កត់ត្រាការបង់ប្រាក់', '+ Record payment': '+ កត់ត្រាការបង់ប្រាក់', 'Pay All': 'បង់ប្រាក់ទាំងអស់', 'Paid History': 'ប្រវត្តិបង់ប្រាក់', 'No unpaid bills found.': 'មិនមានវិក្កយបត្រមិនទាន់បង់ទេ។', 'No paid bills found.': 'មិនមានប្រវត្តិបង់ប្រាក់ទេ។', 'Total Paid': 'សរុបបានបង់', 'Outstanding balance': 'សមតុល្យមិនទាន់បង់', 'Total': 'សរុប', 'Close': 'បិទ', 'Receipt': 'បង្កាន់ដៃ', 'Payment Receipt': 'បង្កាន់ដៃបង់ប្រាក់', 'Charges': 'ការគិតថ្លៃ', 'Balance': 'សមតុល្យ', 'Method': 'វិធីសាស្ត្រ', 'Amount paid (KHR)': 'ទឹកប្រាក់បានបង់ (KHR)', 'No patients.': 'គ្មានអ្នកជំងឺទេ។', 'Patient card': 'កាតអ្នកជំងឺ', 'Amount is more than the balance': 'ចំនួនទឹកប្រាក់លើសសមតុល្យ', 'Enter an amount': 'សូមបញ្ចូលចំនួនទឹកប្រាក់' });
-Object.assign(L, { 'Treatment Follow-up': 'ការតាមដានការព្យាបាល', 'Date / Vital Signs': 'កាលបរិច្ឆេទ / សញ្ញាជីវិត', 'Diagnosis / Evolution': 'រោគវិនិច្ឆ័យ / ការវិវត្ត', 'Treatment / Notes': 'ការព្យាបាល / កំណត់ចំណាំ', 'Actions': 'សកម្មភាព', 'Patient': 'អ្នកជំងឺ', 'Enter vital signs': 'បញ្ចូលសញ្ញាជីវិត', "Describe patient's condition, symptoms, or diagnosis": 'ពិពណ៌នាអំពីស្ថានភាព រោគសញ្ញា ឬរោគវិនិច្ឆ័យ', 'Prescribed medication, treatment plan, or notes...': 'ថ្នាំ ផែនការព្យាបាល ឬកំណត់ចំណាំ...', 'Remove row': 'លុបជួរដេក', 'Treatment History': 'ប្រវត្តិការព្យាបាល', 'Hide History': 'លាក់ប្រវត្តិ', 'Add New Treatment Row': 'បន្ថែមជួរដេកការព្យាបាលថ្មី', 'Add a treatment row to begin.': 'បន្ថែមជួរដេកការព្យាបាលដើម្បីចាប់ផ្តើម។', 'Print All Records': 'បោះពុម្ពកំណត់ត្រាទាំងអស់', 'Save Record': 'រក្សាទុកកំណត់ត្រា', 'Enter treatment details before saving': 'សូមបញ្ចូលព័ត៌មានការព្យាបាលមុនពេលរក្សាទុក' });
+Object.assign(L, { 'Treatment Follow-up': 'ការតាមដានការព្យាបាល', 'Date / Vital Signs': 'កាលបរិច្ឆេទ / សញ្ញាជីវិត', 'Diagnosis / Evolution': 'រោគវិនិច្ឆ័យ / ការវិវត្ត', 'Treatment / Notes': 'ការព្យាបាល / កំណត់ចំណាំ', 'Actions': 'សកម្មភាព', 'Patient': 'អ្នកជំងឺ', 'Enter vital signs': 'បញ្ចូលសញ្ញាជីវិត', "Describe patient's condition, symptoms, or diagnosis": 'ពិពណ៌នាអំពីស្ថានភាព រោគសញ្ញា ឬរោគវិនិច្ឆ័យ', 'Prescribed medication, treatment plan, or notes...': 'ថ្នាំ ផែនការព្យាបាល ឬកំណត់ចំណាំ...', 'Remove row': 'លុបជួរដេក', 'Treatment History': 'ប្រវត្តិការព្យាបាល', 'Treatment rows': 'ជួរដេកការព្យាបាល', 'Hide History': 'លាក់ប្រវត្តិ', 'Add New Treatment Row': 'បន្ថែមជួរដេកការព្យាបាលថ្មី', 'Add a treatment row to begin.': 'បន្ថែមជួរដេកការព្យាបាលដើម្បីចាប់ផ្តើម។', 'Print All Records': 'បោះពុម្ពកំណត់ត្រាទាំងអស់', 'Print Record': 'បោះពុម្ពកំណត់ត្រា', 'Save Record': 'រក្សាទុកកំណត់ត្រា', 'Enter treatment details before saving': 'សូមបញ្ចូលព័ត៌មានការព្យាបាលមុនពេលរក្សាទុក' });
 try { if (localStorage.getItem('sbc') == '1' && document.body.classList) document.body.classList.add('sbc'); } catch (e) { /* ignore */ }
 Object.assign(L, { 'Menu': 'ម៉ឺនុយ' });
 Object.assign(L, { 'Waiting': 'រង់ចាំ', 'Confirmed': 'បានបញ្ជាក់', 'Status': 'ស្ថានភាព', 'Edit': 'កែប្រែ' });
@@ -4757,6 +5000,7 @@ Object.assign(L, { 'Columns': 'ជួរឈរ', '☰ Columns': '☰ ជួរ�
 Object.assign(L, { 'Request service': 'ស្នើសុំសេវាកម្ម', 'Search services…': 'ស្វែងរកសេវាកម្ម…', 'Add selected': 'បន្ថែមសេវាកម្មដែលបានជ្រើស', 'Service requests': 'សំណើសេវាកម្ម', 'No services requested yet.': 'មិនទាន់មានសំណើសេវាកម្មទេ។', 'No matching services.': 'រកមិនឃើញសេវាកម្មដែលត្រូវគ្នាទេ។', 'Requested services': 'សេវាកម្មដែលបានស្នើ', 'Select at least one service': 'សូមជ្រើសរើសសេវាកម្មយ៉ាងតិចមួយ', 'Services requested': 'បានស្នើសេវាកម្ម' });
 Object.assign(L, { 'Service Charges': 'ថ្លៃសេវាកម្ម', 'Treatment Charges': 'ថ្លៃព្យាបាល', 'Lab Charges': 'ថ្លៃតេស្ត Lab', 'Pharmacy Charges': 'ថ្លៃឱសថ', 'Total Unpaid Amount': 'ចំនួនទឹកប្រាក់មិនទាន់បង់សរុប', 'Items': 'មុខទំនិញ' });
 Object.assign(L, { 'Add Vaccination': 'បញ្ចូលបញ្ជីការចាក់វ៉ាក់សាំង', 'Edit Vaccination': 'កែប្រែបញ្ជីការចាក់វ៉ាក់សាំង', 'Vaccine category': 'ប្រភេទវ៉ាក់សាំង', 'Child vaccination': 'វ៉ាក់សាំងកុមារ', 'Adult vaccination': 'វ៉ាក់សាំងមនុស្សពេញវ័យ', 'Other': 'ផ្សេងៗ', 'Vaccine group': 'ឈ្មោះក្រុមវ៉ាក់សាំង', 'Enter vaccine group': 'បញ្ចូលប្រភេទវ៉ាក់សាំង', 'Vaccination dose': 'ចាក់វ៉ាក់សាំង', 'Dose date': 'ថ្ងៃ ខែ ឆ្នាំ', 'Given': 'ចាក់រួច', 'Vaccine reason': 'បញ្ជាក់មូលហេតុ', 'Vaccination notes': 'ចំណាំ', 'Vaccination notes placeholder': 'សូមបញ្ចូលព័ត៌មានការចាក់វ៉ាក់សាំង', 'Vaccination date': 'កាលបរិច្ឆេទចាក់វ៉ាក់សាំង', 'Administered by': 'បុគ្គលិកចាក់វ៉ាក់សាំង' });
+Object.assign(L, { 'Edit unpaid remark': 'កែប្រែកំណត់សម្គាល់បំណុល', 'Remark': 'កំណត់សម្គាល់', 'No remark': 'មិនមានកំណត់សម្គាល់', 'Edit remark': 'កែប្រែកំណត់សម្គាល់' });
 
 // ---------- OPD -> IPD: click the OPD badge (or the bed icon) to enter Room and Bed ----------
 function bedForm(pid) {
@@ -4770,7 +5014,7 @@ function bedForm(pid) {
   }, { cls: '', ok: 'Save', extra: `<button type="button" class="btn" data-a="bedfollowup:${pid}">${T('Follow Up')}</button>` });
   const first = $('#mf input'); if (first && first.focus) first.focus();
 }
-Object.assign(L, { 'Update Bed Information': 'ធ្វើបច្ចុប្បន្នភាពព័ត៌មានគ្រែ', 'Room Number': 'លេខបន្ទប់', 'Bed Number': 'លេខគ្រែ', 'Room / Bed': 'បន្ទប់ / គ្រែ', 'Bed': 'គ្រែ', 'Admitted to IPD': 'បានទទួលជាអ្នកជំងឺក្នុង' });
+Object.assign(L, { 'Update Bed Information': 'ធ្វើបច្ចុប្បន្នភាពព័ត៌មានគ្រែ', 'Room Number': 'លេខបន្ទប់', 'Bed Number': 'លេខគ្រែ', 'Room/Bed': 'បន្ទប់ / គ្រែ', 'Bed': 'គ្រែ', 'Admitted to IPD': 'បានទទួលជាអ្នកជំងឺក្នុង' });
 
 // ---------- Inpatients (IPD) and Current IPD: full table ----------
 const ipdById = (id) => D.ipd.find((x) => x.id == id);
@@ -4781,7 +5025,7 @@ function ipdDays(r) {
   const e = r.out ? (r.dis || String(r.updated_at || '').slice(0, 10)) : ymd(new Date());
   const n = Math.round((Date.parse(e) - Date.parse(s)) / 864e5); return isNaN(n) ? null : Math.max(0, n);
 }
-const ipdHead = ['Name', 'Latin name', 'IPD/OPD', 'Room / Bed', 'Treatment', 'Billing history', 'Admission date', 'Discharge date', 'Days', 'Actions'];
+const ipdHead = ['Name', 'Latin name', 'IPD/OPD', 'Room/Bed', 'Treatment', 'Billing history', 'Admission date', 'Discharge date', 'Days', 'Actions'];
 function ipdRow(r) {
   const p = ipdPt(r), i = D.ipd.indexOf(r), d = ipdDays(r), st = ipdStart(r), due = p ? patientDue(p.id) : 0;
   return `<tr><td><div class="pn"><div><a href="#" data-a="${p ? 'open:' + p.id : 'ipdedit:' + r.id}">${esc(r.name)}</a> <span class="mu">(${esc(r.code)})</span></div></div></td>

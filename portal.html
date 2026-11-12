@@ -35,6 +35,10 @@
     .portal-item p{margin:8px 0 0;white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px}
     .portal-item dl{display:grid;grid-template-columns:minmax(100px,auto) 1fr;gap:6px 12px;margin:10px 0 0;font-size:12px}
     .portal-item dt{color:#718096}.portal-item dd{margin:0;overflow-wrap:anywhere}
+    .portal-item .portal-value-list{display:grid;gap:6px;margin:0;padding-left:18px}
+    .portal-item .portal-value-object{display:grid;gap:4px}
+    .portal-item .portal-value-field{display:flex;flex-wrap:wrap;gap:2px 6px}
+    .portal-item .portal-value-field b{font-weight:600}
     .portal-message{margin:50px auto;max-width:500px;padding:28px;background:#fff;border-radius:10px;text-align:center;box-shadow:0 2px 8px #17203316}
     .portal-message h1{margin-top:0;font-size:21px}.portal-message p{color:#64748b}
     .portal-footer{padding:26px 0;color:#8290a4;text-align:center;font-size:12px}
@@ -44,7 +48,8 @@
   <script>
     const privateIPv4=/^(?:10(?:\.\d{1,3}){3}|192\.168(?:\.\d{1,3}){2}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2})$/.test(location.hostname);
     const localHost=location.hostname==='localhost'||location.hostname==='127.0.0.1'||location.hostname.endsWith('.local')||privateIPv4;
-    window.API_BASE=localHost?'':'https://clinicsovanvitou-backend-67e0.onrender.com';
+    const sameOriginApi=localHost||location.hostname.endsWith('.synology.me');
+    window.API_BASE=sameOriginApi?'':'https://clinicsovanvitou-backend-67e0.onrender.com';
   </script>
   <script src="portal.js" defer></script>
 </head>
