@@ -119,14 +119,26 @@ function printDoc(title, html, options = {}) {
   pa.innerHTML = `<div class="print-document">${head || ''}${customHeader}${printTemplateHeader}${title ? `<h3>${esc(title)}</h3>` : ''}<main class="print-document-content">${html}</main>${footer}${printTemplateFooter}${footerContent}</div>${templateStyles}`;
   const startPrint = () => {
     const qr = pa.querySelector('.rx-print-portal img');
-    const decoding = qr && typeof qr.decode == 'function' ? qr.decode() : null;
-    if (decoding && typeof decoding.then == 'function') {
-      decoding.then(() => window.print()).catch((error) => {
-        console.error('Could not decode the patient portal QR before printing', error);
-        toast('Patient portal QR could not be prepared for printing');
-        window.print();
-      });
-    } else window.print();
+    const images = Array.from(pa.querySelectorAll('img'));
+    if (!images.length) return window.print();
+    Promise.all(images.map(async (image) => {
+      try {
+        if (typeof image.decode == 'function') await image.decode();
+        else if (!image.complete) await new Promise((resolve) => {
+          image.addEventListener('load', resolve, { once: true });
+          image.addEventListener('error', resolve, { once: true });
+        });
+        if (image.complete && image.naturalWidth === 0) throw new Error('Image did not load');
+      } catch (error) {
+        if (image === qr) {
+          console.error('Could not decode the patient portal QR before printing', error);
+          toast('Patient portal QR could not be prepared for printing');
+        } else {
+          console.error('Could not prepare an image before printing', error);
+          toast('A print image could not be prepared');
+        }
+      }
+    })).then(() => window.print());
   };
   if (options.printImmediately) startPrint();
   else setTimeout(startPrint, 60);
@@ -164,7 +176,12 @@ ${e ? '' : `<button type="button" class="btn dash" data-a="vsbtn">+ Record vital
       const saved = e ? await api('PUT', 'patients/' + p.id, body) : await api('POST', 'patients', { ...body, type: 'OPD', unpaid: 0 });
       const vs = {}; VS.forEach(([l, k]) => { const v = m.get('vs_' + k); if (v) vs[k] = v; });
       if (!e && Object.keys(vs).length) await api('POST', 'records', { patient_id: saved.id, kind: 'vitals', date: body.reg_date || nowLocal(), data: vs });
-      await load(); render(); toast(e ? 'Saved' : 'Patient registered');
+      await load();
+      if (!e) {
+        tab = 'OPD'; pg = 1; q = '';
+        Object.keys(pf).forEach((key) => delete pf[key]);
+      }
+      render(); toast(e ? 'Saved' : 'Patient registered');
     }, { cls: 'wide', ok: e ? 'Save' : 'Register Patient', extra: '<button type="button" class="btn" data-a="regprint">Print</button>' });
 }
 function regPrint() {
@@ -3650,9 +3667,11 @@ function cnfForm(r) {
 
 // ---------- appointments: calendar (month / week / day) with list toggle ----------
 let cal = { mode: 'month', d: new Date(), list: false };
+let appointmentDateFilter = '';
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const isFollowUpAppointment = (appointment) => appointment.type === 'Follow Up';
 P.ap.fl = (appointment) => !isFollowUpAppointment(appointment);
+P.ap.f.push(['Note', 'notes', 'ta']);
 const apRows = () => D.ap.filter((a) => !isFollowUpAppointment(a) && (!q || JSON.stringify(a).toLowerCase().includes(q.toLowerCase())));
 function calHtml() {
   const d = cal.d, loc = lang != 'en' ? 'km-KH' : 'en-US', by = {}, today = ymd(new Date());
@@ -3674,11 +3693,70 @@ function calHtml() {
   }
   return `<div class="card" style="padding:14px"><div class="tools" style="justify-content:space-between;margin-bottom:12px"><div class="tools"><button class="btn dk" data-a="calprev">‹</button><button class="btn dk" data-a="calnext">›</button><button class="btn" data-a="caltoday">today</button></div><b style="font-size:18px">${title}</b><div class="tabs dkt">${['month', 'week', 'day'].map((m) => `<button class="${cal.mode == m ? 'on' : ''}" data-a="calmode:${m}">${m}</button>`).join('')}</div></div>${body}</div>`;
 }
+function appointmentListHtml() {
+  const rows = apRows().filter((appointment) => !appointmentDateFilter || String(appointment.date || '').slice(0, 10) == appointmentDateFilter);
+  const columns = [
+    ['No.', 'no'], ['Name', 'name'], ['Date', 'date'], ['Time', 'time'],
+    ['Note', 'notes'], ['Service', 'service'], ['Doctor', 'doctor'], ['Phone', 'phone'],
+    ['Status', 'status'], ['Actions', 'actions']
+  ];
+  const dateFilter = `<label class="appointment-date-filter"><span>${T('Date')}</span><input id="appointment-date-filter" class="in" type="date" value="${esc(appointmentDateFilter)}" aria-label="${esc(T('Filter appointments by date'))}"></label>`;
+  const actions = `<button class="btn" data-a="callist">${T('Calendar view')}</button>${dateFilter}${sr(T('Search patient name…'))}<button class="btn" data-a="csv">${T('Export Excel')}</button><button class="btn g" data-a="apadd:${ymd(new Date())}">+ ${T('Add')}</button>`;
+  const body = rows.map((appointment, index) => {
+    const appointmentIndex = D.ap.indexOf(appointment);
+    const parsedDate = appointment.date ? new Date(`${String(appointment.date).slice(0, 10)}T00:00:00`) : null;
+    const date = parsedDate && !Number.isNaN(parsedDate.getTime()) ? parsedDate.toLocaleDateString('en-US') : appointment.date || '—';
+    const phone = String(appointment.phone || '').trim();
+    const normalizePhone = (value) => String(value || '').replace(/\D/g, '');
+    const linkedPatient = D.pt.find((patient) => String(patient.id) == String(appointment.patient_id))
+      || (normalizePhone(phone) && D.pt.filter((patient) => normalizePhone(patient.phone) == normalizePhone(phone)).length == 1
+        ? D.pt.find((patient) => normalizePhone(patient.phone) == normalizePhone(phone))
+        : null)
+      || (() => {
+        const matches = D.pt.filter((patient) => String(patient.name || '').trim().toLocaleLowerCase() == String(appointment.name || '').trim().toLocaleLowerCase());
+        return matches.length == 1 ? matches[0] : null;
+      })();
+    const namePhone = linkedPatient ? String(linkedPatient.phone || '').trim() : phone;
+    const patientName = linkedPatient
+      ? `<a class="appointment-list-name" href="#" data-a="open:${esc(linkedPatient.id)}">${esc(appointment.name || linkedPatient.name)}</a>`
+      : `<span class="appointment-list-name">${esc(appointment.name || '')}</span>`;
+    const status = appointment.st || 'Waiting';
+    const confirmButton = ['Confirmed', 'Done', 'Cancelled'].includes(status) ? '' : `<button class="btn s g appointment-confirm" data-a="apconfirm:${appointment.id}" aria-label="${esc(T('Confirm appointment'))}" title="${esc(T('Confirm appointment'))}"><span aria-hidden="true">✓</span></button> `;
+    return `<tr><td>${index + 1}</td><td>${patientName}${namePhone ? ` <a class="appointment-list-phone" href="tel:${esc(namePhone)}" aria-label="Call ${esc(namePhone)}" title="${esc(namePhone)}">☎</a>` : ''}</td><td>${esc(date)}</td><td>${esc(appointment.time || '—')}</td><td class="appointment-list-note">${esc(appointment.notes || 'N/A')} <button type="button" class="btn s appointment-note-edit" data-a="apnoteedit:${appointment.id}" aria-label="${esc(T('Edit note'))}" title="${esc(T('Edit note'))}">✎</button></td><td>${esc(appointment.svc || 'N/A')}</td><td>${esc(appointment.doc || 'N/A')}</td><td>${esc(phone || 'N/A')}</td><td><span class="bd appointment-list-status ${status == 'Cancelled' ? 'x' : ''}">${esc(T(status))}</span></td><td class="appointment-list-actions">${confirmButton}<button class="btn s" data-a="apedit:${appointment.id}">${T('Edit')}</button> <button class="btn s r" data-a="del:ap:${appointmentIndex}" aria-label="${T('Delete')}" title="${T('Delete')}">✕</button></td></tr>`;
+  }).join('');
+  return hd(T('Appointment list'), T('Manage all patient appointments.'), actions) + `<div class="card appointment-list-table-wrap"><table class="appointment-list-table"><thead><tr>${columns.map(([label, key]) => `<th data-column="${key}">${esc(T(label))}</th>`).join('')}</tr></thead><tbody>${body || `<tr><td colspan="${columns.length}" class="emp">${T('Nothing here yet.')}</td></tr>`}</tbody></table></div>`;
+}
 R.ap = function () {
-  if (cal.list) return tp('ap').replace('<div class="tools">', '<div class="tools"><button class="btn" data-a="callist">Calendar view</button>');
+  if (cal.list) return appointmentListHtml();
   return hd('Appointment list', 'Manage all patient appointments.', '<button class="btn" data-a="callist">List view</button>' + sr('Search patient name…') + '<button class="btn" data-a="csv">Export Excel</button>' + `<button class="btn g" data-a="apadd:${ymd(new Date())}">+ Add</button>`) + calHtml();
 };
-const apOpen = (a) => modal(a ? 'Edit' : 'Add appointment', P.ap.f, a || { ...P.ap.d, date: apOpen.date, time: '' }, (o) => a ? api('PUT', 'appointments/' + a.id, o) : api('POST', 'appointments', { ...P.ap.d, ...o }));
+const apOpen = (a) => modal(a ? 'Edit' : 'Add appointment', P.ap.f, a || { ...P.ap.d, date: apOpen.date, time: '' }, (o) => {
+  const phone = $('#mf [name="phone"]')?.value;
+  if (phone !== undefined) o.phone = phone;
+  return a ? api('PUT', 'appointments/' + a.id, o) : api('POST', 'appointments', { ...P.ap.d, ...o });
+});
+document.addEventListener('change', (event) => {
+  if (event.target.id != 'appointment-date-filter') return;
+  appointmentDateFilter = event.target.value || '';
+  render();
+});
+async function confirmAppointment(id) {
+  const appointment = D.ap.find((item) => String(item.id) == String(id) && !isFollowUpAppointment(item));
+  if (!appointment) return toast(T('Appointment not found.'));
+  if (['Confirmed', 'Done', 'Cancelled'].includes(appointment.st)) return;
+  try {
+    await api('PUT', `appointments/${appointment.id}`, { st: 'Confirmed' });
+    await load();
+    render();
+    toast(T('Appointment confirmed'));
+  } catch (error) { toast(error.message); }
+}
+function editAppointmentNote(id) {
+  const appointment = D.ap.find((item) => String(item.id) == String(id) && !isFollowUpAppointment(item));
+  if (!appointment) return toast(T('Appointment not found.'));
+  modal(T('Edit note'), [['Note', 'notes', 'ta']], { notes: appointment.notes || '' }, (values) =>
+    api('PUT', `appointments/${appointment.id}`, { notes: values.notes || '' }));
+}
 
 function patientAppointmentForm() {
   const patient = curPt();
@@ -3840,6 +3918,8 @@ function patientFollowupScheduleForm(patientId) {
     });
     await api('PUT', `patients/${patient.id}`, { reg_date: ymd(new Date()) });
     await load();
+    rt = 'pt'; tab = patient.type === 'IPD' ? 'IPD' : patient.nssf ? 'NSSF' : 'OPD'; pg = 1; q = '';
+    Object.keys(pf).forEach((key) => delete pf[key]);
     render();
     toast('បានរក្សាទុក');
   }, { cls: 'patient-followup-schedule-dialog', close: true, closeLabel: 'បិទ', ok: 'រក្សាទុក', cancelLabel: 'បោះបង់' });
@@ -4102,7 +4182,7 @@ function pAct(a, x, y, el) {
   else if (a == 'cnfprint') { const f = $('#mf'); printDoc('Consultation Form (CNF)', ptBlock(curPt()) + cnPrintHtml({ ...cnCollect(f, CN), ...cnCollect(f, CNP) })); }
   else if (a == 'mtadd') $('#mtb').insertAdjacentHTML('beforeend', mtRow()); else if (a == 'pdprint') histPrint();
   else if (a == 'pedit') { const p = curPt(), l = x == 'nssf_id' ? 'NSSF ID' : 'National ID'; modal('Edit ' + l, [[l, x]], p, (o) => api('PUT', 'patients/' + p.id, o)); }
-  else if (a == 'apadd') { apOpen.date = x; apOpen(); } else if (a == 'apedit') apOpen(D.ap.find((r) => r.id == x));
+  else if (a == 'apadd') { apOpen.date = x; apOpen(); } else if (a == 'apedit') apOpen(D.ap.find((r) => r.id == x)); else if (a == 'apnoteedit') editAppointmentNote(x); else if (a == 'apconfirm') confirmAppointment(x);
   else if (a == 'callist') { cal.list = !cal.list; render(); } else if (a == 'caltoday') { cal.d = new Date(); render(); } else if (a == 'calmode') { cal.mode = x; render(); }
   else if (a == 'calprev' || a == 'calnext') { const s = a == 'calnext' ? 1 : -1, d = cal.d; cal.d = cal.mode == 'month' ? new Date(d.getFullYear(), d.getMonth() + s, 1) : new Date(d.getFullYear(), d.getMonth(), d.getDate() + s * (cal.mode == 'week' ? 7 : 1)); render(); }
   else if (a == 'csv') exportExcel(); else if (a == 'pfclear') { Object.keys(pf).forEach((k) => delete pf[k]); render(); }
@@ -4113,6 +4193,7 @@ function pAct(a, x, y, el) {
   else if (a == 'ipdout') ipdOut(+x); else if (a == 'ipdreturn') returnIpdPatientToOpd(+x).catch((e) => toast(e.message)); else if (a == 'ipdbed') ipdBed(+x); else if (a == 'ipdtreat') ipdTreat(+x); else if (a == 'ipdedit') ipdEdit(+x); else if (a == 'ipdprint') ipdPrint(+x); else if (a == 'ipdshare') ipdShare(+x); else if (a == 'ipdadd') ipdAdd();
   else if (a == 'ptbed') bedForm(+x); else if (a == 'bedfollowup') return movePatientToFollowUp(+x); else if (a == 'ptadmit') ptAdmit(+x); else if (a == 'ptprint') ptCard(+x);
   else if (a == 'pttreat') treatmentFollowup(+x).catch((e) => toast(e.message));
+  else if (a == 'ptcomp') patientSymptomsForm(+x);
   else if (a == 'ptdx') patientDiagnosisForm(+x);
   else if (a == 'ptdxnewdx') newDiagnosisForm(+x);
   else if (a == 'ptremark') patientUnpaidRemarkForm(+x);
@@ -4263,20 +4344,23 @@ const pfActive = () => Object.entries(pf).filter(([, v]) => v !== '' && v != nul
 const tabOk = (r) => tab == 'IPD' ? r.type == 'IPD' : tab == 'Unpaid' ? patientPaymentStatus(r.id).status != 'paid' : tab == 'NSSF' ? r.nssf : tab == 'Follow Up' ? !!r.follow_up || !!followUpFor(r.id) : tab == 'Details' ? true : r.type != 'IPD';
 const colOk = (r) => pfActive().every(([k, v]) => PFN[k] ? PFN[k](r, String(v)) : true);
 const ptRows = () => {
-  const priority = new Map();
+  const recentFollowUps = new Map();
   followUpRows().filter((appointment) => !['Done', 'Cancelled'].includes(appointment.st)).forEach((appointment) => {
-    const patientId = String(appointment.patient_id), appointmentId = Number(appointment.id) || 0;
-    if (appointmentId > (priority.get(patientId) || 0)) priority.set(patientId, appointmentId);
+    const patientId = String(appointment.patient_id);
+    const timestamp = String(appointment.updated_at || appointment.created_at || '');
+    if (timestamp > (recentFollowUps.get(patientId) || '')) recentFollowUps.set(patientId, timestamp);
   });
+  const activity = (patient) => [patient.created_at || patient.updated_at, recentFollowUps.get(String(patient.id))]
+    .filter(Boolean).map(String).sort().pop() || '';
   return ft('pt').filter(([r]) => tabOk(r) && colOk(r))
-    .sort(([a], [b]) => (priority.get(String(b.id)) || 0) - (priority.get(String(a.id)) || 0));
+    .sort(([a], [b]) => activity(b).localeCompare(activity(a)) || Number(b.id) - Number(a.id));
 };
 const fCell = (k) => !k ? '<th class="fr"><button class="btn s" data-a="pfclear" title="Clear filters">✕</button></th>'
   : SEL[k] ? `<th class="fr ${k == 'latin' ? 'c-latin' : ''}"><select class="in" data-pf="${k}">${SEL[k].map(([v, l]) => `<option value="${v}" ${(pf[k] || '') == v ? 'selected' : ''}>${l}</option>`).join('')}</select></th>`
   : `<th class="fr ${k == 'latin' ? 'c-latin' : ''}"><input class="in" data-pf="${k}" value="${esc(pf[k] || '')}" placeholder="${k == 'age' ? '20-40' : '🔍'}"></th>`;
 // ---- rows ----
 // ---- columns: each one can be shown or hidden (saved in this browser) ----
-const COLF = [['id', 'ID'], ['date', 'Date'], ['name', 'Name'], ['latin', 'Latin name'], ['nssf', 'NSSF ID'], ['nat', 'National ID'], ['type', 'IPD/OPD'], ['roomBed', 'Room/Bed'], ['treat', 'Treatment'], ['dx', 'Diagnosis'], ['followup', 'Follow Up'], ['mr', 'Medical Record'], ['age', 'Age'], ['sex', 'Gender'], ['pay', 'Unpaid'], ['phone', 'Phone'], ['addr', 'Address'], ['act', 'Actions']];
+const COLF = [['id', 'ID'], ['date', 'Date'], ['name', 'Name'], ['latin', 'Latin name'], ['nssf', 'NSSF ID'], ['nat', 'National ID'], ['type', 'IPD/OPD'], ['roomBed', 'Room/Bed'], ['treat', 'Treatment'], ['comp', 'Symptoms'], ['dx', 'Diagnosis'], ['followup', 'Follow Up'], ['mr', 'Medical Record'], ['age', 'Age'], ['sex', 'Gender'], ['pay', 'Unpaid'], ['phone', 'Phone'], ['addr', 'Address'], ['act', 'Actions']];
 const COLD = [['id', 'ID'], ['name', 'Name'], ['latin', 'Latin name'], ['phone', 'Phone'], ['addr', 'Address'], ['followup', 'Follow Up'], ['comp', 'Complaints'], ['hist', 'Past medical history'], ['regd', 'Registration date'], ['nssf', 'NSSF ID'], ['nat', 'National ID'], ['act', 'Actions']];
 let ptHide = { full: new Set(), det: new Set() }, ptColsOpen = false, ptFilt = false;
 try { const h = JSON.parse(localStorage.getItem('ptHide') || '{}'); ptHide = { full: new Set(h.full || []), det: new Set(h.det || []) }; ptFilt = localStorage.getItem('ptFilt') == '1'; } catch (e) { /* defaults */ }
@@ -4324,6 +4408,19 @@ function patientUnpaidRemarkForm(patientId) {
     toast(T('Saved'));
   });
 }
+function patientSymptomsForm(patientId) {
+  const patient = ptById(patientId);
+  if (!patient) return toast(T('Patient not found.'));
+  const symptoms = D.sy.map((symptom) => `<option>${esc(symptom.name)}</option>`).join('');
+  const editor = `<label class="fl">${T('Symptoms')} <select class="in pk2" data-fill="complaints"><option value="">${T('+ Add symptom')}</option>${symptoms}</select><textarea class="in" name="complaints" rows="4" placeholder="Describe current symptoms…">${esc(patient.complaints || '')}</textarea></label>`;
+  openForm(T('Edit Symptoms'), editor, async (form) => {
+    const complaints = String(new FormData(form).get('complaints') || '');
+    await api('PUT', `patients/${patient.id}`, { complaints });
+    await load();
+    render();
+    toast(T('Saved'));
+  });
+}
 const ipdRoomBed = (patient) => {
   const admission = (D.ipd || []).find((record) => String(record.code) == String(patient.id) && !record.out);
   return admission ? [admission.room, admission.bed].filter(Boolean).join(' / ') || '—' : '—';
@@ -4332,6 +4429,7 @@ const cellsFull = (r, i, sm) => ({
   id: `<td>${r.id}</td>`, date: `<td>${fmtD(r.reg_date || r.created_at)}</td>`, name: `<td>${ptNm(r, sm)}</td>`, latin: `<td class="c-latin">${esc(r.latin_name || '')}</td>`,
   nssf: `<td>${esc(r.nssf_id || 'N/A')}</td>`, nat: `<td>${esc(r.national_id || 'N/A')}</td>`, type: `<td><span class="pill ${r.type == 'IPD' ? 'ipd' : 'opd'} clk" data-a="ptadmit:${r.id}" title="${r.type == 'IPD' ? 'Discharge to OPD' : 'Admit to IPD'}">${r.type == 'IPD' ? 'IPD' : 'OPD'}</span> ${patientFollowUpAction(r)}</td>`,
   roomBed: `<td>${esc(ipdRoomBed(r))} <a href="#" class="ed" data-a="ptbed:${r.id}" title="Edit room and bed">✎</a></td>`,
+  comp: `<td title="${esc(r.complaints || '')}">${esc(trunc(r.complaints || 'N/A', 24))} <a href="#" class="ed" data-a="ptcomp:${r.id}" title="${esc(T('Edit Symptoms'))}" aria-label="${esc(T('Edit Symptoms'))}">✎</a></td>`,
   treat: `<td title="${esc(r.treatment || '')}">${esc(trunc(r.treatment, 14))} <a href="#" class="ed" data-a="pttreat:${r.id}" title="Edit treatment">✎</a></td>`,
   dx: `<td title="${esc(r.diagnosis || r.last_dx || '')}">${esc(trunc(r.diagnosis || r.last_dx || 'N/A', 14))} <a href="#" class="ed" data-a="ptdx:${r.id}" title="Edit diagnosis">✎</a></td>`,
   followup: followUpCell(r),
@@ -4987,7 +5085,7 @@ Object.assign(L, { 'IPD/OPD': 'IPD/OPD', 'Treatment': 'ការព្យាប�
 Object.assign(L, { 'Treatment Follow-up': 'ការតាមដានការព្យាបាល', 'Date / Vital Signs': 'កាលបរិច្ឆេទ / សញ្ញាជីវិត', 'Diagnosis / Evolution': 'រោគវិនិច្ឆ័យ / ការវិវត្ត', 'Treatment / Notes': 'ការព្យាបាល / កំណត់ចំណាំ', 'Actions': 'សកម្មភាព', 'Patient': 'អ្នកជំងឺ', 'Enter vital signs': 'បញ្ចូលសញ្ញាជីវិត', "Describe patient's condition, symptoms, or diagnosis": 'ពិពណ៌នាអំពីស្ថានភាព រោគសញ្ញា ឬរោគវិនិច្ឆ័យ', 'Prescribed medication, treatment plan, or notes...': 'ថ្នាំ ផែនការព្យាបាល ឬកំណត់ចំណាំ...', 'Remove row': 'លុបជួរដេក', 'Treatment History': 'ប្រវត្តិការព្យាបាល', 'Treatment rows': 'ជួរដេកការព្យាបាល', 'Hide History': 'លាក់ប្រវត្តិ', 'Add New Treatment Row': 'បន្ថែមជួរដេកការព្យាបាលថ្មី', 'Add a treatment row to begin.': 'បន្ថែមជួរដេកការព្យាបាលដើម្បីចាប់ផ្តើម។', 'Print All Records': 'បោះពុម្ពកំណត់ត្រាទាំងអស់', 'Print Record': 'បោះពុម្ពកំណត់ត្រា', 'Save Record': 'រក្សាទុកកំណត់ត្រា', 'Enter treatment details before saving': 'សូមបញ្ចូលព័ត៌មានការព្យាបាលមុនពេលរក្សាទុក' });
 try { if (localStorage.getItem('sbc') == '1' && document.body.classList) document.body.classList.add('sbc'); } catch (e) { /* ignore */ }
 Object.assign(L, { 'Menu': 'ម៉ឺនុយ' });
-Object.assign(L, { 'Waiting': 'រង់ចាំ', 'Confirmed': 'បានបញ្ជាក់', 'Status': 'ស្ថានភាព', 'Edit': 'កែប្រែ' });
+Object.assign(L, { 'Waiting': 'រង់ចាំ', 'Confirmed': 'បានបញ្ជាក់', 'Status': 'ស្ថានភាព', 'Edit': 'កែប្រែ', 'Confirm appointment': 'បញ្ជាក់ការណាត់ជួប', 'Appointment confirmed': 'បានបញ្ជាក់ការណាត់ជួប', 'Appointment not found.': 'រកមិនឃើញការណាត់ជួបទេ។', 'Filter appointments by date': 'ត្រងការណាត់ជួបតាមកាលបរិច្ឆេទ' });
 Object.assign(L, { 'Follow Up': 'ការតាមដាន', 'Schedule and track follow-up appointments and reminders.': 'កំណត់ពេល និងតាមដានការណាត់ជួបបន្ត និងការរំលឹក။', 'Schedule Follow Up': 'កំណត់ពេលតាមដាន', 'Follow-up appointments': 'ការណាត់ជួបតាមដាន', 'Reminders due': 'ការរំលឹកដល់ពេល', 'Reason / service': 'មូលហេតុ / សេវាកម្ម', 'Appointment date': 'កាលបរិច្ឆេទណាត់ជួប', 'Reminder date': 'កាលបរិច្ឆេទរំលឹក', 'Reminder status': 'ស្ថានភាពរំលឹក', 'Mark reminder sent': 'សម្គាល់ថាបានផ្ញើការរំលឹក', 'Reminder marked as sent': 'បានសម្គាល់ថាបានផ្ញើការរំលឹក', 'Select patient': 'ជ្រើសរើសអ្នកជំងឺ', 'Select doctor': 'ជ្រើសរើសគ្រូពេទ្យ', 'Select a patient': 'សូមជ្រើសរើសអ្នកជំងឺ', 'Appointment date is required': 'ត្រូវបញ្ចូលកាលបរិច្ឆេទណាត់ជួប', 'Reminder date must be on or before the appointment date': 'កាលបរិច្ឆេទរំលឹកត្រូវមុន ឬត្រូវនឹងថ្ងៃណាត់ជួប', 'Follow-up appointment not found.': 'រកមិនឃើញការណាត់ជួបតាមដានទេ។', 'No follow-up appointments yet.': 'មិនទាន់មានការណាត់ជួបតាមដានទេ។', 'Pending': 'រង់ចាំ', 'Sent': 'បានផ្ញើ', 'Scheduled': 'បានកំណត់ពេល', 'Due': 'ដល់ពេល', 'Edit Follow Up': 'កែប្រែការតាមដាន' });
 Object.assign(L, { 'Overdue': 'ហួសកំណត់' });
 Object.assign(L, { 'Appointment time': 'ម៉ោងណាត់ជួប', 'Doctor name': 'ឈ្មោះគ្រូពេទ្យ', 'Doctor name placeholder': 'បញ្ចូលឈ្មោះគ្រូពេទ្យ', 'Service': 'សេវាកម្ម', 'Specify service': 'បញ្ជាក់សេវាកម្ម', 'Telesales': 'Telesales', 'Enter Telesales details': 'បញ្ចូលព័ត៌មាន Telesales', 'Pancake': 'Pancake', 'Specify Pancake': 'បញ្ជាក់ Pancake', 'Reason / description': 'ការពិពណ៌នា', 'Appointment reason placeholder': 'បញ្ចូលមូលហេតុនៃការណាត់ជួប', 'Appointment notes placeholder': 'បញ្ចូលកំណត់ចំណាំ', 'Add Appointment': 'បន្ថែមការណាត់ជួប', 'Create appointment for': 'បង្កើតការណាត់ជួបសម្រាប់' });
@@ -5000,7 +5098,7 @@ Object.assign(L, { 'Columns': 'ជួរឈរ', '☰ Columns': '☰ ជួរ�
 Object.assign(L, { 'Request service': 'ស្នើសុំសេវាកម្ម', 'Search services…': 'ស្វែងរកសេវាកម្ម…', 'Add selected': 'បន្ថែមសេវាកម្មដែលបានជ្រើស', 'Service requests': 'សំណើសេវាកម្ម', 'No services requested yet.': 'មិនទាន់មានសំណើសេវាកម្មទេ។', 'No matching services.': 'រកមិនឃើញសេវាកម្មដែលត្រូវគ្នាទេ។', 'Requested services': 'សេវាកម្មដែលបានស្នើ', 'Select at least one service': 'សូមជ្រើសរើសសេវាកម្មយ៉ាងតិចមួយ', 'Services requested': 'បានស្នើសេវាកម្ម' });
 Object.assign(L, { 'Service Charges': 'ថ្លៃសេវាកម្ម', 'Treatment Charges': 'ថ្លៃព្យាបាល', 'Lab Charges': 'ថ្លៃតេស្ត Lab', 'Pharmacy Charges': 'ថ្លៃឱសថ', 'Total Unpaid Amount': 'ចំនួនទឹកប្រាក់មិនទាន់បង់សរុប', 'Items': 'មុខទំនិញ' });
 Object.assign(L, { 'Add Vaccination': 'បញ្ចូលបញ្ជីការចាក់វ៉ាក់សាំង', 'Edit Vaccination': 'កែប្រែបញ្ជីការចាក់វ៉ាក់សាំង', 'Vaccine category': 'ប្រភេទវ៉ាក់សាំង', 'Child vaccination': 'វ៉ាក់សាំងកុមារ', 'Adult vaccination': 'វ៉ាក់សាំងមនុស្សពេញវ័យ', 'Other': 'ផ្សេងៗ', 'Vaccine group': 'ឈ្មោះក្រុមវ៉ាក់សាំង', 'Enter vaccine group': 'បញ្ចូលប្រភេទវ៉ាក់សាំង', 'Vaccination dose': 'ចាក់វ៉ាក់សាំង', 'Dose date': 'ថ្ងៃ ខែ ឆ្នាំ', 'Given': 'ចាក់រួច', 'Vaccine reason': 'បញ្ជាក់មូលហេតុ', 'Vaccination notes': 'ចំណាំ', 'Vaccination notes placeholder': 'សូមបញ្ចូលព័ត៌មានការចាក់វ៉ាក់សាំង', 'Vaccination date': 'កាលបរិច្ឆេទចាក់វ៉ាក់សាំង', 'Administered by': 'បុគ្គលិកចាក់វ៉ាក់សាំង' });
-Object.assign(L, { 'Edit unpaid remark': 'កែប្រែកំណត់សម្គាល់បំណុល', 'Remark': 'កំណត់សម្គាល់', 'No remark': 'មិនមានកំណត់សម្គាល់', 'Edit remark': 'កែប្រែកំណត់សម្គាល់' });
+Object.assign(L, { 'Edit unpaid remark': 'កែប្រែកំណត់សម្គាល់បំណុល', 'Edit Symptoms': 'កែប្រែរោគសញ្ញា', 'Remark': 'កំណត់សម្គាល់', 'No remark': 'មិនមានកំណត់សម្គាល់', 'Edit remark': 'កែប្រែកំណត់សម្គាល់' });
 
 // ---------- OPD -> IPD: click the OPD badge (or the bed icon) to enter Room and Bed ----------
 function bedForm(pid) {

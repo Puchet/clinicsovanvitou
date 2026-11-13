@@ -416,6 +416,35 @@ th {
   font-size: 13px;
   white-space: nowrap;
 }
+#v table.column-resizable-table .column-resize-cell {
+  position: relative;
+}
+#v table.column-resizable-table .column-resize-cell:not(:last-child) {
+  box-shadow: inset -1px 0 rgba(255, 255, 255, 0.7);
+}
+#v table.column-resizable-table .column-resize-cell::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: -4px;
+  width: 8px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+}
+#v table.column-resizable-table .column-resize-cell:hover::after {
+  background: rgba(255, 255, 255, 0.3);
+}
+#v table.column-resizable-table th,
+#v table.column-resizable-table td {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+body.column-resizing,
+body.column-resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
 td {
   padding: 11px 12px;
   border-top: 1px solid var(--bd);
@@ -605,6 +634,11 @@ tr:hover td {
 .tabs .on {
   background: var(--cd);
   font-weight: 600;
+}
+.patient-list-toolbar > .tabs button.on {
+  border: 1px solid #2563eb;
+  border-radius: 8px;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18);
 }
 .pg {
   display: flex;
@@ -7356,9 +7390,79 @@ body.sbc aside {
   overscroll-behavior-x: contain;
   -webkit-overflow-scrolling: touch;
 }
-.patient-list-primary-tools,
-.patient-list-actions {
+.patient-list-primary-tools {
   display: contents;
+}
+.patient-list-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+  margin-left: auto;
+}
+.appointment-list-table-wrap {
+  overflow-x: auto;
+}
+.appointment-date-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.appointment-date-filter .in {
+  width: 150px;
+  min-width: 0;
+}
+.appointment-list-table {
+  min-width: 1040px;
+}
+.appointment-list-table th,
+.appointment-list-table td {
+  white-space: nowrap;
+}
+.appointment-list-table th:nth-child(7),
+.appointment-list-table td:nth-child(7),
+.appointment-list-table th:nth-child(8),
+.appointment-list-table td:nth-child(8) {
+  width: 120px;
+}
+.appointment-list-table th:nth-child(5),
+.appointment-list-table td:nth-child(5),
+.appointment-list-table th:nth-child(10),
+.appointment-list-table td:nth-child(10) {
+  width: 160px;
+}
+.appointment-list-name {
+  color: #2563eb;
+  font-weight: 600;
+  text-decoration: none;
+}
+.appointment-note-edit {
+  margin-left: 6px;
+  vertical-align: middle;
+}
+.appointment-list-phone {
+  margin-left: 8px;
+  color: var(--mu);
+  text-decoration: none;
+}
+.appointment-list-phone:hover {
+  color: #2563eb;
+}
+.appointment-list-status {
+  background: #fef3c7;
+  color: #92400e;
+}
+.appointment-list-status.x {
+  background: #fee2e2;
+  color: #991b1b;
+}
+.appointment-list-actions {
+  white-space: nowrap;
+}
+.appointment-confirm {
+  min-width: 34px;
+  padding: 4px 8px;
 }
 table.ptb {
   width: 100%;
@@ -7503,6 +7607,8 @@ table.ptb .pn > div {
   }
   .patient-list-actions {
     flex-wrap: nowrap;
+    justify-content: flex-end;
+    margin-left: 0;
     overflow-x: auto;
     padding-bottom: 2px;
     scrollbar-width: thin;

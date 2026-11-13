@@ -758,6 +758,7 @@ function actionAllowed(action,key){
   if(action=='useredit')return canAccess('user_management','edit');
   if(action=='userdelete')return canAccess('user_management','delete');
   if(action=='out')return canAccess('appointments_ipd','edit');
+  if(action=='apconfirm')return canAccess('appointments_ipd','edit');
   if(action=='ptmore')return canAccess('appointments_ipd','create');
   if(action=='ptapadd')return canAccess('appointments_ipd','create');
   if(action=='leaveform')return canAccess('staff_payroll','create');
@@ -779,7 +780,87 @@ function actionAllowed(action,key){
   return true;
 }
 function applyActionPermissions(){document.querySelectorAll('#v [data-a]').forEach(element=>{const [action,key]=element.dataset.a.split(':');if(!actionAllowed(action,key))element.hidden=true})}
-function render(){if(validPage(rt)||rt=='pd')setPage(rt);const f=document.activeElement&&document.activeElement.id=='q';const cl=D.clinic||{};$('#tt').textContent=cl.name||'Sovanvitou';$('#lgo').innerHTML=cl.logo?`<img src="${API_BASE}/uploads/${esc(cl.logo)}" alt="" style="max-height:34px;max-width:100%">`:'CLINIC SOVANVITOU';$('#v').classList.toggle('tight',rt=='pt');$('#v').innerHTML=`<div class="w">${(R[rt]||(()=>tp(rt)))()}</div>`;nav();applyActionPermissions();savePageState();if(f){const e=$('#q');e.focus();e.setSelectionRange(99,99)}}
+const COLUMN_WIDTHS_STORAGE_KEY='columnWidths';
+let columnResize=null;
+function savedColumnWidths(){
+  try{
+    const saved=JSON.parse(localStorage.getItem(COLUMN_WIDTHS_STORAGE_KEY)||'{}');
+    return saved&&typeof saved=='object'&&!Array.isArray(saved)?saved:{};
+  }catch{return {}}
+}
+function resizeColumnsForTable(table,count){
+  let group=Array.from(table.children).find(child=>child.tagName=='COLGROUP');
+  if(!group||group.children.length!=count){
+    const replacement=document.createElement('colgroup');
+    for(let i=0;i<count;i++)replacement.appendChild(document.createElement('col'));
+    if(group)table.replaceChild(replacement,group);
+    else{
+      const head=Array.from(table.children).find(child=>child.tagName=='THEAD');
+      table.insertBefore(replacement,head||table.firstChild);
+    }
+    group=replacement;
+  }
+  return Array.from(group.children);
+}
+function prepareColumnResizing(){
+  const tables=Array.from(document.querySelectorAll('#v table'));
+  const saved=savedColumnWidths();
+  tables.forEach((table,tableIndex)=>{
+    const rows=Array.from(table.rows);
+    const headerRow=table.tHead&&table.tHead.rows[0]||rows.find(row=>Array.from(row.cells).some(cell=>cell.tagName=='TH'))||rows[0];
+    if(!headerRow||!headerRow.cells.length)return;
+    const headers=Array.from(headerRow.cells);
+    if(headers.some(header=>header.colSpan!=1))return;
+    const key=`${rt}:${table.id||table.className||'table'}:${tableIndex}`;
+    table.dataset.columnResizeKey=key;
+    table.classList.add('column-resizable-table');
+    headers.forEach((header,index)=>{header.dataset.columnResizeIndex=String(index);header.classList.add('column-resize-cell')});
+    const widths=saved[key];
+    if(!Array.isArray(widths)||widths.length!=headers.length||widths.some(width=>!Number.isFinite(width)||width<60||width>2000))return;
+    const columns=resizeColumnsForTable(table,headers.length);
+    table.style.tableLayout='fixed';
+    widths.forEach((width,index)=>{columns[index].style.width=`${width}px`});
+  });
+}
+function finishColumnResize(){
+  if(!columnResize)return;
+  try{
+    const saved=savedColumnWidths();
+    saved[columnResize.key]=columnResize.widths;
+    localStorage.setItem(COLUMN_WIDTHS_STORAGE_KEY,JSON.stringify(saved));
+  }catch{}
+  columnResize=null;
+  document.body.classList.remove('column-resizing');
+}
+document.addEventListener('pointerdown',event=>{
+  const header=event.target.closest&&event.target.closest('#v table.column-resizable-table .column-resize-cell[data-column-resize-index]');
+  if(!header||event.target!==header||event.button!==0||header.getBoundingClientRect().right-event.clientX>8)return;
+  const table=header.closest('table'),headers=Array.from(header.parentElement.cells),index=Number(header.dataset.columnResizeIndex);
+  const neighbor=index+1<headers.length?index+1:index-1;
+  if(neighbor<0)return;
+  const widths=headers.map(cell=>cell.getBoundingClientRect().width),columns=resizeColumnsForTable(table,headers.length);
+  widths.forEach((width,columnIndex)=>{columns[columnIndex].style.width=`${width}px`});
+  table.style.tableLayout='fixed';
+  columnResize={table,key:table.dataset.columnResizeKey,index,neighbor,startX:event.clientX,startWidths:widths,widths,min:60};
+  document.body.classList.add('column-resizing');
+  event.preventDefault();
+});
+document.addEventListener('pointermove',event=>{
+  if(!columnResize)return;
+  const {table,index,neighbor,startX,startWidths,min}=columnResize;
+  const max=2000,minDelta=Math.max(min-startWidths[index],startWidths[neighbor]-max),maxDelta=Math.min(max-startWidths[index],startWidths[neighbor]-min);
+  const delta=Math.max(minDelta,Math.min(event.clientX-startX,maxDelta));
+  const widths=startWidths.slice();
+  widths[index]=Math.round(startWidths[index]+delta);
+  widths[neighbor]=Math.round(startWidths[neighbor]-delta);
+  const columns=resizeColumnsForTable(table,widths.length);
+  widths.forEach((width,columnIndex)=>{columns[columnIndex].style.width=`${width}px`});
+  columnResize.widths=widths;
+  event.preventDefault();
+});
+document.addEventListener('pointerup',finishColumnResize);
+document.addEventListener('pointercancel',finishColumnResize);
+function render(){if(validPage(rt)||rt=='pd')setPage(rt);const f=document.activeElement&&document.activeElement.id=='q';const cl=D.clinic||{};$('#tt').textContent=cl.name||'Sovanvitou';$('#lgo').innerHTML=cl.logo?`<img src="${API_BASE}/uploads/${esc(cl.logo)}" alt="" style="max-height:34px;max-width:100%">`:'CLINIC SOVANVITOU';$('#v').classList.toggle('tight',rt=='pt');$('#v').innerHTML=`<div class="w">${(R[rt]||(()=>tp(rt)))()}</div>`;prepareColumnResizing();nav();applyActionPermissions();savePageState();if(f){const e=$('#q');e.focus();e.setSelectionRange(99,99)}}
 document.addEventListener('pointerdown',event=>{
   const control=event.target.closest('[data-template-drag],[data-template-resize]');
   if(!control||!canAccess('clinic_settings','edit'))return;
@@ -1370,7 +1451,7 @@ const L={'Sign in':'ចូលគណនី','Please sign in to your account.':'�
 'Appointment list':'បញ្ជីណាត់ជួប','Manage all patient appointments.':'គ្រប់គ្រងការណាត់ជួបអ្នកជំងឺទាំងអស់។','Inpatients (IPD)':'ផ្នែកអ្នកជំងឺក្នុង (IPD)','Manage all admitted patients.':'គ្រប់គ្រងអ្នកជំងឺដែលកំពុងសម្រាកពេទ្យទាំងអស់។','Current IPD patients':'អ្នកជំងឺ IPD បច្ចុប្បន្ន','Patients not yet discharged':'បញ្ជីអ្នកជំងឺដែលមិនទាន់ចាកចេញ','Manage your pharmacy list.':'គ្រប់គ្រងបញ្ជីឱសថស្ថានរបស់អ្នក។','Manage all clinic services.':'គ្រប់គ្រងសេវាកម្មគ្លីនិកទាំងអស់។','Manage lab test templates and prices.':'គ្រប់គ្រងទម្រង់ និងតម្លៃនៃការធ្វើតេស្ត Lab។','Diagnoses available when writing a visit.':'រោគវិនិច្ឆ័យដែលអាចជ្រើសរើសពេលកត់ត្រាការពិនិត្យ។','Default medicines per disease.':'ឱសថលំនាំដើមសម្រាប់ជំងឺនីមួយៗ។','Manage symptoms list for patient complaints':'គ្រប់គ្រងបញ្ជីរោគសញ្ញាសម្រាប់ពាក្យបណ្តឹងរបស់អ្នកជំងឺ','Daily visits and revenue.':'ចំនួនអ្នកមកពិនិត្យ និងចំណូលប្រចាំថ្ងៃ។','Stock status.':'ស្ថានភាពស្តុក។','Inventory value.':'តម្លៃសរុបនៃស្តុក។','Patients covered by NSSF.':'អ្នកជំងឺដែលមាន ប.ស.ស។','Stock and revenue overview':'ទិដ្ឋភាពស្តុក និងចំណូល','Appointments per doctor':'ការណាត់ជួបតាមគ្រូពេទ្យ','Stock by medicine':'ស្តុកតាមឱសថ','Revenue by day (KHR 1,000)':'ចំណូលតាមថ្ងៃ (KHR 1,000)','Doctors List':'បញ្ជីគ្រូពេទ្យ','Internal messages':'សារផ្ទៃក្នុង',
 'Add':'បន្ថែម','Add item':'បន្ថែមទំនិញ','Add Service':'បន្ថែមសេវាកម្ម','Edit Service':'កែប្រែសេវាកម្ម','Service name':'ឈ្មោះសេវាកម្ម','Description':'ការពិពណ៌នា','e.g. Facial treatment':'ឧ. សេវាថែរក្សាផ្ទៃមុខ','e.g. 60000':'ឧ. 60000','Enter service details':'បញ្ចូលព័ត៌មានលម្អិតអំពីសេវាកម្ម','Delete':'លុប','Service not found':'រកមិនឃើញសេវាកម្ម','Clinic Settings':'ការកំណត់គ្លីនិក','Manage your clinic information.':'គ្រប់គ្រងព័ត៌មានមូលដ្ឋានរបស់គ្លីនិកអ្នក។','Preferences':'ចំណូលចិត្ត','Logo':'និមិត្តសញ្ញា','Bank QR code':'កូដ QR ធនាគារ','Delete image':'លុបរូបភាព','Print settings':'ការកំណត់ការបោះពុម្ព','Clinic banner':'បដាគ្លីនិក','Recommended: 1300×200 px':'ទំហំណែនាំ៖ 1300×200 px','Show clinic name':'បង្ហាញឈ្មោះគ្លីនិក','Show address':'បង្ហាញអាសយដ្ឋាន','Show phone number':'បង្ហាញលេខទូរស័ព្ទ','Clinic name':'ឈ្មោះគ្លីនិក','Specialty':'ឯកទេស','Phone numbers':'លេខទូរស័ព្ទ','Currency':'រូបិយប័ណ្ណ','Exchange rate (KHR per $1)':'អត្រាប្តូរប្រាក់ (៛ ក្នុង $1)','Riel (KHR)':'រៀល (KHR)','US dollar (USD)':'ដុល្លារអាមេរិក (USD)','Doctor Settings':'ការកំណត់គ្រូពេទ្យ','Change password':'ប្តូរពាក្យសម្ងាត់','Current password':'ពាក្យសម្ងាត់បច្ចុប្បន្ន','New password':'ពាក្យសម្ងាត់ថ្មី','Saved':'បានរក្សាទុក','Password changed':'បានប្តូរពាក្យសម្ងាត់','Current password is wrong':'ពាក្យសម្ងាត់បច្ចុប្បន្នមិនត្រឹមត្រូវ','Photo':'រូបភាព','Remove picture':'លុបរូបភាព','Uploading…':'កំពុងផ្ទុកឡើង…','Use a JPG, PNG or WebP picture':'សូមប្រើរូបភាព JPG, PNG ឬ WebP','Picture is too large (max 2 MB)':'រូបភាពធំពេក (អតិបរមា 2 MB)','File is not a valid picture':'ឯកសារនេះមិនមែនជារូបភាពត្រឹមត្រូវទេ','Upload failed':'ផ្ទុកឡើងមិនបានសម្រេច','Add items and manage stock and prices.':'បន្ថែមទំនិញ និងគ្រប់គ្រងស្តុក និងតម្លៃ។','Add Patient':'បន្ថែមអ្នកជំងឺ','Add Doctor':'បន្ថែមគ្រូពេទ្យ','Create Template':'បង្កើតទម្រង់','Edit':'កែប្រែ','Save':'រក្សាទុក','Cancel':'បោះបង់','Export Excel':'នាំចេញ Excel','Discharge':'ឱ្យចេញពីមន្ទីរពេទ្យ','Discharged':'បានចេញពីមន្ទីរពេទ្យ','Previous':'មុន','Next':'បន្ទាប់','Checkout':'គិតលុយ','Cash':'សាច់ប្រាក់','Bank':'ធនាគារ','Total':'សរុប','Send':'ផ្ញើ',
 'Search…':'ស្វែងរក…','Search name, phone…':'ស្វែងរកតាមឈ្មោះ លេខទូរស័ព្ទ…','Search medicines…':'ស្វែងរកឱសថ…','Type a message':'វាយសារ',
-'No.':'ល.រ','Name':'ឈ្មោះ','Service':'សេវាកម្ម','Date':'កាលបរិច្ឆេទ','Doctor':'គ្រូពេទ្យ','Phone':'ទូរស័ព្ទ','Status':'ស្ថានភាព','Actions':'សកម្មភាព','Room':'បន្ទប់','Payment':'ការទូទាត់','Price':'តម្លៃ','Price (KHR)':'តម្លៃ (KHR)','In stock':'ក្នុងស្តុក','Category':'ប្រភេទ','Disease name':'ឈ្មោះជំងឺ','Symptom':'រោគសញ្ញា','File name':'ឈ្មោះឯកសារ','Visits':'ចំនួនមកពិនិត្យ','Revenue':'ចំណូល','Stock':'ស្តុក','Item':'ទំនិញ','Unit price':'តម្លៃឯកតា','Value':'តម្លៃសរុប','ID':'លេខសម្គាល់','Treatment':'ការព្យាបាល','Age':'អាយុ','Sex':'ភេទ','Role':'តួនាទី','Unpaid':'មិនទាន់បង់','Paid':'បានបង់','New':'ថ្មី','NSSF ID':'លេខ ប.ស.ស','Medicines':'ឱសថ',
+'No.':'ល.រ','Name':'ឈ្មោះ','Service':'សេវាកម្ម','Date':'កាលបរិច្ឆេទ','Doctor':'គ្រូពេទ្យ','Phone':'ទូរស័ព្ទ','Note':'កំណត់ចំណាំ','Edit note':'កែប្រែកំណត់ចំណាំ','Status':'ស្ថានភាព','Actions':'សកម្មភាព','Room':'បន្ទប់','Payment':'ការទូទាត់','Price':'តម្លៃ','Price (KHR)':'តម្លៃ (KHR)','In stock':'ក្នុងស្តុក','Category':'ប្រភេទ','Disease name':'ឈ្មោះជំងឺ','Symptom':'រោគសញ្ញា','File name':'ឈ្មោះឯកសារ','Visits':'ចំនួនមកពិនិត្យ','Revenue':'ចំណូល','Stock':'ស្តុក','Item':'ទំនិញ','Unit price':'តម្លៃឯកតា','Value':'តម្លៃសរុប','ID':'លេខសម្គាល់','Treatment':'ការព្យាបាល','Age':'អាយុ','Sex':'ភេទ','Role':'តួនាទី','Unpaid':'មិនទាន់បង់','Paid':'បានបង់','New':'ថ្មី','NSSF ID':'លេខ ប.ស.ស','Medicines':'ឱសថ',
 'Waiting':'កំពុងរង់ចាំ','Confirmed':'បានបញ្ជាក់','Out of stock':'អស់ស្តុក','Low':'ស្តុកតិច','OK':'ល្អ','Nurse':'គិលានុបដ្ឋាយិកា','Available':'ទំនេរ','Mon–Fri':'ច័ន្ទ–សុក្រ',
 'Cart is empty':'កន្ត្រកទំនិញនៅទទេ','Nothing here yet.':'មិនទាន់មានទិន្នន័យទេ។','No patients.':'គ្មានអ្នកជំងឺទេ។','No messages yet.':'មិនទាន់មានសារទេ។','Delete this record?':'លុបកំណត់ត្រានេះមែនទេ?',
 'Wrong email or password':'អ៊ីមែល ឬពាក្យសម្ងាត់មិនត្រឹមត្រូវ','Sign in required':'សូមចូលគណនីជាមុនសិន','Too many attempts. Try again later.':'ព្យាយាមច្រើនដងពេក។ សូមព្យាយាមម្តងទៀតពេលក្រោយ។','Enter a valid email':'សូមបញ្ចូលអ៊ីមែលឱ្យត្រឹមត្រូវ','Password must be at least 8 characters':'ពាក្យសម្ងាត់ត្រូវមានយ៉ាងតិច ៨ តួអក្សរ','Admin only':'សម្រាប់អ្នកគ្រប់គ្រងប៉ុណ្ណោះ','Request failed':'សំណើបរាជ័យ','Setup already completed':'ការដំឡើងបានបញ្ចប់រួចហើយ'};
