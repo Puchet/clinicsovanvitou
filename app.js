@@ -1313,10 +1313,23 @@ function payrollPrint(id){
   if(typeof printDoc=='function')printDoc('Payslip',`<table class="pk">${rows.filter(([,v])=>v).map(([k,v])=>`<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')}</table>`);
 }
 let tok=null,needSetup=false;try{tok=localStorage.getItem('kt')}catch(e){}
+let captureWindowFocused=document.hasFocus(),captureDocumentVisible=document.visibilityState!='hidden';
+function syncCaptureProtection(){
+  const curtain=$('#capture-protection-curtain');
+  if(!curtain)return;
+  const active=!!(tok&&D.user&&D.user.id!=null);
+  const obscure=active&&(!captureWindowFocused||!captureDocumentVisible);
+  curtain.hidden=!obscure;
+  document.body.classList.toggle('capture-protection-obscured',obscure);
+}
+window.addEventListener('blur',()=>{captureWindowFocused=false;syncCaptureProtection()});
+window.addEventListener('focus',()=>{captureWindowFocused=true;syncCaptureProtection()});
+document.addEventListener('visibilitychange',()=>{captureDocumentVisible=document.visibilityState!='hidden';syncCaptureProtection()});
 const RS={pt:'patients',ap:'appointments',ipd:'ipd',dr:'doctors',payslips:'payslips',leaves:'leaves',expenses:'expenses',med:'medicines',sv:'services',lab:'labs',labcategories:'labcategories',echo:'echo',dx:'diagnoses',rx:'prescriptions',sy:'symptoms',ad:'addresses',sf:'files',ch:'chat'};
 async function api(m,u,b){const r=await fetch(API_BASE+'/api/'+u,{method:m,headers:{'Content-Type':'application/json',...(tok?{Authorization:'Bearer '+tok}:{})},body:b?JSON.stringify(b):undefined});let j=null;try{j=await r.json()}catch(e){}if(r.status==401&&tok&&u!='auth/login')logout();if(!r.ok)throw new Error(j&&j.error||'Request failed');return j}
 async function load(){
   D.user=await api('GET','auth/me');
+  syncCaptureProtection();
   const areas={pt:'patients',ap:'appointments_ipd',ipd:'appointments_ipd',dr:'staff_payroll',payslips:'staff_payroll',leaves:'staff_payroll',expenses:'finance_reports',med:'pharmacy_services',sv:'pharmacy_services',lab:'templates_reference',labcategories:'templates_reference',echo:'templates_reference',dx:'templates_reference',rx:'templates_reference',sy:'templates_reference',ad:'templates_reference',sf:'templates_reference',ch:'appointments_ipd'};
   const resources=Object.keys(RS);
   const [rows,dash,bill,cl,schedules,payments,investigations,labResults,prescriptions,dispenses,sales,medicineSales,users]=await Promise.all([
@@ -1339,7 +1352,7 @@ async function load(){
   D.billing=[...schedules,...payments,...investigations,...labResults,...prescriptions,...dispenses];
   Object.keys(cart).forEach(id=>{if(!D.med.some(m=>m.id==id))delete cart[id]});
 }
-function logout(){tok=null;try{localStorage.removeItem('kt')}catch(e){}$('#lg').style.display='grid'}
+function logout(){tok=null;syncCaptureProtection();try{localStorage.removeItem('kt')}catch(e){}$('#lg').style.display='grid'}
 function setLoginLoading(loading){const overlay=$('#login-loading'),button=$('#login-submit');if(overlay)overlay.hidden=!loading;if(button)button.disabled=loading;const login=$('#lg');if(login)login.setAttribute('aria-busy',String(loading))}
 async function doLogin(){const email=$('#em').value.trim(),password=$('#pw').value;setLoginLoading(true);try{if(needSetup){await api('POST','auth/setup',{email,password});needSetup=false}const r=await api('POST','auth/login',{email,password});tok=r.token;try{localStorage.setItem('kt',tok)}catch(e){}await load();$('#lg').style.display='none';render()}catch(e){toast(e.message)}finally{setLoginLoading(false)}}
 const run=p=>p.then(()=>load()).then(render).catch(e=>toast(e.message));

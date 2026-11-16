@@ -12222,3 +12222,35 @@ table.ipdt td {
     grid-row: 1;
   }
 }
+#capture-protection-curtain {
+  position: fixed;
+  z-index: 10000;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: rgb(15 23 42 / 96%);
+  color: #fff;
+  text-align: center;
+}
+#capture-protection-curtain strong {
+  font-size: 22px;
+}
+#capture-protection-curtain span {
+  color: #cbd5e1;
+}
+#capture-protection-curtain[hidden] {
+  display: none !important;
+}
+body.capture-protection-obscured #app,
+body.capture-protection-obscured #md,
+body.capture-protection-obscured #ts {
+  filter: blur(12px);
+}
+@media print {
+  #capture-protection-curtain {
+    display: none !important;
+  }
+}
