@@ -1108,9 +1108,9 @@ function patientReferralPrint(data, date = ymd(new Date())) {
       #pa{display:block!important;width:215.9mm!important;height:279.4mm!important;margin:0!important;padding:0!important;overflow:hidden!important}
       #pa .print-document,#pa .print-document-content{display:block!important;width:215.9mm!important;height:279.4mm!important;margin:0!important;padding:0!important;overflow:hidden!important}
     }
-    .referral-letter{position:relative;width:215.9mm;height:279.4mm;overflow:hidden;background:#fff;color:#2563eb;font-family:"Noto Sans Khmer",system-ui,sans-serif;line-height:1}
+    .referral-letter{position:relative;width:215.9mm;height:279.4mm;overflow:hidden;background:#fff;color:#033993;font-family:"Noto Sans Khmer",system-ui,sans-serif;line-height:1}
     .referral-letter-background{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:fill}
-    .referral-letter-value{position:absolute;z-index:1;overflow:hidden;color:#2563eb;font-size:11pt;line-height:1.35;white-space:nowrap}
+    .referral-letter-value{position:absolute;z-index:1;overflow:hidden;color:#033993;font-size:11pt;line-height:1.35;white-space:nowrap}
     .referral-letter-value.multiline{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.8}
   </style><article class="referral-letter"><img class="referral-letter-background" src="/assets/referral-letter-background.png" alt="">
     ${place(value('referral_department', '', ['referral_from']), 154, 82, 430)}

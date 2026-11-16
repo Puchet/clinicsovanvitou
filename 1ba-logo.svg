@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 1200" role="img" aria-label="BA Hospital Management System logo">
+  <rect width="1600" height="1200" fill="#000000"/>
+  <g fill="none" stroke="#0d2a5c" stroke-width="72" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M160 160V920H360C590 920 705 780 705 540C705 300 590 160 360 160H160Z"/>
+    <path d="M1420 170V1020"/>
+    <path d="M1220 170V1020"/>
+    <path d="M1240 170H1520V420H1280V520H1520V1020H1240V835"/>
+    <path d="M310 170V1020"/>
+    <path d="M382 470H710"/>
+    <path d="M210 170C120 170 75 250 75 350C75 450 125 535 210 535H310"/>
+    <path d="M210 535C125 535 75 620 75 720C75 820 120 900 210 900H310"/>
+    <path d="M690 300L860 160L1030 300"/>
+    <path d="M770 300H960"/>
+    <path d="M920 300V900"/>
+    <path d="M870 920C780 970 690 1000 620 980C555 962 520 905 530 855C540 798 585 760 655 742C745 719 842 744 890 780C940 815 970 882 957 946"/>
+  </g>
+</svg>
